@@ -1,38 +1,18 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { requireProfile } from "@/lib/profile";
+import { ALL_WEB_ROLES, modulesForRole } from "@/lib/roles";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
+  // All active roles may enter the shell; per-page gates narrow further.
+  const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("users")
-    .select("name, role, factory_id, factories(name)")
-    .eq("id", user.id)
+  const { data: factory } = await supabase
+    .from("factories")
+    .select("name")
+    .eq("id", profile.factory_id)
     .single();
+  const factoryName = factory?.name ?? "Unknown factory";
 
-  if (!profile) {
-    // authenticated but not provisioned for any factory
-    await supabase.auth.signOut();
-    redirect("/login?error=collector_role");
-  }
-  if (profile.role === "collector") {
-    await supabase.auth.signOut();
-    redirect("/login?error=collector_role");
-  }
-
-  const factoryName = (profile.factories as unknown as { name: string } | null)?.name ?? "Unknown factory";
-
-  const nav = [
-    { href: "/dashboard", label: "Overview" },
-    { href: "/dashboard/weighings", label: "Weighings" },
-    { href: "/dashboard/suppliers", label: "Suppliers" },
-    { href: "/dashboard/collectors", label: "Collectors" },
-  ];
+  const nav = modulesForRole(profile.role);
 
   return (
     <div className="min-h-screen">

@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Tea Factory Collector",
+    "slug": "tea-factory-collector",
+    "scheme": "teafactory",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "edgeToEdgeEnabled": true
+    }
+  }
+}

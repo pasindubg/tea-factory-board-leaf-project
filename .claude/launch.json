@@ -6,6 +6,15 @@
       "runtimeExecutable": "/Users/pasindu/.npm-global/bin/pnpm",
       "runtimeArgs": ["--dir", "apps/web", "dev"],
       "port": 3000
+    },
+    {
+      "name": "mobile-web",
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": [
+        "-lc",
+        "export PATH=/Users/pasindu/.nvm/versions/node/v20.20.2/bin:/Users/pasindu/.npm-global/bin:$PATH; cd /Users/pasindu/Desktop/board-leaf-project/apps/mobile && exec pnpm exec expo start --web --port 8081"
+      ],
+      "port": 8081
     }
   ]
 }

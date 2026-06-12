@@ -13,7 +13,8 @@
     "db:seed": "tsx src/seed.ts",
     "db:link-auth": "NODE_OPTIONS=--experimental-websocket tsx src/link-auth-users.ts",
     "db:verify-rls": "tsx src/verify-rls.ts",
-    "db:verify-auth": "NODE_OPTIONS=--experimental-websocket tsx src/verify-auth.ts"
+    "db:verify-auth": "NODE_OPTIONS=--experimental-websocket tsx src/verify-auth.ts",
+    "db:mint-otp": "NODE_OPTIONS=--experimental-websocket tsx src/mint-otp.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",

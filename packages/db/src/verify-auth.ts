@@ -62,7 +62,8 @@ async function main() {
     `factories=${JSON.stringify(supplierFactories)} (${ownerSuppliers?.length ?? 0} rows)`,
   );
 
-  // 2. Collector A: authenticates, but the dashboard role-gate rejects them
+  // 2. Collector A: authenticates and resolves the collector role (the web
+  // app gives this role the restricted weighing-entry interface — M5)
   const collectorA = await loginAs("collector-a@example.com");
   const { data: collectorProfile } = await collectorA.client
     .from("users")
@@ -70,9 +71,9 @@ async function main() {
     .eq("id", collectorA.userId)
     .single();
   check(
-    "collector A authenticates but role is rejected by web dashboard",
+    "collector A authenticates and resolves collector role",
     collectorProfile?.role === "collector",
-    `role=${collectorProfile?.role} (dashboard only admits owner/manager)`,
+    `role=${collectorProfile?.role} (web shows weighings-only interface for this role)`,
   );
 
   // 3. Unknown email cannot request an OTP the way the login form asks for it

@@ -11,11 +11,12 @@ function LoginForm() {
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"email" | "code">("email");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(
-    searchParams.get("error") === "collector_role"
-      ? "Collector accounts use the mobile app. The web dashboard is for owners and managers."
-      : null,
-  );
+  const errorMessages: Record<string, string> = {
+    deactivated: "Your account has been deactivated. Contact your factory owner.",
+    no_profile: "Your login isn't linked to any factory. Contact your factory owner.",
+  };
+  const errorParam = searchParams.get("error");
+  const [error, setError] = useState<string | null>(errorParam ? (errorMessages[errorParam] ?? null) : null);
 
   async function sendCode(e: React.FormEvent) {
     e.preventDefault();

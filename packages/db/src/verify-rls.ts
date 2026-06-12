@@ -33,8 +33,19 @@ async function asUser(userId: string) {
 }
 
 async function main() {
+  // Resolve the *current* owner ids by email — db:link-auth re-points seed
+  // users to their real Supabase auth ids, so fixed SEED_IDS user ids go stale
+  // after M2. Factory ids are never re-linked and stay fixed.
+  const [ownerARow] = await sql`select id from users where email = 'owner-a@example.com'`;
+  const [ownerBRow] = await sql`select id from users where email = 'owner-b@example.com'`;
+  if (!ownerARow || !ownerBRow) {
+    throw new Error("Seed owners not found — run db:seed (and db:link-auth against cloud) first");
+  }
+  const ownerA: string = ownerARow.id;
+  const ownerB: string = ownerBRow.id;
+
   // 1. Factory A owner
-  const a = await asUser(SEED_IDS.ownerA);
+  const a = await asUser(ownerA);
   check(
     "owner A sees only factory A weighings",
     a.weighings.length === 1 && a.weighings[0].factory_id === SEED_IDS.factoryA,
@@ -52,7 +63,7 @@ async function main() {
   );
 
   // 2. Factory B owner
-  const b = await asUser(SEED_IDS.ownerB);
+  const b = await asUser(ownerB);
   check(
     "owner B sees only factory B weighings",
     b.weighings.length === 1 && b.weighings[0].factory_id === SEED_IDS.factoryB,
@@ -62,7 +73,7 @@ async function main() {
   // 3. Cross-tenant write must be rejected
   const crossWrite = await sql
     .begin(async (tx) => {
-      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: SEED_IDS.ownerA, role: "authenticated" })}, true)`;
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: ownerA, role: "authenticated" })}, true)`;
       await tx.unsafe(`set local role authenticated`);
       await tx`insert into suppliers (factory_id, name) values (${SEED_IDS.factoryB}, 'Intruder')`;
     })

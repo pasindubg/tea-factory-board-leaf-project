@@ -16,10 +16,14 @@ farmers, and almost all of it runs on paper:
 
 ## The vision
 
-**Phase 1 — Factory ERP (in progress).** A SaaS for bought-leaf factories: a
-mobile app for collectors to log weighings in the field (offline-capable), and a
-web dashboard for owners — daily intake, supplier management, automatic monthly
-payment calculation, lot tracking. Sold per-factory at LKR 5,000–15,000/month.
+**Phase 1 — Factory ERP (in progress).** A SaaS for bought-leaf factories: a web
+app for the whole factory — owners and managers get daily intake, supplier
+management, automatic monthly payment calculation, and production tracking
+(out-turn % and grades, which expose watered/poor leaf per supplier); the
+weighing desk at the factory gate gets a restricted weighing-entry interface.
+Sold per-factory at LKR 5,000–15,000/month. A mobile *field* app for estate
+owners and suppliers comes with Phase 2. Full domain and persona detail:
+**[docs/PRODUCT.md](docs/PRODUCT.md)**.
 
 **Phase 2 — Leaf Marketplace.** The bigger play: an Uber-like two-sided platform
 where leaf suppliers / estate owners and factories / buyers both have accounts.
@@ -40,9 +44,10 @@ in **[MILESTONES.md](MILESTONES.md)**.
 | M1 | Database, multi-tenant RLS | ✅ done |
 | M2 | Auth (email OTP) + app shells | ✅ done |
 | M3 | Web dashboard: suppliers, collectors, weighings, charts | ✅ done |
-| M4 | Mobile app (online-only) | 🔜 next |
-| M5–M8 | Offline sync, payments, lots, production deploy | planned |
-| M9–M13 | Phase 2: marketplace | planned |
+| M4 | Mobile app (built; parked → Phase 2 field app) | ✅ done |
+| M5 | User management + restricted collector web UI | 🔜 current |
+| M6–M9 | Payments, production/out-turn, sifting & grades, deploy | planned |
+| M10–M15 | Phase 2: marketplace + field app with offline sync | planned |
 
 ## Tech stack
 

@@ -1,4 +1,5 @@
-import { requireProfile } from "@/lib/profile";
+import { collectorForUser, requireProfile } from "@/lib/profile";
+import { ALL_WEB_ROLES } from "@/lib/roles";
 import { createWeighing } from "../actions";
 
 const inputClass =
@@ -16,13 +17,29 @@ export default async function NewWeighingPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { supabase } = await requireProfile();
+  const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
   const { error } = await searchParams;
 
-  const [{ data: suppliers }, { data: collectors }] = await Promise.all([
+  const isCollector = profile.role === "collector";
+  const [{ data: suppliers }, { data: collectors }, ownCollector] = await Promise.all([
     supabase.from("suppliers").select("id, name, area").eq("active", true).order("name"),
-    supabase.from("collectors").select("id, name").eq("active", true).order("name"),
+    isCollector
+      ? Promise.resolve({ data: [] as { id: string; name: string }[] })
+      : supabase.from("collectors").select("id, name").eq("active", true).order("name"),
+    isCollector ? collectorForUser(supabase, profile.id) : Promise.resolve(null),
   ]);
+
+  if (isCollector && !ownCollector) {
+    return (
+      <div>
+        <h1 className="text-2xl font-semibold">Record weighing</h1>
+        <p className="mt-6 max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Your login has no collector record yet, so weighings can&apos;t be attributed to you. Ask the
+          factory owner to link one on the Collectors page.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -47,19 +64,25 @@ export default async function NewWeighingPage({
             ))}
           </select>
         </label>
-        <label className="block text-sm font-medium">
-          Collector *
-          <select name="collector_id" required defaultValue="" className={inputClass}>
-            <option value="" disabled>
-              Select collector
-            </option>
-            {(collectors ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
+        {isCollector ? (
+          <p className="rounded-md bg-stone-50 px-3 py-2 text-sm text-stone-600">
+            Recording as <span className="font-medium">{ownCollector!.name}</span>
+          </p>
+        ) : (
+          <label className="block text-sm font-medium">
+            Collector *
+            <select name="collector_id" required defaultValue="" className={inputClass}>
+              <option value="" disabled>
+                Select collector
               </option>
-            ))}
-          </select>
-        </label>
+              {(collectors ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="block text-sm font-medium">
           Weight (kg) *
           <input name="weight_kg" type="number" step="0.01" min="0.01" required className={inputClass} />

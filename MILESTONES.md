@@ -3,106 +3,160 @@
 Each milestone is independently shippable and has a concrete verification gate.
 Do not start milestone N+1 until N's gate passes.
 
-**Ordering rationale:** Web dashboard ships *before* mobile. The factory owner can
-start entering data from the office on day one (replacing the paper book at the
-factory gate), which delivers value to customer zero while the mobile app is still
-in progress. Offline sync — the riskiest piece — comes only after online flows are
-proven end-to-end.
+Product vision, personas, the tea-production domain (withering → rolling →
+fermentation → drying → out-turn → grades), multi-tenancy rules, and the modular
+architecture conventions live in **[docs/PRODUCT.md](docs/PRODUCT.md)** — read
+that first.
+
+> **Re-planned June 2026** after customer-zero feedback: collectors work at a
+> desktop at the factory gate, not on phones. The collector interface moved into
+> the web app (M5); the M4 mobile app is parked and will be repurposed as the
+> Phase 2 *field* app for estate owners and suppliers. Offline sync (the old M5)
+> moved to Phase 2 with it — the factory desktop has connectivity, the field
+> doesn't. New ERP depth was added before deploy: production/out-turn tracking
+> (M7) and sifting/grades (M8), which also build the supplier-quality dataset
+> Phase 2 monetizes.
 
 ---
 
-## M0 — Monorepo scaffold
+# Phase 1 — Factory ERP
+
+## M0 — Monorepo scaffold ✅
 Root `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`,
-empty workspace packages (`apps/web`, `apps/mobile`, `packages/db`, `packages/api`,
+workspace packages (`apps/web`, `apps/mobile`, `packages/db`, `packages/api`,
 `packages/ui`), shared lint/TS config, `.env.example`, git init.
 
-**Verify:** `pnpm install` and `pnpm turbo build` succeed from a clean clone.
+**Verify:** `pnpm install` and `pnpm turbo build` succeed from a clean clone. ✅
 
-## M1 — Database + multi-tenancy
-Supabase project created. Drizzle schema for all tables (use `numeric`, not `real`,
-for weights and money). Migrations run against Supabase. RLS policies for factory
-isolation on every table. Seed script: 2 factories, users in each role, suppliers,
-sample weighings.
+## M1 — Database + multi-tenancy ✅
+Supabase project. Drizzle schema for all tables (`numeric` for weights/money).
+RLS factory-isolation policies on every table. Seed: 2 factories, users in each
+role, suppliers, sample weighings.
 
-**Verify:** Logged in as factory A's owner, a query for weighings returns only
-factory A rows; same query as factory B's owner returns only factory B rows.
-Anonymous queries return nothing.
+**Verify:** factory A's owner sees only factory A rows; factory B likewise;
+anonymous sees nothing (`db:verify-rls`). ✅
 
-## M2 — Auth + app shells
-Supabase Auth (email OTP to start; phone OTP later — it needs a paid SMS provider).
-Next.js app with login → authenticated dashboard layout shell. User's `factory_id`
-and `role` resolved on login and available in session context.
+## M2 — Auth + app shells ✅
+Supabase Auth email OTP (no self-signup). Next.js login → authenticated
+dashboard shell; `factory_id` and `role` resolved on login.
 
-**Verify:** Owner logs in on web and lands on an (empty) dashboard scoped to their
-factory. A collector-role login is rejected from the web dashboard.
+**Verify:** `db:verify-auth` passes. ✅
 
-## M3 — Web dashboard core (customer zero goes live)
-Using `supabase-js` directly (no tRPC yet):
-- Suppliers CRUD (list, add, edit, deactivate)
-- Collectors CRUD
-- Manual weighing entry form (office data entry replaces the paper book)
-- Weighings list with date/supplier/collector filters
-- Dashboard overview: today's total intake kg, intake by collector, 7-day chart
+## M3 — Web dashboard core ✅ (customer zero live)
+Suppliers CRUD, collectors CRUD, weighing entry, weighings list with filters,
+overview dashboard (today's intake, by collector, 7-day chart).
 
-**Verify:** Factory owner can add a supplier, record a weighing against them, and
-see it reflected in the day's totals — full workflow with no developer involvement.
-*Put this in front of the real factory and collect feedback before continuing.*
+**Verify:** owner records a weighing and sees it in the day's totals with no
+developer involvement. ✅
 
-## M4 — Mobile app, online-only
-Expo app: login (collector role), home with today's summary, weigh form
-(supplier picker → weight → submit), today's records list. Writes go straight to
-Supabase. Client-generated UUIDs from day one so M5 doesn't change the data model.
+## M4 — Mobile app ✅ (built, parked → Phase 2 field app)
+Built as an online-only Expo collector app (login, today summary, weigh form,
+records). **Customer-zero feedback then revealed collectors are desktop users**,
+so this app is parked, not shipped. The code (`apps/mobile`) is kept and will be
+repurposed for field users — estate owners/suppliers — in Phase 2 (M11). Useful
+regardless: client-generated UUID pattern proven, Expo toolchain set up.
 
-**Verify:** A weighing recorded on the phone appears in the web dashboard within
-seconds. Collector sees only their own factory's suppliers.
+## M5 — User management & role-based web access ⬅ CURRENT
+The web app becomes the single surface for all factory staff:
 
-## M5 — Offline support (highest-risk milestone)
-Local persistence + sync: supplier/collector lists cached locally for offline
-reads; weighings written locally and pushed when connectivity returns; sync status
-screen (pending count, last sync time, manual retry).
+- **Users page (owner only):** list users; add a user (creates the Supabase auth
+  account — no self-signup — plus the profile row); deactivate/reactivate
+  (auth-level ban + app-level `active` check); remove (deletes login, keeps
+  historical records intact).
+- Adding a `collector`-role user auto-creates a linked `collectors` record so
+  their weighings attribute correctly.
+- **Restricted collector web UI:** collector logs in on web and gets *only*
+  weighing entry + their own records (pinned to their collector identity). No
+  suppliers/collectors/users/overview access.
+- Role → module access defined once in `apps/web/lib/roles.ts` (see modular
+  conventions in PRODUCT.md).
 
-Decision point: WatermelonDB full sync vs. a plain expo-sqlite outbox. The data
-flow is append-only writes + read-only reference caches, so evaluate the outbox
-approach first — it avoids implementing WatermelonDB's pull/push protocol and
-keeps Expo Go usable. Either way: server wins on conflict, client UUIDs make
-pushes idempotent (retrying a push never duplicates a weighing).
-
-**Verify:** Airplane-mode test — record 3 weighings offline, kill and reopen the
-app (records persist), restore connectivity, all 3 appear on the web dashboard
-exactly once. Repeat with a push that fails mid-way: no duplicates.
+**Verify:** owner adds a collector-role user; that user signs in and sees only
+Weighings, records one pinned to their own collector id; a deactivated user is
+locked out; a removed user can't sign in; `db:verify-rls` still passes.
 
 ## M6 — Payments (the killer feature)
 ⚠️ Before building: confirm the real payment formula with customer zero.
-Likely it is monthly green-leaf rate × kg with water/coarse-leaf deductions,
-NOT per-made-tea-grade rates — adjust `price_rates` schema accordingly.
+Likely monthly green-leaf rate × kg with quality adjustments —
+adjust `price_rates` schema accordingly.
 
-- Settings page: manage rates (with effective-from dates)
-- Monthly calculation as a server-side tRPC procedure (first real use of tRPC):
-  per supplier, sum kg × rate effective at each weighing's collection date
-- Payments page: generate a month, review per-supplier statement, mark paid
-- Printable per-supplier statement (factories hand these out)
+- Settings page: manage rates (effective-from dates)
+- **Quality-tier pricing ("superleaf"):** per-factory tiers with per-kg bonus
+  modifiers (e.g. base 185, Standard +15, Superleaf +35), per-supplier tier
+  assignment with effective dates and a reason/history log. **The base rate,
+  the tier names, and every bonus amount are owner-editable settings**
+  (effective-dated, like rates) — the numbers here are illustrative defaults,
+  never hardcoded. **Always framed as bonuses on a base rate, never
+  deductions** — see the superleaf section in PRODUCT.md for why. Tier moves
+  on a rolling pattern with warnings, not per delivery. Statements show the
+  bonus earned and the bonus *missed*.
+- Monthly calculation as a server-side tRPC procedure (first real tRPC use):
+  per supplier, sum kg × (rate + tier bonus) effective at each weighing's
+  collection date
+- Payments page: generate a month, review per-supplier statements, mark paid
+- Printable per-supplier statement (base, bonus, and "missed bonus" lines)
 
-**Verify:** Fixture test — known weighings spanning a mid-month rate change
-produce hand-calculated expected totals to the cent. Run a real month in parallel
-with the factory's manual books and reconcile.
+**Verify:** fixture test — known weighings spanning a mid-month rate change AND
+a mid-month tier change produce hand-calculated totals to the cent. Run a real
+month in parallel with the factory's books and reconcile.
 
-## M7 — Lots & grade tracking
-Lots CRUD, status transitions (open → processing → graded → sold), assign
-weighings to lots, lot summary view.
+## M7 — Production & out-turn tracking
+The factory's manufacturing pipeline (see PRODUCT.md domain walkthrough):
+production batches through withering → rolling → fermentation → drying; weigh
+the dried bulk; **out-turn % = made tea ÷ green leaf** per batch/day vs the
+factory's baseline.
 
-**Verify:** Create a lot, attach weighings, move it through statuses, totals match.
+- Batch entity linking a day/shift's green-leaf intake to its dried-bulk output
+- Out-turn dashboard: trend vs baseline, low-out-turn alerts
+- Supplier water-detection signals: correlate batch out-turn with the supplier
+  mix in the batch (statistical attribution — explicit design task, see caveat
+  in PRODUCT.md)
+- Optional stage data where the factory will actually record it (withering
+  hours, moisture observations) — don't force data entry that won't happen
 
-## M8 — Production hardening & deploy
-Web on Vercel, EAS Build for the mobile app (+ EAS Update for OTA fixes),
-Supabase backups confirmed, basic error reporting (Sentry), factory onboarding
-script (create factory + owner user), README runbook.
+**Verify:** fixture batch produces the hand-calculated out-turn %; a
+low-out-turn day flags; a supplier consistently present in low-out-turn batches
+trends down in the quality signal.
 
-**Verify:** Customer zero runs a full month — daily collection through payment
-generation — with zero developer intervention.
+## M8 — Sifting & grades
+(absorbs the old "lots & grade tracking" milestone)
+
+- Grade catalog per factory (Pekoe, Pekoe 1, BOP, BOPF, Dust 1, … configurable)
+- Sifting outputs: per-batch kg per grade; primary-vs-off-grade ratio
+- Lots: pack grades into lots, status transitions (open → processing → graded →
+  sold), dispatch records
+- Supplier quality signal #2: grade-mix correlated to supplier mix over time
+
+**Verify:** a batch's grade outputs sum to its dried bulk (± recorded waste);
+lot totals match; grade-mix report renders per period.
+
+## M9 — Production hardening, deploy & self-serve onboarding
+Web on Vercel, Supabase backups confirmed, error reporting (Sentry), runbook in
+README. Factory onboarding script (create factory + owner user) — then put it
+behind a front door: **public signup page → subscription payment (local
+gateway/card) → automated factory + owner provisioning**, so a new factory
+owner can buy and start using the ERP without us.
+
+**Subscriptions sell modules, not just access** (see "Sellable modules" in
+PRODUCT.md): the factory's plan determines its `enabled_modules` set — e.g.
+board-leaf handling only, or + out-turn & sifting, or + accounting. The
+`lib/roles.ts` registry gains a per-module entitlement key and the nav/page/
+action gates check role ∩ entitlement. A factory that hasn't bought a module
+never sees it. This is also the feature-gate hook Phase 2 premium tiers reuse.
+
+**Verify:** customer zero runs a full month — daily collection through payment
+generation — with zero developer intervention. A test signup → payment →
+fresh factory dashboard works end to end showing only the purchased modules,
+and `db:verify-rls` proves the new tenant is isolated.
+
+## Backlog (Phase 1.x, unscheduled)
+- **Accounts module:** expenses, sales, P&L on top of operational data
+- Photo/ML leaf-quality research spike (prototype against rated delivery photos
+  once Phase 2 collects them)
 
 ---
 
-# Phase 2 — Leaf Marketplace
+# Phase 2 — Leaf Marketplace & field apps
 
 **Vision:** an Uber-like two-sided marketplace where leaf suppliers / estate
 owners and factories / buyers both have accounts. Suppliers list available leaf;
@@ -111,85 +165,90 @@ price signal instead of a binary accept/reject at the factory gate (which today
 costs factories the supplier relationship).
 
 **Why Phase 1 first:** the ERP is the wedge. Every factory onboarded brings its
-supplier book, seeding the marketplace network. Phase 1 milestones (M0–M8) stay
-unchanged and ship first.
+supplier book, seeding the marketplace network. And M7/M8 quietly accumulate the
+quality dataset (out-turn, grade mix) that makes supplier scores credible.
 
-**Key architectural shift:** in Phase 1 a supplier is a row owned by one factory.
-In Phase 2 a supplier becomes an independent account that can deal with many
-factories. M9 makes this migration explicit; everything else builds on it.
+**Key architectural shift:** in Phase 1 a supplier is a row owned by one
+factory. In Phase 2 a supplier becomes an independent account that can deal with
+many factories. M10 makes this migration explicit; everything else builds on it.
 
-## M9 — Supplier identity & accounts
+## M10 — Supplier identity & accounts
 Suppliers become first-class users: new `supplier` auth role, self-signup flow,
 supplier profile (location, land size, capacity, photos). Existing factory-owned
 supplier rows become *links* (factory ↔ supplier relationships) so Phase 1
-factories keep working unchanged; a factory can "invite" its paper-book suppliers
-to claim their account. RLS rework: suppliers see their own data across
-factories; factories see their linked suppliers.
+factories keep working unchanged; a factory can invite its paper-book suppliers
+to claim their account. RLS rework: relationship-scoped policies for these
+tables (suppliers see their own data across factories; factories see linked
+suppliers). Design the **data-sharing consent model** here — M15's premium
+intelligence may only ever surface consented data.
 
-**Verify:** a supplier self-signs up, completes a profile, and sees their own
-delivery/payment history from a linked factory. Factory dashboards unchanged.
+**Verify:** a supplier self-signs up and sees their own delivery/payment history
+from a linked factory. Factory dashboards unchanged. RLS gates pass.
 
-## M10 — Geo discovery (Google Maps)
+## M11 — Mobile field app + offline support
+Repurpose `apps/mobile` (built in M4) for field users — suppliers and estate
+owners: their deliveries and payment history, leaf availability posting (feeds
+M13), factory discovery preview. This is where **offline sync** lands (the old
+Phase 1 M5): field connectivity is poor; reads cached locally, writes queued in
+an outbox (evaluate expo-sqlite outbox before WatermelonDB; server wins on
+conflict; client UUIDs make pushes idempotent).
+
+**Verify:** airplane-mode test — actions queued offline land exactly once after
+reconnect, surviving an app kill and a mid-push failure.
+
+## M12 — Geo discovery (maps)
 Geocode supplier and factory locations. Factory-side: map + radius search for
-suppliers in an area (with capacity and quality summary). Supplier-side: map of
-factories buying nearby, with their current price boards.
+suppliers (capacity, quality summary). Supplier-side: nearby factories with
+their current price boards.
 
-**Verify:** a factory finds suppliers within X km of a town; a supplier sees
-nearby factories and their prices.
+**Verify:** a factory finds suppliers within X km; a supplier sees nearby
+factories and prices.
 
-## M11 — Listings, offers & transactions (marketplace core)
+## M13 — Listings, offers & transactions (marketplace core)
 Suppliers post leaf availability (quantity, date, asking price, photos).
-Factories publish buy prices / post offers on listings. Accept → transaction
-record that flows into the Phase 1 weighing/payment pipeline on delivery.
+Factories publish buy prices / make offers. Accept → transaction record that
+flows into the Phase 1 weighing/payment pipeline on delivery.
 
 **Verify:** two test accounts complete listing → offer → accept → delivery →
 payment end to end.
 
-## M12 — Quality & trust
+## M14 — Quality & trust
 Per-delivery quality rating by the factory (moisture, coarse leaf %, photos).
 Supplier quality history and score visible to buyers; price differentiation by
-quality grade. Supplier **acceptance-rate grade**: track accepted vs rejected
-(or downgraded) deliveries per supplier across all factories and derive a
-platform-wide supplier grade — computable from delivery records alone, no
-photos/ML needed, so it ships first within this milestone. Research spike
-(separate, unscheduled): image-processing leaf quality detection from photos —
-prototype against rated delivery photos collected here, adopt only if accuracy
-beats manual grading.
+grade. Supplier **acceptance-rate grade** across all factories (computable from
+delivery records alone — ships first within this milestone). Combine with the
+Phase 1 signals (out-turn, grade mix) into one supplier score.
 
 **Verify:** a rated delivery updates the supplier's public score; a rejected
-delivery lowers the acceptance rate; a buyer can filter discovery by minimum
-quality score.
+delivery lowers the acceptance rate; buyers can filter discovery by minimum
+score.
 
-## M13 — Marketplace operations & monetization
-Commission or subscription billing on transactions, SMS/push notifications
-(listing matches, offer accepted, payment made), platform admin panel
-(verification of accounts, dispute handling). **Premium factory tier**: basic
-plan sees a supplier's overall score only; premium plan unlocks the detailed
-supplier intelligence (acceptance-rate history, per-factory quality breakdown,
-delivery volume trends) — feature-gated by subscription plan on the factory
-account.
-
-**Competitive intelligence add-on (both sides pay):**
-- Factory premium+: discover top-graded suppliers currently delivering to
-  competitor factories in an area.
-- Supplier premium: see which factories buy from competing suppliers nearby,
-  and the grades/prices those factories give.
-- ⚠️ Design constraint to resolve BEFORE building: this must be powered by
-  marketplace-generated or aggregated/anonymized data — never raw private ERP
-  records — or factories will abandon the ERP wedge once they realize their
-  supplier book is for sale. Strong option: reciprocal opt-in (you only see
-  competitor insights if you share yours).
+## M15 — Marketplace operations & monetization
+Commission or subscription billing on transactions; SMS/push notifications;
+platform admin panel (account verification, dispute handling). **Premium
+factory tier:** basic sees a supplier's overall score; premium unlocks detailed
+intelligence (acceptance-rate history, per-factory quality breakdown, volume
+trends). **Premium supplier tier:** which factories accept leaf from competitor
+suppliers and the grades/quality they were given. Both tiers surface **only
+consented/shared data** per the consent model designed in M10, feature-gated by
+subscription plan.
 
 **Verify:** a completed transaction produces a correct platform fee record;
-both sides receive notifications at each step; a basic-plan factory cannot see
-premium supplier intelligence and an upgraded one can; competitive-intel
-queries return only data the source party consented to share.
+notifications fire at each step; a basic-plan account cannot see premium
+intelligence and an upgraded one can.
 
 ---
 
 ## Standing rules
 - `numeric` for all money/weight columns; never `real`.
-- Every table row carries `factory_id`; every new table gets an RLS policy in the
-  same migration.
-- Client-generated UUIDs for anything that can be created on mobile.
+- Every domain table carries `factory_id` + index; **every new table gets its
+  RLS policy in the same migration**. `db:verify-rls` after schema changes.
+- Client-generated UUIDs for anything that can be created offline/on mobile.
+- New features follow the module checklist in
+  [docs/PRODUCT.md](docs/PRODUCT.md#modular-architecture-how-features-get-added):
+  schema file + route group + `lib/roles.ts` entry + verification gate.
+- Role access lives only in `apps/web/lib/roles.ts`; never inline role checks in
+  pages.
+- Secret API keys never reach a client bundle (`NEXT_PUBLIC_`/`EXPO_PUBLIC_` is
+  the exposure boundary).
 - After each milestone: demo to customer zero, fold feedback into the next one.
