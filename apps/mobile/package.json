@@ -1,0 +1,8 @@
+{
+  "name": "mobile",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "echo 'mobile: Expo scaffold lands in M4'"
+  }
+}

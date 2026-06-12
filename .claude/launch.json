@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "/Users/pasindu/.npm-global/bin/pnpm",
+      "runtimeArgs": ["--dir", "apps/web", "dev"],
+      "port": 3000
+    }
+  ]
+}

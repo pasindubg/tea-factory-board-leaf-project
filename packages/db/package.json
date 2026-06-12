@@ -1,0 +1,29 @@
+{
+  "name": "@tea/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx src/seed.ts",
+    "db:link-auth": "NODE_OPTIONS=--experimental-websocket tsx src/link-auth-users.ts",
+    "db:verify-rls": "tsx src/verify-rls.ts",
+    "db:verify-auth": "NODE_OPTIONS=--experimental-websocket tsx src/verify-auth.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "drizzle-orm": "^0.44.2",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
