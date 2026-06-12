@@ -169,9 +169,21 @@ supplier intelligence (acceptance-rate history, per-factory quality breakdown,
 delivery volume trends) — feature-gated by subscription plan on the factory
 account.
 
+**Competitive intelligence add-on (both sides pay):**
+- Factory premium+: discover top-graded suppliers currently delivering to
+  competitor factories in an area.
+- Supplier premium: see which factories buy from competing suppliers nearby,
+  and the grades/prices those factories give.
+- ⚠️ Design constraint to resolve BEFORE building: this must be powered by
+  marketplace-generated or aggregated/anonymized data — never raw private ERP
+  records — or factories will abandon the ERP wedge once they realize their
+  supplier book is for sale. Strong option: reciprocal opt-in (you only see
+  competitor insights if you share yours).
+
 **Verify:** a completed transaction produces a correct platform fee record;
 both sides receive notifications at each step; a basic-plan factory cannot see
-premium supplier intelligence and an upgraded one can.
+premium supplier intelligence and an upgraded one can; competitive-intel
+queries return only data the source party consented to share.
 
 ---
 
