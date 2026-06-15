@@ -115,7 +115,7 @@ Many factories share one Postgres (Supabase). Tenancy rules are **non-negotiable
 
 - The tenant boundary is a `factories` row. **Every** domain table carries
   `factory_id` (indexed). Onboarding a new factory = inserting one row and an
-  owner user — today via script, from M9 behind a public signup + subscription
+  owner user — today via script, from M11 behind a public signup + subscription
   checkout so owners self-serve.
 - **Row Level Security on every table, in the same migration that creates it.**
   The standard policy compares `factory_id` to `current_factory_id()` — a
@@ -149,8 +149,9 @@ Current and planned modules:
 | People & access | `users.ts` | `/users` | ✅ M5 |
 | Payments | `price-rates.ts`, `payments.ts` | `/payments` (M6) | schema only |
 | Production (out-turn) | `batches.ts` etc. (M7) | `/production` (M7) | planned |
-| Sifting & grades | extends `lots.ts` (M8) | `/grades` (M8) | planned |
-| Accounts | (future) | (future) | backlog |
+| Sifting & grades | `grades.ts` etc. (M8) | `/grades` (M8) | planned |
+| Lots, deliveries & sales | `lots.ts`, sales/dispatch (M9) | `/lots`, `/sales` (M9) | planned |
+| Accounts | `expenses.ts` etc. (M10) | `/accounting` (M10) | planned (Phase 1) |
 | Marketplace | (Phase 2) | separate surface | Phase 2 |
 
 ### Sellable modules (subscription entitlements)
@@ -164,16 +165,20 @@ actions all gate on it). Access is therefore two-dimensional:
 | Sellable bundle | Modules included | Entitlement key |
 |---|---|---|
 | Board-leaf handling (base) | Intake (suppliers, collectors, weighings) + People & access + Payments/superleaf | `leaf-handling` |
-| Out-turn & sifting | Production (out-turn), Sifting & grades | `production` |
-| Accounting | Accounts | `accounts` |
+| Production & sales | Out-turn (M7), Sifting & grades (M8), Lots/deliveries/sales (M9) | `production` |
+| Accounting | Accounts / P&L (M10) | `accounts` |
 | Marketplace / premium intelligence | Phase 2 surfaces | Phase 2 keys |
+
+(Exact bundle boundaries are a business decision; the keys are the stable
+mechanism — re-grouping modules into different bundles is config in
+`lib/roles.ts`, not a code change.)
 
 Bundle composition is a business decision and must stay cheap to change — the
 mechanism is per-module keys, so re-bundling is config, not code. Mechanism:
-`factories` carries the enabled module set (written by the M9 subscription
+`factories` carries the enabled module set (written by the M11 subscription
 checkout; until then, customer zero has everything enabled); each `MODULES`
 entry in `apps/web/lib/roles.ts` declares its entitlement key; the gates check
-both dimensions. Enforcement code lands with M9 — but every module shipped
+both dimensions. Enforcement code lands with M11 — but every module shipped
 before then must already declare its key so flipping enforcement on is trivial.
 
 **Checklist for adding a module:**

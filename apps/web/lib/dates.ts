@@ -1,3 +1,8 @@
+// All "local" date math here relies on the process timezone being the factory's
+// timezone: the web app runs with TZ=Asia/Colombo (set in package.json scripts;
+// set the same env var on the deploy host). If factories ever span timezones,
+// replace this with a per-factory timezone column and explicit tz-aware math.
+
 /** [start, end) ISO range for a local calendar day; date as YYYY-MM-DD. */
 export function dayRange(date: string): { start: string; end: string } {
   const start = new Date(`${date}T00:00:00`);

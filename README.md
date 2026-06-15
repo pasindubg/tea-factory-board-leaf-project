@@ -45,9 +45,14 @@ in **[MILESTONES.md](MILESTONES.md)**.
 | M2 | Auth (email OTP) + app shells | ✅ done |
 | M3 | Web dashboard: suppliers, collectors, weighings, charts | ✅ done |
 | M4 | Mobile app (built; parked → Phase 2 field app) | ✅ done |
-| M5 | User management + restricted collector web UI | 🔜 current |
-| M6–M9 | Payments, production/out-turn, sifting & grades, deploy | planned |
-| M10–M15 | Phase 2: marketplace + field app with offline sync | planned |
+| M5 | User management + restricted collector web UI | ✅ done |
+| M6 | Payments + superleaf quality-tier pricing | 🔜 next |
+| M7 | Production & out-turn tracking | planned |
+| M8 | Sifting & grades | planned |
+| M9 | Lots, deliveries & auction/buyer sales | planned |
+| M10 | Accounting (P&L) | planned |
+| M11 | Hardening, deploy & self-serve onboarding | planned |
+| M12–M17 | Phase 2: marketplace + field app with offline sync | planned |
 
 ## Tech stack
 
@@ -125,6 +130,11 @@ pnpm db:verify-auth  # cloud only: end-to-end auth + RLS gate
 ln -s ../../.env apps/web/.env.local   # share root env with Next.js
 pnpm --dir apps/web dev                # http://localhost:3000
 ```
+
+Server-rendered times and "today" boundaries use the process timezone: the web
+app's `dev`/`build`/`start` scripts set `TZ=Asia/Colombo`. When deploying (e.g.
+to Vercel), set a `TZ=Asia/Colombo` environment variable on the project so
+production matches.
 
 Sign in with a seeded owner account (cloud setup): `owner-a@example.com` — mint a
 login code with the admin API or configure SMTP for real emails (see

@@ -8,14 +8,19 @@ fermentation → drying → out-turn → grades), multi-tenancy rules, and the m
 architecture conventions live in **[docs/PRODUCT.md](docs/PRODUCT.md)** — read
 that first.
 
-> **Re-planned June 2026** after customer-zero feedback: collectors work at a
-> desktop at the factory gate, not on phones. The collector interface moved into
-> the web app (M5); the M4 mobile app is parked and will be repurposed as the
-> Phase 2 *field* app for estate owners and suppliers. Offline sync (the old M5)
-> moved to Phase 2 with it — the factory desktop has connectivity, the field
-> doesn't. New ERP depth was added before deploy: production/out-turn tracking
-> (M7) and sifting/grades (M8), which also build the supplier-quality dataset
-> Phase 2 monetizes.
+> **Re-planned June 2026.** Two reorderings after customer-zero feedback:
+> (1) collectors work at a desktop at the factory gate, not on phones — the
+> collector interface moved into the web app (M5); the M4 mobile app is parked
+> and becomes the Phase 2 *field* app for estate owners/suppliers, taking
+> offline sync with it (the factory desktop has connectivity; the field
+> doesn't). (2) **Finish the entire factory ERP before Phase 2.** Phase 1 now
+> runs the full physical-to-financial loop: leaf collection (done) → payments &
+> superleaf (M6) → production/out-turn (M7) → sifting & grades (M8) → lots,
+> deliveries & auction/buyer sales (M9) → accounting/P&L (M10) → deploy &
+> self-serve onboarding (M11). Accounting was promoted out of the backlog;
+> sales/deliveries became their own milestone. The marketplace (M12–M17) comes
+> only after the ERP is complete — and M7/M8 quietly build the supplier-quality
+> dataset it will monetize.
 
 ---
 
@@ -119,18 +124,42 @@ low-out-turn day flags; a supplier consistently present in low-out-turn batches
 trends down in the quality signal.
 
 ## M8 — Sifting & grades
-(absorbs the old "lots & grade tracking" milestone)
-
 - Grade catalog per factory (Pekoe, Pekoe 1, BOP, BOPF, Dust 1, … configurable)
 - Sifting outputs: per-batch kg per grade; primary-vs-off-grade ratio
-- Lots: pack grades into lots, status transitions (open → processing → graded →
-  sold), dispatch records
 - Supplier quality signal #2: grade-mix correlated to supplier mix over time
 
 **Verify:** a batch's grade outputs sum to its dried bulk (± recorded waste);
-lot totals match; grade-mix report renders per period.
+grade-mix report renders per period.
 
-## M9 — Production hardening, deploy & self-serve onboarding
+## M9 — Lots, deliveries & sales (auction / buyers)
+The made tea leaves the factory and becomes revenue:
+
+- Lots: pack graded tea into lots, status transitions (open → processing →
+  graded → sold), lot ↔ grade-output composition
+- Dispatch / delivery records: lot leaves the factory to a destination
+  (Colombo auction via broker, or a direct buyer)
+- Sale records: sale price per kg per grade/lot, buyer/broker, sale date,
+  proceeds — the revenue side that feeds accounting (M10)
+- Buyer/broker registry per factory
+
+**Verify:** a lot is built from grade outputs, dispatched, and sold; lot totals
+reconcile to the grade outputs that went in; sale proceeds compute correctly.
+
+## M10 — Accounting
+Books on top of the operational data, closing the ERP loop:
+
+- Expenses (wages, fuel/firewood for the dryer, transport, packing, overheads)
+  with categories; supplier payments (M6) and sales proceeds (M9) flow in
+  automatically
+- Per-period P&L: revenue (sales) − green-leaf cost (payments) − expenses
+- Cost-per-kg-made-tea and margin reporting
+- Export for the factory's external accountant / tax filing
+
+**Verify:** a fixture month with known intake, payments, sales, and expenses
+produces a hand-calculated P&L to the cent; revenue and leaf cost auto-pull
+from M9/M6 without re-entry.
+
+## M11 — Production hardening, deploy & self-serve onboarding
 Web on Vercel, Supabase backups confirmed, error reporting (Sentry), runbook in
 README. Factory onboarding script (create factory + owner user) — then put it
 behind a front door: **public signup page → subscription payment (local
@@ -145,12 +174,11 @@ action gates check role ∩ entitlement. A factory that hasn't bought a module
 never sees it. This is also the feature-gate hook Phase 2 premium tiers reuse.
 
 **Verify:** customer zero runs a full month — daily collection through payment
-generation — with zero developer intervention. A test signup → payment →
-fresh factory dashboard works end to end showing only the purchased modules,
-and `db:verify-rls` proves the new tenant is isolated.
+generation and a closed P&L — with zero developer intervention. A test
+signup → payment → fresh factory dashboard works end to end showing only the
+purchased modules, and `db:verify-rls` proves the new tenant is isolated.
 
 ## Backlog (Phase 1.x, unscheduled)
-- **Accounts module:** expenses, sales, P&L on top of operational data
 - Photo/ML leaf-quality research spike (prototype against rated delivery photos
   once Phase 2 collects them)
 
@@ -170,25 +198,25 @@ quality dataset (out-turn, grade mix) that makes supplier scores credible.
 
 **Key architectural shift:** in Phase 1 a supplier is a row owned by one
 factory. In Phase 2 a supplier becomes an independent account that can deal with
-many factories. M10 makes this migration explicit; everything else builds on it.
+many factories. M12 makes this migration explicit; everything else builds on it.
 
-## M10 — Supplier identity & accounts
+## M12 — Supplier identity & accounts
 Suppliers become first-class users: new `supplier` auth role, self-signup flow,
 supplier profile (location, land size, capacity, photos). Existing factory-owned
 supplier rows become *links* (factory ↔ supplier relationships) so Phase 1
 factories keep working unchanged; a factory can invite its paper-book suppliers
 to claim their account. RLS rework: relationship-scoped policies for these
 tables (suppliers see their own data across factories; factories see linked
-suppliers). Design the **data-sharing consent model** here — M15's premium
+suppliers). Design the **data-sharing consent model** here — M17's premium
 intelligence may only ever surface consented data.
 
 **Verify:** a supplier self-signs up and sees their own delivery/payment history
 from a linked factory. Factory dashboards unchanged. RLS gates pass.
 
-## M11 — Mobile field app + offline support
+## M13 — Mobile field app + offline support
 Repurpose `apps/mobile` (built in M4) for field users — suppliers and estate
 owners: their deliveries and payment history, leaf availability posting (feeds
-M13), factory discovery preview. This is where **offline sync** lands (the old
+M15), factory discovery preview. This is where **offline sync** lands (the old
 Phase 1 M5): field connectivity is poor; reads cached locally, writes queued in
 an outbox (evaluate expo-sqlite outbox before WatermelonDB; server wins on
 conflict; client UUIDs make pushes idempotent).
@@ -196,7 +224,7 @@ conflict; client UUIDs make pushes idempotent).
 **Verify:** airplane-mode test — actions queued offline land exactly once after
 reconnect, surviving an app kill and a mid-push failure.
 
-## M12 — Geo discovery (maps)
+## M14 — Geo discovery (maps)
 Geocode supplier and factory locations. Factory-side: map + radius search for
 suppliers (capacity, quality summary). Supplier-side: nearby factories with
 their current price boards.
@@ -204,7 +232,7 @@ their current price boards.
 **Verify:** a factory finds suppliers within X km; a supplier sees nearby
 factories and prices.
 
-## M13 — Listings, offers & transactions (marketplace core)
+## M15 — Listings, offers & transactions (marketplace core)
 Suppliers post leaf availability (quantity, date, asking price, photos).
 Factories publish buy prices / make offers. Accept → transaction record that
 flows into the Phase 1 weighing/payment pipeline on delivery.
@@ -212,7 +240,7 @@ flows into the Phase 1 weighing/payment pipeline on delivery.
 **Verify:** two test accounts complete listing → offer → accept → delivery →
 payment end to end.
 
-## M14 — Quality & trust
+## M16 — Quality & trust
 Per-delivery quality rating by the factory (moisture, coarse leaf %, photos).
 Supplier quality history and score visible to buyers; price differentiation by
 grade. Supplier **acceptance-rate grade** across all factories (computable from
@@ -223,14 +251,14 @@ Phase 1 signals (out-turn, grade mix) into one supplier score.
 delivery lowers the acceptance rate; buyers can filter discovery by minimum
 score.
 
-## M15 — Marketplace operations & monetization
+## M17 — Marketplace operations & monetization
 Commission or subscription billing on transactions; SMS/push notifications;
 platform admin panel (account verification, dispute handling). **Premium
 factory tier:** basic sees a supplier's overall score; premium unlocks detailed
 intelligence (acceptance-rate history, per-factory quality breakdown, volume
 trends). **Premium supplier tier:** which factories accept leaf from competitor
 suppliers and the grades/quality they were given. Both tiers surface **only
-consented/shared data** per the consent model designed in M10, feature-gated by
+consented/shared data** per the consent model designed in M12, feature-gated by
 subscription plan.
 
 **Verify:** a completed transaction produces a correct platform fee record;
