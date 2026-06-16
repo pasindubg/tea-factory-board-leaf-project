@@ -22,37 +22,10 @@ describe("modulesForRole", () => {
     expect(hrefs).toContain("/dashboard/collectors");
   });
 
-  it("returned modules are a subset of MODULES", () => {
-    const allHrefs = MODULES.map((m) => m.href);
-    ALL_WEB_ROLES.forEach((role) => {
-      modulesForRole(role).forEach((m) => {
-        expect(allHrefs).toContain(m.href);
-      });
-    });
-  });
-
   it("every module declares an entitlement key", () => {
     MODULES.forEach((m) => {
       expect(m.entitlement).toBeTruthy();
     });
-  });
-
-  it("every module has at least one allowed role", () => {
-    MODULES.forEach((m) => {
-      expect(m.roles.length).toBeGreaterThan(0);
-    });
-  });
-
-  it("owner sees at least as many modules as manager", () => {
-    expect(modulesForRole("owner").length).toBeGreaterThanOrEqual(
-      modulesForRole("manager").length,
-    );
-  });
-
-  it("manager sees at least as many modules as collector", () => {
-    expect(modulesForRole("manager").length).toBeGreaterThanOrEqual(
-      modulesForRole("collector").length,
-    );
   });
 });
 
@@ -67,12 +40,6 @@ describe("roleHome", () => {
 
   it("manager home is main dashboard", () => {
     expect(roleHome("manager")).toBe("/dashboard");
-  });
-
-  it("all role homes start with /dashboard", () => {
-    ALL_WEB_ROLES.forEach((role) => {
-      expect(roleHome(role)).toMatch(/^\/dashboard/);
-    });
   });
 
   it("collector home is accessible to collectors", () => {

@@ -11,7 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── 1. Typecheck + unit tests ──────────────────────────────────────────────
   test:
     name: Typecheck & Tests
     runs-on: ubuntu-latest
@@ -37,11 +36,6 @@ jobs:
       - name: Unit tests
         run: pnpm turbo test
 
-  # ── 2. Next.js build check ─────────────────────────────────────────────────
-  # Requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  # to be set as GitHub Actions secrets (Settings → Secrets → Actions).
-  # The build compiles but does not contact Supabase at build time, so
-  # placeholder values work if you haven't set the real secrets yet.
   build:
     name: Build
     runs-on: ubuntu-latest

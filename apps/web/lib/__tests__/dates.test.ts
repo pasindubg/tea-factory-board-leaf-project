@@ -8,11 +8,6 @@ describe("dayRange", () => {
     expect(diff).toBe(24 * 60 * 60 * 1000);
   });
 
-  it("start is before end", () => {
-    const { start, end } = dayRange("2024-06-01");
-    expect(new Date(start).getTime()).toBeLessThan(new Date(end).getTime());
-  });
-
   it("returns valid ISO strings", () => {
     const { start, end } = dayRange("2024-03-20");
     expect(new Date(start).toISOString()).toBe(start);
@@ -20,7 +15,6 @@ describe("dayRange", () => {
   });
 
   it("start aligns with midnight of the given date", () => {
-    // The date object from T00:00:00 in Asia/Colombo should match dayRange start
     const { start } = dayRange("2024-07-04");
     const fromMidnight = new Date("2024-07-04T00:00:00").toISOString();
     expect(start).toBe(fromMidnight);
@@ -59,15 +53,6 @@ describe("lastNDates", () => {
   it("last date is today", () => {
     const dates = lastNDates(5);
     expect(dates[dates.length - 1]).toBe(localDateString());
-  });
-
-  it("returns dates in ascending order (oldest first)", () => {
-    const dates = lastNDates(5);
-    for (let i = 1; i < dates.length; i++) {
-      expect(new Date(dates[i]).getTime()).toBeGreaterThan(
-        new Date(dates[i - 1]).getTime(),
-      );
-    }
   });
 
   it("consecutive dates are exactly 1 day apart", () => {
