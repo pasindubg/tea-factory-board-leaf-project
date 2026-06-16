@@ -37,17 +37,31 @@ function LoginForm() {
 
   async function verifyCode(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return; // guard against a second submit reusing this single-use code
     setBusy(true);
     setError(null);
     const supabase = createClient();
     const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
-    setBusy(false);
-    if (error) {
-      setError(error.message);
+    if (!error) {
+      // Keep the button disabled through the redirect. Re-enabling it here invites
+      // a second press on a slow network, which would re-submit this now-consumed
+      // code and fail with "Token has expired or is invalid".
+      router.replace("/dashboard");
+      router.refresh();
       return;
     }
-    router.push("/dashboard");
-    router.refresh();
+    // On a slow link the first press can succeed while the UI still looks idle, so
+    // a second press lands here with a consumed-code error. If a session already
+    // exists, that is exactly what happened — go to the dashboard instead of
+    // showing a misleading error.
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      router.replace("/dashboard");
+      router.refresh();
+      return;
+    }
+    setBusy(false);
+    setError(error.message);
   }
 
   return (

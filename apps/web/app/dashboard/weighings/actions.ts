@@ -13,6 +13,8 @@ export async function createWeighing(formData: FormData) {
   const weightKg = String(formData.get("weight_kg") ?? "").trim();
   const collectedAt = String(formData.get("collected_at") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const tierId = String(formData.get("tier_id") ?? "").trim();
+  const waterPenaltyPct = Number(String(formData.get("water_penalty_pct") ?? "").trim() || "0");
 
   // Collectors always record as themselves; the form's collector field is
   // ignored for them so one collector can't book weighings under another.
@@ -31,6 +33,36 @@ export async function createWeighing(formData: FormData) {
     redirect("/dashboard/weighings/new?error=Supplier%2C%20collector%20and%20a%20positive%20weight%20are%20required");
   }
 
+  // Update supplier tier if one was selected and it differs from current.
+  if (tierId) {
+    const { data: existing } = await supabase
+      .from("supplier_tiers")
+      .select("tier_id")
+      .eq("supplier_id", supplierId)
+      .is("effective_to", null)
+      .maybeSingle();
+
+    if (!existing || existing.tier_id !== tierId) {
+      const today = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      if (existing) {
+        await supabase
+          .from("supplier_tiers")
+          .update({ effective_to: yesterday })
+          .eq("supplier_id", supplierId)
+          .is("effective_to", null);
+      }
+      await supabase.from("supplier_tiers").insert({
+        factory_id: profile.factory_id,
+        supplier_id: supplierId,
+        tier_id: tierId,
+        source: "manual",
+        effective_from: today,
+        assigned_by: profile.id,
+      });
+    }
+  }
+
   const { error } = await supabase.from("weighings").insert({
     id: randomUUID(),
     factory_id: profile.factory_id,
@@ -38,10 +70,30 @@ export async function createWeighing(formData: FormData) {
     collector_id: collectorId,
     weight_kg: weightKg,
     collected_at: collectedAt ? new Date(collectedAt).toISOString() : new Date().toISOString(),
-    synced_at: new Date().toISOString(), // entered directly on the server — already "synced"
+    synced_at: new Date().toISOString(),
     notes,
   });
   if (error) redirect(`/dashboard/weighings/new?error=${encodeURIComponent(error.message)}`);
+
+  // Auto-create water penalty adjustment if reported at intake.
+  if (waterPenaltyPct > 0) {
+    const occurredOn = collectedAt
+      ? new Date(collectedAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const d = new Date(`${occurredOn}T00:00:00`);
+    await supabase.from("supplier_adjustments").insert({
+      factory_id: profile.factory_id,
+      supplier_id: supplierId,
+      kind: "water_penalty",
+      label: "Water penalty",
+      amount: null,
+      percent: waterPenaltyPct.toFixed(2),
+      occurred_on: occurredOn,
+      period_year: d.getFullYear(),
+      period_month: d.getMonth() + 1,
+      created_by: profile.id,
+    });
+  }
 
   revalidatePath("/dashboard/weighings");
   revalidatePath("/dashboard");

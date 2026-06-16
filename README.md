@@ -46,8 +46,8 @@ in **[MILESTONES.md](MILESTONES.md)**.
 | M3 | Web dashboard: suppliers, collectors, weighings, charts | ✅ done |
 | M4 | Mobile app (built; parked → Phase 2 field app) | ✅ done |
 | M5 | User management + restricted collector web UI | ✅ done |
-| M6 | Payments + superleaf quality-tier pricing | 🔜 next |
-| M7 | Production & out-turn tracking | planned |
+| M6 | Payments + superleaf quality-tier pricing | ✅ done |
+| M7 | Production & out-turn tracking | 🔜 next |
 | M8 | Sifting & grades | planned |
 | M9 | Lots, deliveries & auction/buyer sales | planned |
 | M10 | Accounting (P&L) | planned |

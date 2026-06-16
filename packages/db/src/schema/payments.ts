@@ -15,8 +15,16 @@ export const payments = pgTable(
     periodYear: integer("period_year").notNull(),
     periodMonth: integer("period_month").notNull(), // 1-12
     totalKg: numeric("total_kg", { precision: 12, scale: 2 }).notNull(),
-    totalAmount: numeric("total_amount", { precision: 14, scale: 2 }).notNull(), // LKR
+    // Breakdown (payment_lines holds the itemized detail).
+    //   gross = leaf payment + tier bonus; total_amount (net) = gross − deductions
+    grossAmount: numeric("gross_amount", { precision: 14, scale: 2 }).default("0").notNull(),
+    bonusAmount: numeric("bonus_amount", { precision: 14, scale: 2 }).default("0").notNull(),
+    // what the top tier would have added — the motivational "bonus missed" figure
+    bonusMissed: numeric("bonus_missed", { precision: 14, scale: 2 }).default("0").notNull(),
+    deductionAmount: numeric("deduction_amount", { precision: 14, scale: 2 }).default("0").notNull(),
+    totalAmount: numeric("total_amount", { precision: 14, scale: 2 }).notNull(), // net LKR payable
     status: text("status", { enum: ["pending", "paid"] }).default("pending"),
+    generatedAt: timestamp("generated_at").defaultNow().notNull(),
     paidAt: timestamp("paid_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

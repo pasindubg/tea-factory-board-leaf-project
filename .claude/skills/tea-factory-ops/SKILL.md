@@ -52,8 +52,14 @@ restricted weighings-only web UI for the `collector` role). **M4 mobile app is
 built but parked** — it becomes the Phase 2 *field* app for suppliers; collectors
 turned out to be desktop users at the factory gate.
 
+**M6 (payments + superleaf) is done & verified** — quality tiers, effective-dated
+tier assignment, deductions (advances/transport/water/ad-hoc), the pure
+`packages/api` calc engine (run `pnpm --dir packages/api test:payments`), and
+printable per-supplier statements with "bonus missed". Real LKR values still need
+calibrating with the factory.
+
 **Phase 1 priority order (finish all before Phase 2):**
-M6 payments + superleaf → M7 production/out-turn → M8 sifting & grades →
+M6 payments + superleaf ✅ → M7 production/out-turn → M8 sifting & grades →
 M9 lots/deliveries/auction sales → M10 accounting/P&L → M11 deploy & self-serve
 onboarding. Then Phase 2 = M12–M17 (supplier identity, field app + offline, geo,
 listings, quality/trust, monetization). Always confirm exact status in MILESTONES.md.

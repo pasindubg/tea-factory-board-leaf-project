@@ -1,4 +1,5 @@
 import { requireProfile } from "@/lib/profile";
+import { SubmitButton } from "@/components/submit-button";
 import { setUserActive } from "./actions";
 import { RemoveUserButton } from "./remove-user-button";
 
@@ -89,9 +90,9 @@ export default async function UsersPage({
                         <form action={setUserActive}>
                           <input type="hidden" name="user_id" value={u.id} />
                           <input type="hidden" name="next_active" value={isActive ? "false" : "true"} />
-                          <button className="text-sm text-stone-600 hover:underline">
+                          <SubmitButton pendingText="…" className="text-sm text-stone-600 hover:underline">
                             {isActive ? "Deactivate" : "Reactivate"}
-                          </button>
+                          </SubmitButton>
                         </form>
                         <RemoveUserButton userId={u.id} userName={u.name} />
                       </div>

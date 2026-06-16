@@ -27,6 +27,7 @@ export const MODULES: readonly ModuleDef[] = [
   { href: "/dashboard/weighings", label: "Weighings", roles: ALL_WEB_ROLES, entitlement: "leaf-handling" },
   { href: "/dashboard/suppliers", label: "Suppliers", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
   { href: "/dashboard/collectors", label: "Collectors", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
+  { href: "/dashboard/payments", label: "Payments", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
   { href: "/dashboard/users", label: "Users", roles: ["owner"], entitlement: "leaf-handling" },
 ];
 

@@ -24,9 +24,19 @@ export type Profile = {
  */
 export async function requireProfile(allowed: readonly Role[] = MANAGEMENT_ROLES) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+
+  // getUser() calls the Supabase auth server; on a flaky network it can throw
+  // or return an error. Treat that as retryable (throw) rather than redirecting
+  // to /login, which would drop a valid session on a transient blip. Only a
+  // clean "no user, no error" result means the visitor is genuinely signed out.
+  let user;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    user = data.user;
+  } catch {
+    throw new Error("Could not verify your session right now — please retry.");
+  }
   if (!user) redirect("/login");
 
   const { data } = await supabase

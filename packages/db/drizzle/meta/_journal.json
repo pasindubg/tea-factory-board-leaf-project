@@ -15,6 +15,13 @@
       "when": 1781245080175,
       "tag": "0001_rls_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781523161204,
+      "tag": "0002_m6_payments",
+      "breakpoints": true
     }
   ]
 }

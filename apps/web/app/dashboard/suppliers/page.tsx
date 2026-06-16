@@ -1,4 +1,5 @@
 import { requireProfile } from "@/lib/profile";
+import { SubmitButton } from "@/components/submit-button";
 import { setSupplierActive } from "./actions";
 
 export default async function SuppliersPage() {
@@ -57,9 +58,9 @@ export default async function SuppliersPage() {
                         Edit
                       </a>
                       <form action={setSupplierActive.bind(null, s.id, !s.active)}>
-                        <button className="text-stone-500 hover:underline">
+                        <SubmitButton pendingText="…" className="text-stone-500 hover:underline">
                           {s.active ? "Deactivate" : "Reactivate"}
-                        </button>
+                        </SubmitButton>
                       </form>
                     </div>
                   </td>
