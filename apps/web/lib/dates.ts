@@ -2,6 +2,17 @@
 // timezone: the web app runs with TZ=Asia/Colombo (set in package.json scripts;
 // set the same env var on the deploy host). If factories ever span timezones,
 // replace this with a per-factory timezone column and explicit tz-aware math.
+if (process.env.TZ !== "Asia/Colombo") {
+  throw new Error(`TZ must be "Asia/Colombo", got ${JSON.stringify(process.env.TZ)}`);
+}
+
+const DATE_STRING_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Whether `date` is a real calendar date in YYYY-MM-DD form. */
+export function isValidDateString(date: string): boolean {
+  if (!DATE_STRING_RE.test(date)) return false;
+  return !Number.isNaN(new Date(`${date}T00:00:00`).getTime());
+}
 
 /** [start, end) ISO range for a local calendar day; date as YYYY-MM-DD. */
 export function dayRange(date: string): { start: string; end: string } {
