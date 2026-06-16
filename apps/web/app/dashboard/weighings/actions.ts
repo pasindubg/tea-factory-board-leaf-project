@@ -14,7 +14,8 @@ export async function createWeighing(formData: FormData) {
   const collectedAt = String(formData.get("collected_at") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const tierId = String(formData.get("tier_id") ?? "").trim();
-  const waterPenaltyPct = Number(String(formData.get("water_penalty_pct") ?? "").trim() || "0");
+  const waterPenalty = formData.get("water_penalty") != null; // checkbox: leaf flagged wet
+  const transportApplies = formData.get("transport_applies") != null; // checkbox (default on): factory collected
 
   // Collectors always record as themselves; the form's collector field is
   // ignored for them so one collector can't book weighings under another.
@@ -71,29 +72,11 @@ export async function createWeighing(formData: FormData) {
     weight_kg: weightKg,
     collected_at: collectedAt ? new Date(collectedAt).toISOString() : new Date().toISOString(),
     synced_at: new Date().toISOString(),
+    water_penalty: waterPenalty, // uniform penalty computed per wet delivery at payment time
+    transport_applies: transportApplies, // false = supplier delivered direct
     notes,
   });
   if (error) redirect(`/dashboard/weighings/new?error=${encodeURIComponent(error.message)}`);
-
-  // Auto-create water penalty adjustment if reported at intake.
-  if (waterPenaltyPct > 0) {
-    const occurredOn = collectedAt
-      ? new Date(collectedAt).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
-    const d = new Date(`${occurredOn}T00:00:00`);
-    await supabase.from("supplier_adjustments").insert({
-      factory_id: profile.factory_id,
-      supplier_id: supplierId,
-      kind: "water_penalty",
-      label: "Water penalty",
-      amount: null,
-      percent: waterPenaltyPct.toFixed(2),
-      occurred_on: occurredOn,
-      period_year: d.getFullYear(),
-      period_month: d.getMonth() + 1,
-      created_by: profile.id,
-    });
-  }
 
   revalidatePath("/dashboard/weighings");
   revalidatePath("/dashboard");

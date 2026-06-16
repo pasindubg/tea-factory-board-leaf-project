@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { collectorForUser, requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES } from "@/lib/roles";
+import { collectorForUser, requireModuleAccess } from "@/lib/profile";
 import { dayRange } from "@/lib/dates";
 import { WeighingsFilter } from "./weighings-filter";
 
@@ -9,7 +8,7 @@ export default async function WeighingsPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; supplier?: string; collector?: string }>;
 }) {
-  const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
+  const { supabase, profile } = await requireModuleAccess("weighings");
   const params = await searchParams;
 
   const isCollector = profile.role === "collector";

@@ -1,9 +1,9 @@
-import { requireProfile } from "@/lib/profile";
+import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { setCollectorActive } from "./actions";
 
 export default async function CollectorsPage() {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireModuleAccess("collectors");
   const { data: collectors } = await supabase
     .from("collectors")
     .select("id, name, phone, nic_number, area, active")

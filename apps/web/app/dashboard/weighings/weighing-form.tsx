@@ -26,7 +26,7 @@ export function WeighingForm({
   isCollector,
   ownCollectorName,
   transportPerKg,
-  defaultWaterPenaltyPct,
+  waterPenaltyLabel,
   error,
 }: {
   suppliers: Supplier[];
@@ -36,7 +36,7 @@ export function WeighingForm({
   isCollector: boolean;
   ownCollectorName?: string;
   transportPerKg: number;
-  defaultWaterPenaltyPct: number;
+  waterPenaltyLabel: string | null; // e.g. "10%" or "LKR 5.00/kg"; null = penalty not configured
   error?: string;
 }) {
   const [tierId, setTierId] = useState("");
@@ -84,34 +84,32 @@ export function WeighingForm({
         />
       </label>
 
-      {/* Transport — informational, applied automatically at payment generation */}
+      {/* Transport — on by default; untick for suppliers who delivered direct */}
       {transportPerKg > 0 && (
-        <div className="rounded-md bg-stone-50 px-3 py-2 text-sm text-stone-600">
-          Transport deduction: LKR {transportPerKg}/kg
-          {transportDeduction && (
-            <span className="ml-2 font-medium text-stone-800">= LKR {transportDeduction} for this delivery</span>
-          )}
-          <p className="mt-0.5 text-xs text-stone-400">Applied automatically at payment — no action needed.</p>
-        </div>
+        <label className="flex items-start gap-2 rounded-md bg-stone-50 px-3 py-2 text-sm font-medium">
+          <input name="transport_applies" type="checkbox" value="1" defaultChecked className="mt-0.5 h-4 w-4" />
+          <span>
+            Deduct transport (LKR {transportPerKg}/kg)
+            {transportDeduction && <span className="ml-1 text-stone-800">= LKR {transportDeduction}</span>}
+            <span className="mt-0.5 block text-xs font-normal text-stone-400">
+              Untick if the supplier delivered the leaf to the factory themselves.
+            </span>
+          </span>
+        </label>
       )}
 
-      {/* Water penalty — recorded now, applied at payment generation */}
-      <label className="block text-sm font-medium">
-        Water penalty (%)
-        <input
-          name="water_penalty_pct"
-          type="number"
-          step="0.01"
-          min="0"
-          max="100"
-          defaultValue={defaultWaterPenaltyPct > 0 ? defaultWaterPenaltyPct : ""}
-          placeholder="0 — leave blank if leaf is clean"
-          className={inputClass}
-        />
-        <p className="mt-1 text-xs text-stone-400">
-          Enter a % if the leaf contains water. Saved as a deduction and applied at payment.
-        </p>
-      </label>
+      {/* Water penalty — a tick at intake; the uniform rate is set by the owner */}
+      {waterPenaltyLabel && (
+        <label className="flex items-start gap-2 rounded-md bg-stone-50 px-3 py-2 text-sm font-medium">
+          <input name="water_penalty" type="checkbox" value="1" className="mt-0.5 h-4 w-4" />
+          <span>
+            Leaf is wet — apply water penalty
+            <span className="mt-0.5 block text-xs font-normal text-stone-400">
+              Standard penalty ({waterPenaltyLabel}) applied to this delivery at payment.
+            </span>
+          </span>
+        </label>
+      )}
 
       {tiers.length > 0 && (
         <label className="block text-sm font-medium">

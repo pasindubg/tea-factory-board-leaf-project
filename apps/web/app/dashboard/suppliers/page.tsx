@@ -1,9 +1,9 @@
-import { requireProfile } from "@/lib/profile";
+import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { setSupplierActive } from "./actions";
 
 export default async function SuppliersPage() {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireModuleAccess("suppliers");
   const { data: suppliers } = await supabase
     .from("suppliers")
     .select("id, name, phone, area, land_size_acres, active, collectors(name)")

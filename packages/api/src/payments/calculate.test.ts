@@ -50,6 +50,7 @@ const fixture: CalcInput = {
     { kind: "other", label: "Sacks", amount: 200, percent: null },
   ],
   transportPerKg: 5,
+  waterPenalty: { mode: "percent", perKg: 0, pct: 0 }, // no wet deliveries in this fixture
 };
 
 const s = computeStatement(fixture);
@@ -74,9 +75,64 @@ const pct = computeStatement({
   assignments: [{ tierId: "prem", effectiveFrom: "2026-06-01", effectiveTo: null }],
   adjustments: [],
   transportPerKg: 0,
+  waterPenalty: { mode: "percent", perKg: 0, pct: 0 },
 });
 expect("percent-bonus gross", pct.grossAmount, 22000);
 expect("percent-bonus bonusMissed", pct.bonusMissed, 0);
+
+// Per-delivery water penalty (issue #2 regression guard).
+//   Two deliveries, only the second is wet: 100 kg clean + 40 kg wet, rate 200 flat.
+//   gross = 140×200 = 28000.
+//   PERCENT mode @10%: penalty hits ONLY the wet delivery → 40×200×.10 = 800
+//     (the bug would have charged 10% of the whole 28000 = 2800).
+const wetPct = computeStatement({
+  weighings: [
+    { weightKg: 100, collectedAt: "2026-06-10T08:00:00Z", waterPenalty: false },
+    { weightKg: 40, collectedAt: "2026-06-12T08:00:00Z", waterPenalty: true },
+  ],
+  baseRates: [{ pricePerKg: 200, effectiveFrom: "2026-06-01", effectiveTo: null }],
+  tiers: [],
+  assignments: [],
+  adjustments: [],
+  transportPerKg: 0,
+  waterPenalty: { mode: "percent", perKg: 0, pct: 10 },
+});
+expect("wet-delivery percent penalty (not whole month)", wetPct.deductionAmount, 800);
+expect("wet-delivery percent net", wetPct.netAmount, 27200);
+
+//   PER_KG mode @15/kg: wet delivery only → 40×15 = 600.
+const wetPerKg = computeStatement({
+  weighings: [
+    { weightKg: 100, collectedAt: "2026-06-10T08:00:00Z", waterPenalty: false },
+    { weightKg: 40, collectedAt: "2026-06-12T08:00:00Z", waterPenalty: true },
+  ],
+  baseRates: [{ pricePerKg: 200, effectiveFrom: "2026-06-01", effectiveTo: null }],
+  tiers: [],
+  assignments: [],
+  adjustments: [],
+  transportPerKg: 0,
+  waterPenalty: { mode: "per_kg", perKg: 15, pct: 0 },
+});
+expect("wet-delivery per-kg penalty", wetPerKg.deductionAmount, 600);
+expect("wet-delivery per-kg net", wetPerKg.netAmount, 27400);
+
+// Per-delivery transport: a direct-drop delivery isn't cut.
+//   100 kg collected + 40 kg dropped direct, rate 200, transport 5/kg.
+//   transport hits only the 100 kg → 100×5 = 500 (not 140×5 = 700).
+const directDrop = computeStatement({
+  weighings: [
+    { weightKg: 100, collectedAt: "2026-06-10T08:00:00Z", transportApplies: true },
+    { weightKg: 40, collectedAt: "2026-06-12T08:00:00Z", transportApplies: false },
+  ],
+  baseRates: [{ pricePerKg: 200, effectiveFrom: "2026-06-01", effectiveTo: null }],
+  tiers: [],
+  assignments: [],
+  adjustments: [],
+  transportPerKg: 5,
+  waterPenalty: { mode: "percent", perKg: 0, pct: 0 },
+});
+expect("direct-drop transport (only collected kg)", directDrop.deductionAmount, 500);
+expect("direct-drop net", directDrop.netAmount, 27500);
 
 console.log(failures === 0 ? "\nPayment calc: ALL CHECKS PASSED" : `\nPayment calc: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

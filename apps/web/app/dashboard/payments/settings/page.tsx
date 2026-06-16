@@ -9,7 +9,12 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 type Rate = { price_per_kg: string; effective_from: string; effective_to: string | null };
 type Tier = { id: string; name: string; bonus_kind: string; bonus_value: string; sort_order: number; active: boolean };
-type Settings = { transport_per_kg: string; default_water_penalty_pct: string } | null;
+type Settings = {
+  transport_per_kg: string;
+  water_penalty_mode: "per_kg" | "percent";
+  water_penalty_per_kg: string;
+  default_water_penalty_pct: string;
+} | null;
 
 export default async function PaymentSettingsPage({
   searchParams,
@@ -22,7 +27,7 @@ export default async function PaymentSettingsPage({
   const [{ data: rates }, { data: tiers }, { data: settings }] = await Promise.all([
     supabase.from("price_rates").select("price_per_kg, effective_from, effective_to").eq("grade", "GREEN_LEAF").order("effective_from", { ascending: false }),
     supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order, active").order("sort_order"),
-    supabase.from("payment_settings").select("transport_per_kg, default_water_penalty_pct").maybeSingle(),
+    supabase.from("payment_settings").select("transport_per_kg, water_penalty_mode, water_penalty_per_kg, default_water_penalty_pct").maybeSingle(),
   ]);
   const rateRows = (rates ?? []) as Rate[];
   const tierRows = (tiers ?? []) as Tier[];
@@ -142,11 +147,11 @@ export default async function PaymentSettingsPage({
 
       {/* Deduction defaults */}
       <section className="rounded-xl border border-stone-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-stone-800">Deduction defaults</h2>
+        <h2 className="text-sm font-semibold text-stone-800">Deductions</h2>
         <p className="mt-1 text-sm text-stone-500">
-          Transport is applied to every supplier&apos;s kg automatically (0 = none). The water-penalty default only
-          pre-fills the deduction form — it is never auto-applied; you add a water penalty per supplier when you find wet
-          leaf.
+          Transport is applied to every supplier&apos;s kg automatically (0 = none). The water penalty is uniform across
+          suppliers — set the mode and rate here; at the weighbridge the recorder just ticks &ldquo;leaf is wet&rdquo; and
+          it is charged on that delivery only.
         </p>
         <form action={saveSettings} className="mt-4 flex flex-wrap items-end gap-3">
           <label className="text-sm">
@@ -154,13 +159,27 @@ export default async function PaymentSettingsPage({
             <input name="transport_per_kg" type="number" step="0.01" min="0" defaultValue={s?.transport_per_kg ?? "0"} className={`${input} w-40`} />
           </label>
           <label className="text-sm">
-            Default water penalty (%)
-            <input name="default_water_penalty_pct" type="number" step="0.01" min="0" max="100" defaultValue={s?.default_water_penalty_pct ?? "0"} className={`${input} w-48`} />
+            Water penalty mode
+            <select name="water_penalty_mode" defaultValue={s?.water_penalty_mode ?? "percent"} className={`${input} w-44`}>
+              <option value="percent">% of delivery value</option>
+              <option value="per_kg">Flat LKR/kg</option>
+            </select>
+          </label>
+          <label className="text-sm">
+            Penalty rate (%)
+            <input name="default_water_penalty_pct" type="number" step="0.01" min="0" max="100" defaultValue={s?.default_water_penalty_pct ?? "0"} className={`${input} w-32`} />
+          </label>
+          <label className="text-sm">
+            Penalty rate (LKR/kg)
+            <input name="water_penalty_per_kg" type="number" step="0.01" min="0" defaultValue={s?.water_penalty_per_kg ?? "0"} className={`${input} w-36`} />
           </label>
           <SubmitButton pendingText="Saving…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">
             Save defaults
           </SubmitButton>
         </form>
+        <p className="mt-2 text-xs text-stone-500">
+          Fill the field matching the selected mode. The other is ignored.
+        </p>
       </section>
     </div>
   );

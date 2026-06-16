@@ -1,5 +1,5 @@
 import { requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES, modulesForRole } from "@/lib/roles";
+import { ALL_WEB_ROLES, MODULES, type Role } from "@/lib/roles";
 import { SidebarNav } from "./sidebar-nav";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -11,7 +11,22 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .eq("id", profile.factory_id)
     .single();
   const factoryName = factory?.name ?? "Unknown factory";
-  const nav = modulesForRole(profile.role);
+
+  // Fetch per-factory module permission overrides (small table, fast).
+  const { data: overrides } = await supabase
+    .from("module_permissions")
+    .select("module_key, allowed_roles");
+
+  const overrideMap = Object.fromEntries(
+    (overrides ?? []).map((r) => [r.module_key, r.allowed_roles as string[]]),
+  );
+
+  // Owner always sees everything; others respect overrides → defaults.
+  const nav = MODULES.filter((mod) => {
+    if (profile.role === "owner") return true;
+    const allowed: string[] = overrideMap[mod.key] ?? [...mod.roles];
+    return allowed.includes(profile.role as Role);
+  });
 
   return (
     <div className="flex h-screen bg-stone-50">

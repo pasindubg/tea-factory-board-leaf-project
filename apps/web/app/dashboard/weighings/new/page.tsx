@@ -20,7 +20,7 @@ export default async function NewWeighingPage({
         : supabase.from("collectors").select("id, name").neq("active", false).order("name"),
       supabase.from("quality_tiers").select("id, name").eq("active", true).order("sort_order"),
       supabase.from("supplier_tiers").select("supplier_id, tier_id").is("effective_to", null),
-      supabase.from("payment_settings").select("transport_per_kg, default_water_penalty_pct").maybeSingle(),
+      supabase.from("payment_settings").select("transport_per_kg, water_penalty_mode, water_penalty_per_kg, default_water_penalty_pct").maybeSingle(),
       isCollector ? collectorForUser(supabase, profile.id) : Promise.resolve(null),
     ]);
 
@@ -54,7 +54,21 @@ export default async function NewWeighingPage({
   const assignmentMap = new Map(
     (assignments ?? []).map((a) => [a.supplier_id, a.tier_id]),
   );
-  const s = settings as { transport_per_kg: string; default_water_penalty_pct: string } | null;
+  const s = settings as {
+    transport_per_kg: string;
+    water_penalty_mode: "per_kg" | "percent";
+    water_penalty_per_kg: string;
+    default_water_penalty_pct: string;
+  } | null;
+
+  // The owner sets one uniform water penalty (a flat LKR/kg or a %). The form
+  // only shows a tick; this label tells the recorder what ticking will cost.
+  const perKg = Number(s?.water_penalty_per_kg ?? 0);
+  const pct = Number(s?.default_water_penalty_pct ?? 0);
+  const waterPenaltyLabel =
+    s?.water_penalty_mode === "per_kg"
+      ? perKg > 0 ? `LKR ${perKg.toFixed(2)}/kg` : null
+      : pct > 0 ? `${pct}%` : null;
 
   return (
     <div>
@@ -67,7 +81,7 @@ export default async function NewWeighingPage({
         isCollector={isCollector}
         ownCollectorName={ownCollector?.name}
         transportPerKg={Number(s?.transport_per_kg ?? 0)}
-        defaultWaterPenaltyPct={Number(s?.default_water_penalty_pct ?? 0)}
+        waterPenaltyLabel={waterPenaltyLabel}
         error={error}
       />
     </div>

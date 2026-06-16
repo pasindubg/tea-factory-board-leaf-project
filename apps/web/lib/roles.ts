@@ -2,9 +2,9 @@
 // "Modular architecture"). Adding a feature module = add its schema + route
 // group, then register it here. Never inline role checks in pages.
 
-export type Role = "owner" | "manager" | "collector";
+export type Role = "owner" | "manager" | "supervisor" | "accountant" | "collector";
 
-export const ALL_WEB_ROLES: readonly Role[] = ["owner", "manager", "collector"];
+export const ALL_WEB_ROLES: readonly Role[] = ["owner", "manager", "supervisor", "accountant", "collector"];
 export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
 
 /**
@@ -16,20 +16,63 @@ export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
 export type Entitlement = "leaf-handling" | "production" | "accounts";
 
 export type ModuleDef = {
+  key: string;
   href: string;
   label: string;
   roles: readonly Role[];
   entitlement: Entitlement;
 };
 
+// Default access per module. Per-factory overrides are stored in module_permissions
+// and read at runtime by requireModuleAccess(). Owner always has access to everything.
 export const MODULES: readonly ModuleDef[] = [
-  { href: "/dashboard", label: "Overview", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
-  { href: "/dashboard/weighings", label: "Weighings", roles: ALL_WEB_ROLES, entitlement: "leaf-handling" },
-  { href: "/dashboard/suppliers", label: "Suppliers", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
-  { href: "/dashboard/collectors", label: "Collectors", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
-  { href: "/dashboard/payments", label: "Payments", roles: MANAGEMENT_ROLES, entitlement: "leaf-handling" },
-  { href: "/dashboard/users", label: "Users", roles: ["owner"], entitlement: "leaf-handling" },
+  {
+    key: "overview",
+    href: "/dashboard",
+    label: "Overview",
+    roles: ["owner", "manager", "supervisor", "accountant"],
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "weighings",
+    href: "/dashboard/weighings",
+    label: "Weighings",
+    roles: ALL_WEB_ROLES,
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "suppliers",
+    href: "/dashboard/suppliers",
+    label: "Suppliers",
+    roles: ["owner", "manager", "supervisor", "accountant"],
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "collectors",
+    href: "/dashboard/collectors",
+    label: "Collectors",
+    roles: ["owner", "manager", "supervisor"],
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "payments",
+    href: "/dashboard/payments",
+    label: "Payments",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "users",
+    href: "/dashboard/users",
+    label: "Users",
+    roles: MANAGEMENT_ROLES,
+    entitlement: "leaf-handling",
+  },
 ];
+
+export function getDefaultRoles(moduleKey: string): readonly Role[] {
+  return MODULES.find((m) => m.key === moduleKey)?.roles ?? MANAGEMENT_ROLES;
+}
 
 export function modulesForRole(role: Role): readonly ModuleDef[] {
   return MODULES.filter((m) => m.roles.includes(role));
@@ -39,3 +82,11 @@ export function modulesForRole(role: Role): readonly ModuleDef[] {
 export function roleHome(role: Role): string {
   return role === "collector" ? "/dashboard/weighings" : "/dashboard";
 }
+
+export const ROLE_LABELS: Record<Role, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  supervisor: "Supervisor",
+  accountant: "Accountant",
+  collector: "Collector",
+};

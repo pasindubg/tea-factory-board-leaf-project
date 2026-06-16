@@ -36,6 +36,14 @@ export type TierAssignment = {
 export type WeighingInput = {
   weightKg: number;
   collectedAt: string; // ISO timestamp
+  waterPenalty?: boolean; // leaf flagged wet at intake — penalised per delivery
+  transportApplies?: boolean; // false = supplier delivered direct, no transport cut (default true)
+};
+
+export type WaterPenaltyConfig = {
+  mode: "per_kg" | "percent";
+  perKg: number; // LKR/kg when mode = per_kg
+  pct: number; // % of the delivery's leaf value when mode = percent
 };
 
 export type AdjustmentInput = {
@@ -52,6 +60,7 @@ export type CalcInput = {
   assignments: TierAssignment[]; // this supplier's tier history
   adjustments: AdjustmentInput[];
   transportPerKg: number; // factory default; 0 = none
+  waterPenalty: WaterPenaltyConfig; // uniform across suppliers; applied per wet delivery
 };
 
 export type StatementLine = {
@@ -92,7 +101,7 @@ function bonusPerKg(tier: Tier | undefined, baseRate: number): number {
 }
 
 export function computeStatement(input: CalcInput): Statement {
-  const { weighings, baseRates, tiers, assignments, adjustments, transportPerKg } = input;
+  const { weighings, baseRates, tiers, assignments, adjustments, transportPerKg, waterPenalty } = input;
   const warnings: string[] = [];
 
   const topTier = [...tiers].sort((a, b) => b.sortOrder - a.sortOrder)[0];
@@ -105,6 +114,13 @@ export function computeStatement(input: CalcInput): Statement {
   const groups = new Map<string, Group>();
   let totalKg = 0;
   let bonusMissed = 0;
+  // Water penalty is charged per wet delivery against THAT delivery's value,
+  // never against the whole month's gross — so one wet truckload doesn't dock
+  // the supplier's clean deliveries.
+  let waterPenaltyTotal = 0;
+  // Transport is charged only on deliveries the factory collected; suppliers who
+  // dropped leaf off directly (transportApplies === false) aren't cut.
+  let transportKg = 0;
 
   for (const w of weighings) {
     const day = dateOf(w.collectedAt);
@@ -117,6 +133,7 @@ export function computeStatement(input: CalcInput): Statement {
     const tier = assignment ? tierById.get(assignment.tierId) : undefined;
 
     totalKg += w.weightKg;
+    if (w.transportApplies !== false) transportKg += w.weightKg;
 
     const key = `${baseRate}|${tier?.id ?? "none"}`;
     const g = groups.get(key) ?? { baseRate, tier, kg: 0 };
@@ -127,7 +144,15 @@ export function computeStatement(input: CalcInput): Statement {
     const earned = bonusPerKg(tier, baseRate);
     const best = bonusPerKg(topTier, baseRate);
     bonusMissed += Math.max(0, (best - earned) * w.weightKg);
+
+    if (w.waterPenalty) {
+      waterPenaltyTotal +=
+        waterPenalty.mode === "per_kg"
+          ? w.weightKg * waterPenalty.perKg
+          : (w.weightKg * baseRate * waterPenalty.pct) / 100;
+    }
   }
+  waterPenaltyTotal = round2(waterPenaltyTotal);
 
   const lines: StatementLine[] = [];
   let leafAmount = 0;
@@ -169,16 +194,28 @@ export function computeStatement(input: CalcInput): Statement {
   let deductionAmount = 0;
   let positiveAdj = 0;
 
-  if (transportPerKg > 0 && totalKg > 0) {
-    const amt = round2(totalKg * transportPerKg);
+  if (transportPerKg > 0 && transportKg > 0) {
+    const amt = round2(transportKg * transportPerKg);
     deductionAmount += amt;
     lines.push({
       lineType: "transport",
       label: "Transport",
-      quantity: round2(totalKg),
+      quantity: round2(transportKg),
       rate: round2(transportPerKg),
       amount: -amt,
       sortOrder: 30,
+    });
+  }
+
+  if (waterPenaltyTotal > 0) {
+    deductionAmount += waterPenaltyTotal;
+    lines.push({
+      lineType: "water_penalty",
+      label: "Water penalty (wet deliveries)",
+      quantity: null,
+      rate: null,
+      amount: -waterPenaltyTotal,
+      sortOrder: 35,
     });
   }
 

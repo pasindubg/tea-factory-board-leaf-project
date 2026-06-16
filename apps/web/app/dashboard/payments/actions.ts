@@ -47,15 +47,22 @@ export async function saveBaseRate(formData: FormData) {
 export async function saveSettings(formData: FormData) {
   const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
   const transport = num(formData.get("transport_per_kg"));
-  const water = num(formData.get("default_water_penalty_pct"));
+  const waterMode = str(formData.get("water_penalty_mode"));
+  const waterPct = num(formData.get("default_water_penalty_pct"));
+  const waterPerKg = num(formData.get("water_penalty_per_kg"));
   const settingsPath = `${PAY}/settings`;
-  if (transport < 0 || water < 0 || water > 100) back(settingsPath, "Enter valid non-negative values (water % ≤ 100).");
+  if (waterMode !== "per_kg" && waterMode !== "percent") back(settingsPath, "Pick a valid water-penalty mode.");
+  if (transport < 0 || waterPct < 0 || waterPct > 100 || waterPerKg < 0) {
+    back(settingsPath, "Enter valid non-negative values (water % ≤ 100).");
+  }
 
   const { error } = await supabase.from("payment_settings").upsert(
     {
       factory_id: profile.factory_id,
       transport_per_kg: money(transport),
-      default_water_penalty_pct: money(water),
+      water_penalty_mode: waterMode,
+      water_penalty_per_kg: money(waterPerKg),
+      default_water_penalty_pct: money(waterPct),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "factory_id" },
@@ -193,7 +200,13 @@ type AdjRow = {
   period_month: number | null;
   occurred_on: string;
 };
-type WeighRow = { supplier_id: string; weight_kg: string; collected_at: string };
+type WeighRow = {
+  supplier_id: string;
+  weight_kg: string;
+  collected_at: string;
+  water_penalty: boolean | null;
+  transport_applies: boolean | null;
+};
 
 export async function generatePayments(formData: FormData) {
   const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
@@ -205,12 +218,12 @@ export async function generatePayments(formData: FormData) {
   const endISO = new Date(year, month, 1).toISOString();
 
   const [weighRes, ratesRes, tiersRes, assignRes, adjRes, settingsRes, existingRes] = await Promise.all([
-    supabase.from("weighings").select("supplier_id, weight_kg, collected_at").gte("collected_at", startISO).lt("collected_at", endISO),
+    supabase.from("weighings").select("supplier_id, weight_kg, collected_at, water_penalty, transport_applies").gte("collected_at", startISO).lt("collected_at", endISO),
     supabase.from("price_rates").select("price_per_kg, effective_from, effective_to").eq("grade", "GREEN_LEAF"),
     supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order").eq("active", true),
     supabase.from("supplier_tiers").select("supplier_id, tier_id, effective_from, effective_to"),
     supabase.from("supplier_adjustments").select("supplier_id, kind, label, amount, percent, period_year, period_month, occurred_on"),
-    supabase.from("payment_settings").select("transport_per_kg").eq("factory_id", profile.factory_id).maybeSingle(),
+    supabase.from("payment_settings").select("transport_per_kg, water_penalty_mode, water_penalty_per_kg, default_water_penalty_pct").eq("factory_id", profile.factory_id).maybeSingle(),
     supabase.from("payments").select("id, supplier_id, status").eq("period_year", year).eq("period_month", month),
   ]);
 
@@ -231,7 +244,18 @@ export async function generatePayments(formData: FormData) {
     bonusValue: Number(t.bonus_value),
     sortOrder: t.sort_order,
   }));
-  const transportPerKg = Number((settingsRes.data as { transport_per_kg: string } | null)?.transport_per_kg ?? 0);
+  const settings = settingsRes.data as {
+    transport_per_kg: string;
+    water_penalty_mode: "per_kg" | "percent";
+    water_penalty_per_kg: string;
+    default_water_penalty_pct: string;
+  } | null;
+  const transportPerKg = Number(settings?.transport_per_kg ?? 0);
+  const waterPenalty = {
+    mode: settings?.water_penalty_mode ?? "percent",
+    perKg: Number(settings?.water_penalty_per_kg ?? 0),
+    pct: Number(settings?.default_water_penalty_pct ?? 0),
+  } as const;
 
   const assignBySupplier = new Map<string, AssignRow[]>();
   for (const a of (assignRes.data as AssignRow[] ?? [])) {
@@ -266,7 +290,12 @@ export async function generatePayments(formData: FormData) {
     if (existing) await supabase.from("payments").delete().eq("id", existing.id); // lines cascade
 
     const input: CalcInput = {
-      weighings: supplierWeighings.map((w) => ({ weightKg: Number(w.weight_kg), collectedAt: w.collected_at })),
+      weighings: supplierWeighings.map((w) => ({
+        weightKg: Number(w.weight_kg),
+        collectedAt: w.collected_at,
+        waterPenalty: w.water_penalty === true,
+        transportApplies: w.transport_applies !== false,
+      })),
       baseRates,
       tiers,
       assignments: (assignBySupplier.get(supplierId) ?? []).map((a) => ({
@@ -281,6 +310,7 @@ export async function generatePayments(formData: FormData) {
         percent: a.percent != null ? Number(a.percent) : null,
       })),
       transportPerKg,
+      waterPenalty,
     };
     const s = computeStatement(input);
 

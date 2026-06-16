@@ -12,3 +12,4 @@ export * from "./lots";
 export * from "./weighings";
 export * from "./payments";
 export * from "./payment-lines";
+export * from "./module-permissions";
