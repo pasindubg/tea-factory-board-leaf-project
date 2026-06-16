@@ -1,6 +1,6 @@
 import { collectorForUser, requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES } from "@/lib/roles";
-import { dayRange, localDateString } from "@/lib/dates";
+import { dayRange, isValidDateString, localDateString } from "@/lib/dates";
 
 const inputClass = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-green-600 focus:outline-none";
 
@@ -11,7 +11,7 @@ export default async function WeighingsPage({
 }) {
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
   const params = await searchParams;
-  const date = params.date || localDateString();
+  const date = params.date && isValidDateString(params.date) ? params.date : localDateString();
   const { start, end } = dayRange(date);
 
   // Collectors see only their own records, regardless of query params.
