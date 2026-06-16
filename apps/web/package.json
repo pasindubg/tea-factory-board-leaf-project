@@ -6,7 +6,9 @@
     "dev": "TZ=Asia/Colombo next dev",
     "build": "TZ=Asia/Colombo next build",
     "start": "TZ=Asia/Colombo next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "TZ=Asia/Colombo vitest run",
+    "test:watch": "TZ=Asia/Colombo vitest"
   },
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
@@ -22,6 +24,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
   }
 }
