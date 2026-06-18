@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, numeric, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, numeric, boolean, index } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { collectors } from "./collectors";
 import { suppliers } from "./suppliers";
@@ -24,6 +24,8 @@ export const weighings = pgTable(
     grade: teaGrade("grade").notNull().default("GREEN_LEAF"),
     collectedAt: timestamp("collected_at").notNull(), // actual collection time (set on device)
     syncedAt: timestamp("synced_at"), // null until pushed to server
+    waterPenalty: boolean("water_penalty").default(false).notNull(), // leaf flagged wet at intake
+    transportApplies: boolean("transport_applies").default(true).notNull(), // false = supplier delivered direct
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

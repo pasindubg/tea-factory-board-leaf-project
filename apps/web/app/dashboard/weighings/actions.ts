@@ -13,6 +13,9 @@ export async function createWeighing(formData: FormData) {
   const weightKg = String(formData.get("weight_kg") ?? "").trim();
   const collectedAt = String(formData.get("collected_at") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const tierId = String(formData.get("tier_id") ?? "").trim();
+  const waterPenalty = formData.get("water_penalty") != null; // checkbox: leaf flagged wet
+  const transportApplies = formData.get("transport_applies") != null; // checkbox (default on): factory collected
 
   // Collectors always record as themselves; the form's collector field is
   // ignored for them so one collector can't book weighings under another.
@@ -31,6 +34,36 @@ export async function createWeighing(formData: FormData) {
     redirect("/dashboard/weighings/new?error=Supplier%2C%20collector%20and%20a%20positive%20weight%20are%20required");
   }
 
+  // Update supplier tier if one was selected and it differs from current.
+  if (tierId) {
+    const { data: existing } = await supabase
+      .from("supplier_tiers")
+      .select("tier_id")
+      .eq("supplier_id", supplierId)
+      .is("effective_to", null)
+      .maybeSingle();
+
+    if (!existing || existing.tier_id !== tierId) {
+      const today = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      if (existing) {
+        await supabase
+          .from("supplier_tiers")
+          .update({ effective_to: yesterday })
+          .eq("supplier_id", supplierId)
+          .is("effective_to", null);
+      }
+      await supabase.from("supplier_tiers").insert({
+        factory_id: profile.factory_id,
+        supplier_id: supplierId,
+        tier_id: tierId,
+        source: "manual",
+        effective_from: today,
+        assigned_by: profile.id,
+      });
+    }
+  }
+
   const { error } = await supabase.from("weighings").insert({
     id: randomUUID(),
     factory_id: profile.factory_id,
@@ -38,7 +71,9 @@ export async function createWeighing(formData: FormData) {
     collector_id: collectorId,
     weight_kg: weightKg,
     collected_at: collectedAt ? new Date(collectedAt).toISOString() : new Date().toISOString(),
-    synced_at: new Date().toISOString(), // entered directly on the server — already "synced"
+    synced_at: new Date().toISOString(),
+    water_penalty: waterPenalty, // uniform penalty computed per wet delivery at payment time
+    transport_applies: transportApplies, // false = supplier delivered direct
     notes,
   });
   if (error) redirect(`/dashboard/weighings/new?error=${encodeURIComponent(error.message)}`);

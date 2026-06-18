@@ -1,6 +1,5 @@
-// tRPC routers land here in M6 (payments) and M5 (sync).
-// Imports @tea/db to verify the workspace dependency graph builds in order.
-import { weighings } from "@tea/db";
-
-export const PACKAGE_NAME = "@tea/api";
-export type WeighingsTable = typeof weighings;
+// Shared server-side logic. The payment-calculation engine (M6) is the first
+// real export — a pure, fixture-tested function the web app's payment-generation
+// server action calls. tRPC routers can wrap these later if a typed RPC
+// transport is needed; today App Router server actions call them directly.
+export * from "./payments/calculate";

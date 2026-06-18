@@ -78,6 +78,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.49.0
         version: 2.108.1
+      '@tea/api':
+        specifier: workspace:*
+        version: link:../../packages/api
       next:
         specifier: ^15.3.0
         version: 15.5.19(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -116,6 +119,9 @@ importers:
         specifier: workspace:*
         version: link:../db
     devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -5706,7 +5712,9 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 

@@ -1,8 +1,8 @@
 import { requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES, modulesForRole } from "@/lib/roles";
+import { ALL_WEB_ROLES, MODULES, type Role } from "@/lib/roles";
+import { SidebarNav } from "./sidebar-nav";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  // All active roles may enter the shell; per-page gates narrow further.
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
 
   const { data: factory } = await supabase
@@ -12,40 +12,43 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .single();
   const factoryName = factory?.name ?? "Unknown factory";
 
-  const nav = modulesForRole(profile.role);
+  // Fetch per-factory module permission overrides (small table, fast).
+  const { data: overrides } = await supabase
+    .from("module_permissions")
+    .select("module_key, allowed_roles");
+
+  const overrideMap = Object.fromEntries(
+    (overrides ?? []).map((r) => [r.module_key, r.allowed_roles as string[]]),
+  );
+
+  // Owner always sees everything; others respect overrides → defaults.
+  const nav = MODULES.filter((mod) => {
+    if (profile.role === "owner") return true;
+    const allowed: string[] = overrideMap[mod.key] ?? [...mod.roles];
+    return allowed.includes(profile.role as Role);
+  });
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <div>
-            <p className="text-sm font-semibold text-green-800">{factoryName}</p>
-            <p className="text-xs text-stone-500">Tea Factory Ops</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-stone-600">
-              {profile.name} · {profile.role}
-            </span>
-            <form action="/auth/signout" method="post">
-              <button className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100">
-                Sign out
-              </button>
-            </form>
-          </div>
+    <div className="flex h-screen bg-stone-50">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-stone-200 bg-white print:hidden">
+        <div className="border-b border-stone-200 p-4">
+          <p className="text-sm font-semibold text-green-800">{factoryName}</p>
+          <p className="text-xs text-stone-500">Tea Factory Ops</p>
         </div>
-        <nav className="mx-auto flex max-w-6xl gap-1 px-4">
-          {nav.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              className="rounded-t-md px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 hover:text-stone-900"
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+        <div className="flex-1 overflow-y-auto p-3">
+          <SidebarNav items={nav} />
+        </div>
+        <div className="border-t border-stone-200 p-4">
+          <p className="text-sm font-medium text-stone-700">{profile.name}</p>
+          <p className="text-xs capitalize text-stone-500">{profile.role}</p>
+          <form action="/auth/signout" method="post" className="mt-3">
+            <button className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100">
+              Sign out
+            </button>
+          </form>
+        </div>
+      </aside>
+      <main className="flex-1 overflow-y-auto p-8">{children}</main>
     </div>
   );
 }

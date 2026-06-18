@@ -1,3 +1,5 @@
+import { SubmitButton } from "@/components/submit-button";
+
 type CollectorValues = {
   name?: string;
   phone?: string | null;
@@ -43,12 +45,12 @@ export function CollectorForm({
         <input name="area" defaultValue={values.area ?? ""} className={inputClass} />
       </label>
       <div className="flex gap-3 pt-2">
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="Saving…"
           className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
         >
           {submitLabel}
-        </button>
+        </SubmitButton>
         <a href="/dashboard/collectors" className="rounded-md border border-stone-300 px-4 py-2 text-sm hover:bg-stone-100">
           Cancel
         </a>

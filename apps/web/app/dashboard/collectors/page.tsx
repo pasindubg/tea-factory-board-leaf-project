@@ -1,8 +1,9 @@
-import { requireProfile } from "@/lib/profile";
+import { requireModuleAccess } from "@/lib/profile";
+import { SubmitButton } from "@/components/submit-button";
 import { setCollectorActive } from "./actions";
 
 export default async function CollectorsPage() {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireModuleAccess("collectors");
   const { data: collectors } = await supabase
     .from("collectors")
     .select("id, name, phone, nic_number, area, active")
@@ -53,9 +54,9 @@ export default async function CollectorsPage() {
                       Edit
                     </a>
                     <form action={setCollectorActive.bind(null, c.id, !c.active)}>
-                      <button className="text-stone-500 hover:underline">
+                      <SubmitButton pendingText="…" className="text-stone-500 hover:underline">
                         {c.active ? "Deactivate" : "Reactivate"}
-                      </button>
+                      </SubmitButton>
                     </form>
                   </div>
                 </td>

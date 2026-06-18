@@ -80,10 +80,16 @@ The web app becomes the single surface for all factory staff:
 Weighings, records one pinned to their own collector id; a deactivated user is
 locked out; a removed user can't sign in; `db:verify-rls` still passes.
 
-## M6 — Payments (the killer feature)
-⚠️ Before building: confirm the real payment formula with customer zero.
-Likely monthly green-leaf rate × kg with quality adjustments —
-adjust `price_rates` schema accordingly.
+## M6 — Payments (the killer feature) ✅ built & verified
+⚠️ Numbers used so far are illustrative — **confirm the real payment formula and
+calibrate base/bonus/deduction values with customer zero** before a live month.
+Built: deduction line-items (advances, transport, water penalty, ad-hoc),
+quality tiers supporting flat-LKR or %-of-base bonuses, effective-dated manual
+tier assignment (with a `source` field so M7/M8 auto-scoring can write later),
+the pure calc engine in `packages/api` (fixture-tested to the cent across a
+mid-month rate AND tier change), and per-supplier statements with the
+"bonus missed" figure. Calc runs in a server action over the shared engine
+rather than full tRPC transport (App Router idiom; engine stays testable).
 
 - Settings page: manage rates (effective-from dates)
 - **Quality-tier pricing ("superleaf"):** per-factory tiers with per-kg bonus

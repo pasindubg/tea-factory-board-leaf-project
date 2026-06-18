@@ -23,12 +23,23 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  // refresh the session if expired — required for Server Components
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Refresh the session if expired — required for Server Components. getUser()
+  // hits the Supabase auth server, so a flaky network can make it throw or
+  // return an error. Fail OPEN in that case: redirecting an authenticated user
+  // to /login on a transient blip is worse than letting the request through,
+  // and each page's requireProfile re-checks auth anyway (the real gate). We
+  // only redirect when we DEFINITIVELY got no user and no error.
+  let user = null;
+  let couldNotVerify = false;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    user = data.user;
+    couldNotVerify = !!error;
+  } catch {
+    couldNotVerify = true;
+  }
 
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+  if (!user && !couldNotVerify && request.nextUrl.pathname.startsWith("/dashboard")) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

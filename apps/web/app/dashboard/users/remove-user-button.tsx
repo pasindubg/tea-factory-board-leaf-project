@@ -1,5 +1,6 @@
 "use client";
 
+import { SubmitButton } from "@/components/submit-button";
 import { removeUser } from "./actions";
 
 export function RemoveUserButton({ userId, userName }: { userId: string; userName: string }) {
@@ -13,7 +14,9 @@ export function RemoveUserButton({ userId, userName }: { userId: string; userNam
       }}
     >
       <input type="hidden" name="user_id" value={userId} />
-      <button className="text-sm text-red-700 hover:underline">Remove</button>
+      <SubmitButton pendingText="Removing…" className="text-sm text-red-700 hover:underline">
+        Remove
+      </SubmitButton>
     </form>
   );
 }
