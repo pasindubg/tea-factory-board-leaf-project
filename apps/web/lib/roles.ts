@@ -65,7 +65,7 @@ export const MODULES: readonly ModuleDef[] = [
     key: "users",
     href: "/dashboard/users",
     label: "Users",
-    roles: MANAGEMENT_ROLES,
+    roles: ["owner"],
     entitlement: "leaf-handling",
   },
 ];

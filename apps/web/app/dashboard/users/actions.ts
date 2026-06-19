@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { MANAGEMENT_ROLES, type Role } from "@/lib/roles";
+import { type Role } from "@/lib/roles";
 
 // Tenant data writes go through the session client so RLS keeps enforcing
 // factory isolation. The admin client is used ONLY for auth-side ops
@@ -15,7 +15,7 @@ const ALL_ROLES: Role[] = ["owner", "manager", "supervisor", "accountant", "coll
 const MANAGER_CREATABLE_ROLES: Role[] = ["manager", "supervisor", "accountant", "collector"];
 
 export async function createUser(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireProfile(["owner"]);
 
   const name     = String(formData.get("name")     ?? "").trim();
   const email    = String(formData.get("email")    ?? "").trim().toLowerCase();
@@ -91,7 +91,7 @@ export async function createUser(formData: FormData) {
 }
 
 export async function setUserActive(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireProfile(["owner"]);
 
   const userId     = String(formData.get("user_id")     ?? "");
   const nextActive = String(formData.get("next_active") ?? "") === "true";
@@ -137,7 +137,7 @@ export async function setUserActive(formData: FormData) {
 }
 
 export async function removeUser(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireProfile(["owner"]);
 
   const userId = String(formData.get("user_id") ?? "");
   if (!userId) redirect("/dashboard/users?error=Missing%20user");
@@ -172,7 +172,7 @@ export async function removeUser(formData: FormData) {
 }
 
 export async function resetUserPassword(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireProfile(["owner"]);
 
   const userId   = String(formData.get("user_id")  ?? "");
   const username = String(formData.get("username") ?? "").trim().toLowerCase() || null;

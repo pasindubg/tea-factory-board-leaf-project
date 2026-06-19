@@ -1,6 +1,6 @@
 import { requireProfile } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
-import { MANAGEMENT_ROLES, ROLE_LABELS } from "@/lib/roles";
+import { ROLE_LABELS } from "@/lib/roles";
 import { setUserActive, resetUserPassword } from "./actions";
 import { RemoveUserButton } from "./remove-user-button";
 
@@ -20,7 +20,7 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireProfile(["owner"]);
   const { error, notice } = await searchParams;
   const isOwner = profile.role === "owner";
 
