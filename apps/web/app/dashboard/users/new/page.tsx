@@ -1,7 +1,6 @@
 import { requireProfile } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { createUser } from "../actions";
-import { MANAGEMENT_ROLES } from "@/lib/roles";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-green-600 focus:outline-none";
@@ -11,7 +10,7 @@ export default async function NewUserPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { profile } = await requireProfile(["owner"]);
   const { error } = await searchParams;
   const isOwner = profile.role === "owner";
 
