@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
+import { getDefaultRoles } from "@/lib/roles";
 
 function collectorFields(formData: FormData) {
   return {
@@ -14,7 +15,7 @@ function collectorFields(formData: FormData) {
 }
 
 export async function createCollector(formData: FormData) {
-  const { supabase, profile } = await requireProfile();
+  const { supabase, profile } = await requireProfile(getDefaultRoles("collectors"));
   const fields = collectorFields(formData);
   if (!fields.name) redirect("/dashboard/collectors/new?error=Name%20is%20required");
 
@@ -26,7 +27,7 @@ export async function createCollector(formData: FormData) {
 }
 
 export async function updateCollector(id: string, formData: FormData) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("collectors"));
   const fields = collectorFields(formData);
   if (!fields.name) redirect(`/dashboard/collectors/${id}/edit?error=Name%20is%20required`);
 
@@ -38,7 +39,7 @@ export async function updateCollector(id: string, formData: FormData) {
 }
 
 export async function setCollectorActive(id: string, active: boolean) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("collectors"));
   await supabase.from("collectors").update({ active }).eq("id", id);
   revalidatePath("/dashboard/collectors");
 }

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
+import { getDefaultRoles } from "@/lib/roles";
 
 function supplierFields(formData: FormData) {
   const landSize = String(formData.get("land_size_acres") ?? "").trim();
@@ -17,7 +18,7 @@ function supplierFields(formData: FormData) {
 }
 
 export async function createSupplier(formData: FormData) {
-  const { supabase, profile } = await requireProfile();
+  const { supabase, profile } = await requireProfile(getDefaultRoles("suppliers"));
   const fields = supplierFields(formData);
   if (!fields.name) redirect("/dashboard/suppliers/new?error=Name%20is%20required");
 
@@ -29,7 +30,7 @@ export async function createSupplier(formData: FormData) {
 }
 
 export async function updateSupplier(id: string, formData: FormData) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("suppliers"));
   const fields = supplierFields(formData);
   if (!fields.name) redirect(`/dashboard/suppliers/${id}/edit?error=Name%20is%20required`);
 
@@ -41,7 +42,7 @@ export async function updateSupplier(id: string, formData: FormData) {
 }
 
 export async function setSupplierActive(id: string, active: boolean) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("suppliers"));
   await supabase.from("suppliers").update({ active }).eq("id", id);
   revalidatePath("/dashboard/suppliers");
 }
