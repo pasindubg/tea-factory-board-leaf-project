@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
+import { getDefaultRoles } from "@/lib/roles";
 import { updateSupplier } from "../../actions";
 import { SupplierForm } from "../../supplier-form";
 
@@ -10,7 +11,7 @@ export default async function EditSupplierPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("suppliers"));
   const { id } = await params;
   const { error } = await searchParams;
 
