@@ -1,4 +1,5 @@
 import { requireProfile } from "@/lib/profile";
+import { getDefaultRoles } from "@/lib/roles";
 import { createSupplier } from "../actions";
 import { SupplierForm } from "../supplier-form";
 
@@ -7,7 +8,7 @@ export default async function NewSupplierPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("suppliers"));
   const { error } = await searchParams;
   const { data: collectors } = await supabase
     .from("collectors")

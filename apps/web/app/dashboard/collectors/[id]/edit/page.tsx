@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
+import { getDefaultRoles } from "@/lib/roles";
 import { updateCollector } from "../../actions";
 import { CollectorForm } from "../../collector-form";
 
@@ -10,7 +11,7 @@ export default async function EditCollectorPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { supabase } = await requireProfile();
+  const { supabase } = await requireProfile(getDefaultRoles("collectors"));
   const { id } = await params;
   const { error } = await searchParams;
 
