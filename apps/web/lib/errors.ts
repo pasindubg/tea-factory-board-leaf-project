@@ -5,7 +5,7 @@
 // errors that are meaningful to users to friendly strings, and fall back to a
 // generic message for everything else — logging the raw detail server-side.
 
-import type { ValidationError } from "./forms";
+import { ValidationError } from "./forms";
 
 /** Friendly, non-leaky message for a Postgres/Supabase error. */
 export function friendlyError(err: unknown): string {

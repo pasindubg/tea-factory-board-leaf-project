@@ -1,3 +1,8 @@
+-- ⚠ PENDING REVIEW — NOT YET REGISTERED IN meta/_journal.json, so `db:migrate`
+-- will NOT apply this. It was merged in as WIP from fix/security-and-bugs (renamed
+-- from 0007 to avoid colliding with 0007_fa_messaging). Before applying: review the
+-- policy changes, add a journal entry + snapshot, and run db:verify-rls.
+--
 -- M7-fix: Defense-in-depth role guards + historical-attribution cascade.
 --
 -- Background (see security review): the original 0001 "factory_isolation"
