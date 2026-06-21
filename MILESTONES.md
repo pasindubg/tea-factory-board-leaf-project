@@ -230,6 +230,15 @@ conflict; client UUIDs make pushes idempotent).
 **Verify:** airplane-mode test — actions queued offline land exactly once after
 reconnect, surviving an app kill and a mid-push failure.
 
+> **In progress (issue #13, owner-directed ahead of schedule).** A foundation
+> slice of this field app is built: supplier/driver roles + phone-OTP login,
+> a server-driven request catalogue, the advance request → web approval (writes
+> an M6 deduction) → driver-handover → supplier-acknowledgement trust loop. It
+> lives in `apps/mobile` + a new `request_types`/`supplier_requests` schema. See
+> **[docs/mobile/](docs/mobile/)** (PRODUCT, ARCHITECTURE, MILESTONES FA0–FA7,
+> WALKTHROUGH) for the full plan. Offline sync (the airplane-mode gate above) and
+> geo/route optimisation are sequenced as FA5; not in this slice.
+
 ## M14 — Geo discovery (maps)
 Geocode supplier and factory locations. Factory-side: map + radius search for
 suppliers (capacity, quality summary). Supplier-side: nearby factories with

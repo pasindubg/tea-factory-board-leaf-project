@@ -6,20 +6,31 @@ import { StatusBar } from "expo-status-bar";
 import { SessionProvider, useSession } from "@/lib/session";
 import { colors } from "@/lib/theme";
 
+// Field app: suppliers and drivers get different home groups; everyone else is
+// nudged to the web dashboard by the group layout's role guard.
+function roleHome(role?: string) {
+  return role === "driver" ? "/(driver)/home" : "/(supplier)/home";
+}
+
 function AuthGate() {
-  const { loading, session } = useSession();
+  const { loading, session, profile } = useSession();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
-    const inApp = segments[0] === "(app)";
-    if (!session && inApp) {
-      router.replace("/login");
-    } else if (session && !inApp) {
-      router.replace("/(app)/home");
+    const group = segments[0]; // "(supplier)" | "(driver)" | "login" | undefined
+    const inProtected = group === "(supplier)" || group === "(driver)";
+
+    if (!session) {
+      if (inProtected) router.replace("/login");
+      return;
     }
-  }, [loading, session, segments, router]);
+    if (!profile) return; // wait until the role resolves before routing
+
+    const targetGroup = profile.role === "driver" ? "(driver)" : "(supplier)";
+    if (group !== targetGroup) router.replace(roleHome(profile.role));
+  }, [loading, session, profile, segments, router]);
 
   if (loading) {
     return (
