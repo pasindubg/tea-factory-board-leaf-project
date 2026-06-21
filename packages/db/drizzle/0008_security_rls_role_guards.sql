@@ -1,9 +1,8 @@
--- ⚠ PENDING REVIEW — NOT YET REGISTERED IN meta/_journal.json, so `db:migrate`
--- will NOT apply this. It was merged in as WIP from fix/security-and-bugs (renamed
--- from 0007 to avoid colliding with 0007_fa_messaging). Before applying: review the
--- policy changes, add a journal entry + snapshot, and run db:verify-rls.
---
--- M7-fix: Defense-in-depth role guards + historical-attribution cascade.
+-- 0008 — Defense-in-depth role guards + historical-attribution cascade.
+-- Renamed from 0007 on merge from fix/security-and-bugs (avoids colliding with
+-- 0007_fa_messaging). Reviewed + registered in meta/_journal.json. RLS is
+-- hand-written (drizzle-kit doesn't emit policies); the 0008 snapshot tracks only
+-- the two FK onDelete flips at the end. Run db:verify-rls after applying.
 --
 -- Background (see security review): the original 0001 "factory_isolation"
 -- policies enforce TENANT isolation (factory_id) but NOT ROLE integrity. A

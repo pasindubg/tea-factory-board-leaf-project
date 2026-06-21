@@ -28,7 +28,8 @@ export const supplierTiers = pgTable(
     effectiveFrom: date("effective_from").notNull(),
     effectiveTo: date("effective_to"), // null = currently active
     note: text("note"),
-    assignedBy: uuid("assigned_by").references(() => users.id),
+    // ON DELETE SET NULL: historical attribution survives the user's removal (0008).
+    assignedBy: uuid("assigned_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

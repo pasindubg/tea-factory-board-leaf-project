@@ -57,6 +57,13 @@
       "when": 1782044324331,
       "tag": "0007_fa_messaging",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782069428729,
+      "tag": "0008_security_rls_role_guards",
+      "breakpoints": true
     }
   ]
 }
