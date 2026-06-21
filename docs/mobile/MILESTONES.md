@@ -15,6 +15,14 @@ the canonical milestones are noted.
 > Features that depend on unbuilt Phase-1 modules (water-detection signal → M7;
 > geo → M14) are sequenced after their dependency.
 
+> **Status (PR #18).** Shipped & validated live: supplier/driver roles + route
+> groups, the `request_types`-driven menu + generic form renderer, FA1 phone/email-
+> OTP auth with supplier-scoped RLS, and the full FA2 trust loop (advance →
+> approve → M6 deduction → hand-over → acknowledge). FA3 messaging is partially
+> built: `supplier_messages` table + RLS, web compose, and the mobile inbox.
+> **Deferred:** FA0's `remote_config` table + EAS Update channel config; FA3
+> Realtime/push delivery (the inbox currently polls on focus).
+
 ---
 
 ## FA0 — Field-app foundation & dynamic-update spine  ⬅ building now

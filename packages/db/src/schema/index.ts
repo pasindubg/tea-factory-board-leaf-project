@@ -15,3 +15,4 @@ export * from "./payment-lines";
 export * from "./module-permissions";
 export * from "./request-types";
 export * from "./supplier-requests";
+export * from "./supplier-messages";

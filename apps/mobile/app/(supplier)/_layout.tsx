@@ -35,6 +35,7 @@ export default function SupplierLayout() {
       <Stack.Screen name="home" options={{ headerShown: false }} />
       <Stack.Screen name="new-request" options={{ title: "New request", presentation: "modal" }} />
       <Stack.Screen name="requests" options={{ title: "My requests" }} />
+      <Stack.Screen name="messages" options={{ title: "Messages" }} />
     </Stack>
   );
 }

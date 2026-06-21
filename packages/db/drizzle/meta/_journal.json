@@ -50,6 +50,13 @@
       "when": 1781976798563,
       "tag": "0006_fa_field_app",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782044324331,
+      "tag": "0007_fa_messaging",
+      "breakpoints": true
     }
   ]
 }

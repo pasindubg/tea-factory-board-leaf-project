@@ -62,6 +62,16 @@ export type SupplierRequest = {
   suppliers?: { name: string } | null; // joined for the driver route view
 };
 
+// --- Factory → supplier messages (FA3) ---
+export type SupplierMessage = {
+  id: string;
+  supplier_id: string | null; // null = broadcast to all suppliers
+  title: string;
+  body: string;
+  sent_at: string;
+  read_at: string | null;
+};
+
 // --- Legacy collector shapes (parked M4 collector screens) ---
 export type CollectorRow = { id: string; name: string; area: string | null };
 export type Supplier = { id: string; name: string; area: string | null };

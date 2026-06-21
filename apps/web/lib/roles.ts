@@ -66,6 +66,13 @@ export const MODULES: readonly ModuleDef[] = [
     entitlement: "leaf-handling",
   },
   {
+    key: "messages",
+    href: "/dashboard/messages",
+    label: "Messages",
+    roles: ["owner", "manager", "supervisor"],
+    entitlement: "leaf-handling",
+  },
+  {
     key: "payments",
     href: "/dashboard/payments",
     label: "Payments",

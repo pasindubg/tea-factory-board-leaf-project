@@ -14,15 +14,25 @@ export default function SupplierHome() {
   const { supplier, signOut } = useSession();
   const router = useRouter();
   const [types, setTypes] = useState<RequestType[]>([]);
+  const [unread, setUnread] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("request_types")
-      .select("id, key, label, fields, requires_amount, creates_advance, sort_order")
-      .eq("active", true)
-      .order("sort_order");
+    const [{ data }, { count }] = await Promise.all([
+      supabase
+        .from("request_types")
+        .select("id, key, label, fields, requires_amount, creates_advance, sort_order")
+        .eq("active", true)
+        .order("sort_order"),
+      // unread direct messages (RLS already scopes to this supplier)
+      supabase
+        .from("supplier_messages")
+        .select("id", { count: "exact", head: true })
+        .is("read_at", null)
+        .not("supplier_id", "is", null),
+    ]);
     setTypes((data as RequestType[]) ?? []);
+    setUnread(count ?? 0);
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -70,7 +80,19 @@ export default function SupplierHome() {
         </View>
 
         <Pressable
-          style={[s.card, { marginTop: 24, alignItems: "center" }]}
+          style={[s.card, { marginTop: 24, flexDirection: "row", alignItems: "center", justifyContent: "center" }]}
+          onPress={() => router.push("/(supplier)/messages")}
+        >
+          <Text style={{ color: colors.green, fontWeight: "600" }}>Messages</Text>
+          {unread > 0 && (
+            <View style={{ marginLeft: 8, backgroundColor: colors.green, borderRadius: 999, minWidth: 22, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", textAlign: "center" }}>{unread}</Text>
+            </View>
+          )}
+        </Pressable>
+
+        <Pressable
+          style={[s.card, { marginTop: 12, alignItems: "center" }]}
           onPress={() => router.push("/(supplier)/requests")}
         >
           <Text style={{ color: colors.green, fontWeight: "600" }}>My requests ›</Text>
