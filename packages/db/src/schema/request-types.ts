@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, index, unique } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 
 // A dynamic field on a request form, rendered generically by the field app.
@@ -34,5 +34,11 @@ export const requestTypes = pgTable(
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("idx_request_types_factory").on(t.factoryId)],
+  (t) => [
+    index("idx_request_types_factory").on(t.factoryId),
+    // `key` is referenced by supplier_requests.type_key (text, no FK) and looked
+    // up with .maybeSingle() in new-request.tsx — a duplicate (factory_id, key)
+    // would let that lookup silently resolve to an arbitrary row.
+    unique("uq_request_types_factory_key").on(t.factoryId, t.key),
+  ],
 );

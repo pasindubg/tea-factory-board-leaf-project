@@ -1,0 +1,1 @@
+ALTER TABLE "request_types" ADD CONSTRAINT "uq_request_types_factory_key" UNIQUE("factory_id","key");
