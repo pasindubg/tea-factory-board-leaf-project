@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { SubmitButton } from "@/components/submit-button";
@@ -40,7 +41,7 @@ export default async function TiersPage({
 
       {tierRows.length === 0 ? (
         <p className="rounded-md bg-amber-50 p-4 text-sm text-amber-800">
-          No active quality tiers yet. Add them under <a href="/dashboard/payments/settings" className="underline">Settings</a> first.
+          No active quality tiers yet. Add them under <Link href="/dashboard/payments/settings" className="underline">Settings</Link> first.
         </p>
       ) : (
         <section className="rounded-xl border border-stone-200 bg-white p-6">

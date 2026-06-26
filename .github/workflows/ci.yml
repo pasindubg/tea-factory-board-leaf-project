@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,11 +30,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        run: pnpm turbo lint
+
       - name: Typecheck
         run: pnpm turbo typecheck
 
       - name: Unit tests
         run: pnpm turbo test
+
+      - name: Payment calc tests
+        run: pnpm --dir packages/api test:payments
 
   build:
     name: Build
