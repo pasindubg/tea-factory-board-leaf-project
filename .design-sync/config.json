@@ -1,0 +1,9 @@
+{
+  "projectId": "a271fb90-c050-46e8-8d39-05a5df589501",
+  "pkg": "@tea/ui",
+  "shape": "package",
+  "globalName": "TeaUI",
+  "cssEntry": "packages/ui/dist/styles.css",
+  "buildCmd": "pnpm --dir packages/ui build",
+  "readmeHeader": ".design-sync/conventions.md"
+}
