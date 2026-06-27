@@ -43,6 +43,13 @@
       "when": 1781699945949,
       "tag": "0005_transport_per_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782503307223,
+      "tag": "0006_harsh_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

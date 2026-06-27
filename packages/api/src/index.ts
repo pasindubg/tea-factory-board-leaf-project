@@ -3,3 +3,6 @@
 // server action calls. tRPC routers can wrap these later if a typed RPC
 // transport is needed; today App Router server actions call them directly.
 export * from "./payments/calculate";
+// Auction & settlement (A-track): pure document parsers + reconciliations.
+export * from "./auction/parse-acknowledgement";
+export * from "./auction/reconcile";

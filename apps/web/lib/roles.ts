@@ -13,7 +13,7 @@ export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
  * checkout — until then every factory implicitly has all entitlements, but
  * every module must declare its key from day one.
  */
-export type Entitlement = "leaf-handling" | "production" | "accounts";
+export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
 
 export type ModuleDef = {
   key: string;
@@ -60,6 +60,13 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Payments",
     roles: ["owner", "manager", "accountant"],
     entitlement: "leaf-handling",
+  },
+  {
+    key: "auction",
+    href: "/dashboard/auction",
+    label: "Auction",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
   },
   {
     key: "users",

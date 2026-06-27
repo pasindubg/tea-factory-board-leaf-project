@@ -211,7 +211,7 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
   so the login form's "I already have a code" button + a minted code is the path.
   It refuses to mint for an email that has no auth user (won't resurrect removed ones).
 - **Browser verification:** prefer the `preview_*` tools over manual checks.
-  `.claude/launch.json` defines two servers: **`web`** (Next.js, port 3000) and
+  `.Codex/launch.json` defines two servers: **`web`** (Next.js, port 3000) and
   **`mobile-web`** (Expo web, port 8081). When driving RN-web (mobile) elements,
   remember Pressables render as `div`s — click by text via `preview_eval` if needed.
 - **`verify-rls` resolves owner ids by email** (seed user ids go stale after

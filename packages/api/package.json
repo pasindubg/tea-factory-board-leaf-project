@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test:payments": "tsx src/payments/calculate.test.ts"
+    "test:payments": "tsx src/payments/calculate.test.ts",
+    "test:auction": "tsx src/auction/parse-acknowledgement.test.ts"
   },
   "dependencies": {
     "@tea/db": "workspace:*"

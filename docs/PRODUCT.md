@@ -15,6 +15,13 @@ each other by area, price, and quality, and leaf quality becomes a score and a
 price signal instead of a binary accept/reject at the factory gate. The ERP is
 the wedge; the marketplace is the prize.
 
+**June 2026 re-sequencing — auction first.** Within Phase 1, the **Colombo tea
+auction & settlement flow is now the immediate wedge** and ships before the
+production/grading modules: the factory already runs leaf collection and payments
+on an existing system, but had *no* system for the auction (just broker PDFs and a
+bank statement reconciled by hand). See "The Colombo auction & settlement flow"
+below and the A-track in [MILESTONES.md](../MILESTONES.md).
+
 ## Who uses what (personas & devices)
 
 | Persona | Where they work | Device | Interface |
@@ -35,7 +42,9 @@ Phase 2. The mobile app built in M4 is parked and will be repurposed for them.
 ## Factory domain walkthrough
 
 What happens to a leaf in a bought-leaf factory, and what we record at each step.
-Stages 1 and 10 exist in the schema today; the rest arrive with M7–M8.
+Stages 1 and 10 exist in the schema today; **stage 8 (the auction & settlement
+flow) now ships first** in the A-track (see below); the rest arrive with the
+deferred M7–M9.
 
 1. **Green-leaf intake** — suppliers (smallholders/estates) deliver leaf, either
    via a collector's lorry route or directly. Bags are weighed at the gate and
@@ -69,6 +78,46 @@ Stages 1 and 10 exist in the schema today; the rest arrive with M7–M8.
 10. **Supplier payments** — monthly: (rate + quality-tier bonus) × kg (exact
     formula to be confirmed with customer zero in M6). The killer feature for
     factories.
+
+## The Colombo auction & settlement flow (the current wedge — A-track)
+
+How a factory's made tea becomes money, and the paper trail the software replaces.
+Tea is sold through a **broker** (e.g. BPML Produce Marketing) at the weekly
+Colombo auction. A factory sells under one or more **estate marks** (e.g.
+`MF1530 KUMUDU`, `MF1530A ITTAPANA`). The lifecycle, with the document each step
+produces (all real, from sample Sale `2026-023`):
+
+1. **Invoice & dispatch** — the factory invoices its graded lots and sends them to
+   the broker's warehouse. A lot = N bags × kg/bag (e.g. `10B @ 28` = 280 kg).
+2. **Acknowledgement** *(broker PDF)* — the broker confirms receipt and
+   **catalogues** each lot, mapping the factory **invoice no.** → a **catalogue lot
+   no.** Lots that miss the sale (late, over the storage norm) are listed as
+   **shutout / violation** — stock left at the warehouse that rolls to the next
+   sale.
+3. **Valuation** *(broker PDF)* — the broker values each lot with a **price-per-kg
+   range** (e.g. `1350–1400/=`), projected proceeds, and a tasting note ("Grayish,
+   mixed with short particles") — quality feedback that links back to grading.
+4. **Auction sale + Sellers Contract & Account Sales** *(broker PDF)* — per lot:
+   buyer (+ VAT no.), **actual price/kg**, proceeds, **VAT @ 18%**, and a **Bank
+   Guarantee** flag. **VAT is collected from buyers on the seller's behalf**; the
+   factory must remit it to the government. Per lot the VAT is either **paid
+   up-front in cash (`Bank Guarantee = NO`)** or **deferred, secured by a bank
+   guarantee (`Bank Guarantee = YES`)** — realised later when the guarantee is
+   honoured. The same document carries the **deduction stack** (insurance,
+   brokerage %, handling/kg, documentation/lot, e-platform/kg, public sale ex.,
+   govt relief loan, plus the broker's own VAT on those charges) → **Net Proceeds**
+   → **Total Net Proceeds**, payable on the **prompt date**.
+5. **Cash settlement** *(bank statement CSV)* — the broker pays Total Net Proceeds
+   to the factory's bank account on/after the prompt date.
+
+**The four reconciliations are the product** (each a concrete, testable
+calculation): ① invoice ↔ acknowledgement (catch shutouts & weight deltas); ②
+valuation ↔ actual sale price (below/within/above range, realised premium); ③ VAT
+split (cash vs guarantee) + net VAT payable to government (output − input); ④
+settlement Total Net Proceeds ↔ bank credit + cheque reconciliation. **Full spec —
+state machine, data model, PDF ingestion, and contract math worked to the cent:
+[docs/AUCTION.md](AUCTION.md).** Sample docs live in
+`~/Desktop/custo-tokanizer-onix/ktf-auc-fll`.
 
 ## Quality-tier pricing — the "superleaf" concept (M6)
 
@@ -165,8 +214,9 @@ actions all gate on it). Access is therefore two-dimensional:
 | Sellable bundle | Modules included | Entitlement key |
 |---|---|---|
 | Board-leaf handling (base) | Intake (suppliers, collectors, weighings) + People & access + Payments/superleaf | `leaf-handling` |
+| Auction & settlement | Auction intake/cataloguing (A1), valuation & sale (A2), VAT/deductions/settlement (A3) | `auction` |
 | Production & sales | Out-turn (M7), Sifting & grades (M8), Lots/deliveries/sales (M9) | `production` |
-| Accounting | Accounts / P&L (M10) | `accounts` |
+| Accounting | Bank/cheque reconciliation (A4), Accounts / P&L (M10) | `accounts` |
 | Marketplace / premium intelligence | Phase 2 surfaces | Phase 2 keys |
 
 (Exact bundle boundaries are a business decision; the keys are the stable
