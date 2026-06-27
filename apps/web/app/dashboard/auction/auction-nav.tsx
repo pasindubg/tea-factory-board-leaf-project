@@ -4,8 +4,8 @@ import { useRouter, usePathname } from "next/navigation";
 import { useTransition, useState, useEffect } from "react";
 
 const tabs = [
-  { href: "/dashboard/auction", label: "Sales", exact: true },
-  { href: "/dashboard/auction/registry", label: "Brokers & marks" },
+  { href: "/dashboard/auction", label: "Sales", match: (p: string) => p === "/dashboard/auction" || p.startsWith("/dashboard/auction/") && !p.startsWith("/dashboard/auction/registry") },
+  { href: "/dashboard/auction/registry", label: "Brokers & marks", match: (p: string) => p.startsWith("/dashboard/auction/registry") },
 ];
 
 export function AuctionNav() {
@@ -26,7 +26,7 @@ export function AuctionNav() {
   return (
     <nav className="mb-6 flex flex-wrap gap-1 border-b border-stone-200">
       {tabs.map((t) => {
-        const active = t.exact ? pathname === t.href : pathname.startsWith(t.href);
+        const active = t.match(pathname);
         const isLoading = isPending && pendingHref === t.href;
         return (
           <button

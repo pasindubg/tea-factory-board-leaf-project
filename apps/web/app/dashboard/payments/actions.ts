@@ -3,7 +3,7 @@
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { computeStatement, type CalcInput } from "@tea/api";
+import { computeStatement, type AdjustmentInput, type CalcInput } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { friendlyError } from "@/lib/errors";

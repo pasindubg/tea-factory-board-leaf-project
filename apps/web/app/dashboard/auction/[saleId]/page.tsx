@@ -94,14 +94,16 @@ export default async function SaleDetailPage({
             </span>
           </p>
         </div>
-        <form action={deleteSale.bind(null, sale.id)}>
-          <SubmitButton
-            pendingText="Deleting…"
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-500 hover:bg-stone-100"
-          >
-            Delete sale
-          </SubmitButton>
-        </form>
+        {sale.status === "draft" && (
+          <form action={deleteSale.bind(null, sale.id)}>
+            <SubmitButton
+              pendingText="Deleting…"
+              className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-500 hover:bg-stone-100"
+            >
+              Delete sale
+            </SubmitButton>
+          </form>
+        )}
       </div>
 
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
