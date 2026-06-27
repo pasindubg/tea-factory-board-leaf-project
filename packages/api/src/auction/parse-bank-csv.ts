@@ -22,23 +22,10 @@ export type ParsedBankCsv = {
   issues: string[];
 };
 
-const num = (s: string) => {
-  const n = Number(s.replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : 0;
-};
-
-const toISODate = (s: string): string | null => {
-  // dd/mm/yyyy → yyyy-mm-dd
-  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-  // yyyy-mm-dd already
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  return null;
-};
-
 export function isBankCsv(text: string): boolean {
   const first = text.split("\n")[0]?.toLowerCase() ?? "";
-  return /date.*descr|txn\s*date|value\s*date|posted/i.test(first);
+  const body = text.slice(0, 500).toLowerCase();
+  return /transaction\s*history|txn\s*date|value\s*date|posted|transaction\s*date/.test(body);
 }
 
 export function parseBankCsv(rawText: string): ParsedBankCsv {
@@ -50,51 +37,65 @@ export function parseBankCsv(rawText: string): ParsedBankCsv {
   const issues: string[] = [];
   const transactions: BankTxnRow[] = [];
 
-  // Skip header row (first line) if it looks like a header
-  let startIdx = 0;
-  if (lines.length > 0 && /date|txn|posted|value/i.test(lines[0])) {
-    startIdx = 1;
-  }
+  // Detect header row — look for "Transaction Date" or similar to find the column line
+  const headerIdx = lines.findIndex(
+    (l) => /transaction\s*date/i.test(l) || /txn\s*date/i.test(l) || /value\s*date/i.test(l),
+  );
 
   // Detect delimiter: comma or tab
-  const delim = lines[startIdx]?.includes("\t") ? "\t" : ",";
+  const sampleRow = lines[headerIdx >= 0 ? headerIdx + 1 : 0] ?? "";
+  const delim = sampleRow.includes("\t") ? "\t" : ",";
 
-  for (let i = startIdx; i < lines.length; i++) {
+  // Parse header to find column indices
+  let dateCol = 1, descCol = 3, debitCol = 5, creditCol = 6, balanceCol = 7, chequeCol = 10;
+  if (headerIdx >= 0) {
+    const headers = lines[headerIdx].split(delim).map((h) => h.trim().toLowerCase());
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (/transaction\s*date|txn\s*date|value\s*date|posted/.test(h)) dateCol = i;
+      else if (/description|narrative|particulars|details/.test(h)) descCol = i;
+      else if (/debit|withdrawal|payment/.test(h) && !/credit/i.test(h)) debitCol = i;
+      else if (/credit|deposit|incoming/.test(h)) creditCol = i;
+      else if (/balance|running/.test(h)) balanceCol = i;
+      else if (/cheque|ref/.test(h)) chequeCol = i;
+    }
+  }
+
+  const toDate = (s: string): string | null => {
+    const t = s.trim();
+    const dmy = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    return null;
+  };
+
+  const n = (s: string) => {
+    const x = Number((s ?? "").replace(/,/g, "").trim());
+    return Number.isFinite(x) ? x : 0;
+  };
+
+  for (let i = (headerIdx >= 0 ? headerIdx + 1 : 0); i < lines.length; i++) {
     const raw = lines[i];
     const parts = raw.split(delim).map((p) => p.replace(/^"|"$/g, "").trim());
 
-    if (parts.length < 3) {
-      issues.push(`Line ${i + 1}: too few columns.`);
-      continue;
-    }
+    // Skip rows that are clearly not transaction data (headers, notes)
+    if (parts.every((p) => !p)) continue;
+    if (/currency/i.test(parts.join(","))) continue;
+    if (/page|statement/i.test(parts[0]?.toLowerCase() ?? "")) continue;
 
-    // Heuristic: column 0 = date, column 1 = description, last two numeric
-    // columns are debit/credit and running balance (may swap based on position).
-    const dateStr = toISODate(parts[0]);
-    if (!dateStr) {
-      issues.push(`Line ${i + 1}: could not parse date "${parts[0]}".`);
-      continue;
-    }
+    const dateStr = toDate(parts[dateCol] ?? "");
+    if (!dateStr) continue; // non-data row
 
-    const desc = parts[1] ?? "";
-    // Assume: debit is column 2, credit is column 3, balance is column 4 (if present)
-    // Some banks swap debit/credit or omit one — detect by sign/non-zero.
-    const col2 = num(parts[2] ?? "0");
-    const col3 = num(parts[3] ?? "0");
-    const col4 = parts.length > 4 ? num(parts[4]) : null;
-    const col5 = parts.length > 5 ? parts[5] || null : null; // cheque_no column
-
-    // Debit = col2 if col3 is 0, else both are populated
-    const debit = col2 > 0 && col3 === 0 ? col2 : (col2 > 0 ? col2 : 0);
-    const credit = col3 > 0 && col2 === 0 ? col3 : (col3 > 0 ? col3 : 0);
+    const debit = n(parts[debitCol] ?? "0");
+    const credit = n(parts[creditCol] ?? "0");
 
     transactions.push({
       txnDate: dateStr,
-      description: desc,
+      description: (parts[descCol] ?? "").replace(/\s+/g, " ").trim(),
       debit,
       credit,
-      runningBalance: col4,
-      chequeNo: col5,
+      runningBalance: n(parts[balanceCol] ?? "0") || null,
+      chequeNo: chequeCol < parts.length ? parts[chequeCol] || null : null,
       rawLine: raw,
     });
   }
