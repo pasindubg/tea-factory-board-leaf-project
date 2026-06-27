@@ -188,7 +188,11 @@ export function computeStatement(input: CalcInput): Statement {
     }
   }
 
-  const grossAmount = round2(leafAmount + bonusAmount);
+  // Gross = sum of leaf + bonus lines (each already rounded to 2dp, so
+  // the sum is the true gross — no re-rounding needed).
+  const grossAmount = round2(lines
+    .filter((l) => l.lineType === "leaf" || l.lineType === "bonus")
+    .reduce((s, l) => s + l.amount, 0));
 
   // Deductions + positive one-offs.
   let deductionAmount = 0;
@@ -250,7 +254,9 @@ export function computeStatement(input: CalcInput): Statement {
     }
   }
 
-  const netAmount = round2(grossAmount + positiveAdj - deductionAmount);
+  // Net = sum of ALL line amounts (each is already signed + rounded, so the
+  // sum is the true net — no re-rounding of cross-checks needed).
+  const netAmount = round2(lines.reduce((s, l) => s + l.amount, 0));
 
   return {
     totalKg: round2(totalKg),

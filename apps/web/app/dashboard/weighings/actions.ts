@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { collectorForUser, requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES } from "@/lib/roles";
+import { ALL_WEB_ROLES, MANAGEMENT_ROLES } from "@/lib/roles";
 
 export async function createWeighing(formData: FormData) {
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
@@ -35,7 +35,8 @@ export async function createWeighing(formData: FormData) {
   }
 
   // Update supplier tier if one was selected and it differs from current.
-  if (tierId) {
+  // Gate: only management roles can reassign tiers (collectors can't change payment-tier data).
+  if (tierId && MANAGEMENT_ROLES.includes(profile.role)) {
     const { data: existing } = await supabase
       .from("supplier_tiers")
       .select("tier_id")
