@@ -8,7 +8,8 @@
     "start": "TZ=Asia/Colombo next start",
     "typecheck": "tsc --noEmit",
     "test": "TZ=Asia/Colombo vitest run",
-    "test:watch": "TZ=Asia/Colombo vitest"
+    "test:watch": "TZ=Asia/Colombo vitest",
+    "lint": "next lint"
   },
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
@@ -25,6 +26,8 @@
     "@types/node": "^20.17.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "eslint": "^9.7.0",
+    "eslint-config-next": "^15.5.19",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.3",
     "vitest": "^2.1.0"
