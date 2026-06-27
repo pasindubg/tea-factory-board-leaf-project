@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -19,12 +20,12 @@ export default async function AuctionSalesPage() {
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium text-stone-700">Sales</h2>
-        <a
+        <Link
           href="/dashboard/auction/new"
           className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
         >
           New sale
-        </a>
+        </Link>
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white">

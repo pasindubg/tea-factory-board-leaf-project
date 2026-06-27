@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { createSale } from "../actions";
@@ -21,9 +22,9 @@ export default async function NewSalePage({
       {(brokers ?? []).length === 0 ? (
         <p className="mt-4 rounded-md bg-amber-50 px-3 py-3 text-sm text-amber-800">
           Add a broker first under{" "}
-          <a href="/dashboard/auction/registry" className="font-medium underline">
+          <Link href="/dashboard/auction/registry" className="font-medium underline">
             Brokers &amp; marks
-          </a>
+          </Link>
           .
         </p>
       ) : (
@@ -66,12 +67,12 @@ export default async function NewSalePage({
             >
               Create sale
             </SubmitButton>
-            <a
+            <Link
               href="/dashboard/auction"
               className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-600 hover:bg-stone-100"
             >
               Cancel
-            </a>
+            </Link>
           </div>
         </form>
       )}

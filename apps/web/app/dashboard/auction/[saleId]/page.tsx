@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import {
@@ -45,9 +46,9 @@ export default async function SaleDetailPage({
     return (
       <div className="rounded-xl border border-stone-200 bg-white p-8 text-center text-stone-500">
         Sale not found.{" "}
-        <a href="/dashboard/auction" className="text-green-700 hover:underline">
+        <Link href="/dashboard/auction" className="text-green-700 hover:underline">
           Back to sales
-        </a>
+        </Link>
       </div>
     );
   }
@@ -78,9 +79,9 @@ export default async function SaleDetailPage({
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <a href="/dashboard/auction" className="text-sm text-green-700 hover:underline">
+          <Link href="/dashboard/auction" className="text-sm text-green-700 hover:underline">
             ← Sales
-          </a>
+          </Link>
           <h2 className="mt-1 text-xl font-semibold">Sale {sale.sale_no}</h2>
           <p className="text-sm text-stone-500">
             {broker}
@@ -310,9 +311,9 @@ function IngestSection({
                     {im.parsed_at ? new Date(im.parsed_at).toLocaleString() : "—"}
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <a href={`${reviewBase}/${im.id}`} className="text-green-700 hover:underline">
+                    <Link href={`${reviewBase}/${im.id}`} className="text-green-700 hover:underline">
                       Review
-                    </a>
+                    </Link>
                   </td>
                 </tr>
               ))}
