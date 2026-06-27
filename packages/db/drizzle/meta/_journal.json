@@ -92,6 +92,13 @@
       "when": 1782700000000,
       "tag": "0012_auction_settlements_vat_bank",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782800000000,
+      "tag": "0013_status_transition_trigger",
+      "breakpoints": true
     }
   ]
 }

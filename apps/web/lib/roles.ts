@@ -73,6 +73,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Requests",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "messages",
@@ -80,6 +81,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Messages",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "payments",
