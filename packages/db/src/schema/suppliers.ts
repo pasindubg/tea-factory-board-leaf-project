@@ -15,6 +15,10 @@ export const suppliers = pgTable(
     nicNumber: text("nic_number"),
     landSizeAcres: numeric("land_size_acres", { precision: 8, scale: 2 }),
     area: text("area"),
+    // Map location captured at registration in the field app (issue #13);
+    // feeds driver route ordering (FA5). Optional until then.
+    latitude: numeric("latitude", { precision: 10, scale: 7 }),
+    longitude: numeric("longitude", { precision: 10, scale: 7 }),
     active: boolean("active").default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

@@ -21,10 +21,12 @@ export type Profile = {
 export async function requireProfile(allowed: readonly Role[] = MANAGEMENT_ROLES) {
   const supabase = await createClient();
 
-  let user;
+  let user = null;
   try {
     const { data, error } = await supabase.auth.getUser();
-    if (error) throw error;
+    // "Auth session missing" simply means logged out — fall through to the
+    // /login redirect below instead of surfacing a scary error page.
+    if (error && error.name !== "AuthSessionMissingError") throw error;
     user = data.user;
   } catch {
     throw new Error("Could not verify your session right now — please retry.");
@@ -58,10 +60,12 @@ export async function requireProfile(allowed: readonly Role[] = MANAGEMENT_ROLES
 export async function requireModuleAccess(moduleKey: string) {
   const supabase = await createClient();
 
-  let user;
+  let user = null;
   try {
     const { data, error } = await supabase.auth.getUser();
-    if (error) throw error;
+    // "Auth session missing" simply means logged out — fall through to the
+    // /login redirect below instead of surfacing a scary error page.
+    if (error && error.name !== "AuthSessionMissingError") throw error;
     user = data.user;
   } catch {
     throw new Error("Could not verify your session right now — please retry.");

@@ -7,3 +7,8 @@ dist/
 .env.local
 .DS_Store
 *.log
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

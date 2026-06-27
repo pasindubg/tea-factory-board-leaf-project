@@ -2,12 +2,13 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { AppState } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { CollectorRow, Profile } from "./types";
+import type { CollectorRow, LinkedSupplier, Profile } from "./types";
 
 type SessionState = {
   loading: boolean;
   session: Session | null;
   profile: Profile | null;
+  supplier: LinkedSupplier | null;
   collector: CollectorRow | null;
   signOut: () => Promise<void>;
   reloadProfile: () => Promise<void>;
@@ -19,16 +20,38 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [supplier, setSupplier] = useState<LinkedSupplier | null>(null);
   const [collector, setCollector] = useState<CollectorRow | null>(null);
 
   async function loadProfile(userId: string) {
-    // The collector's factory + role, and their collector row (weighings are
-    // recorded against collector_id). RLS scopes both to this user's factory.
-    const [{ data: prof }, { data: col }] = await Promise.all([
-      supabase.from("users").select("id, name, role, factory_id").eq("id", userId).single(),
-      supabase.from("collectors").select("id, name, area").eq("user_id", userId).maybeSingle(),
-    ]);
-    setProfile((prof as Profile) ?? null);
+    // Factory + role for this login. RLS scopes every read to the user's factory.
+    const { data: prof } = await supabase
+      .from("users")
+      .select("id, name, role, factory_id, supplier_id")
+      .eq("id", userId)
+      .single();
+    const profileRow = (prof as Profile) ?? null;
+    setProfile(profileRow);
+
+    // The supplier this login represents (supplier-role users), for their
+    // requests/acknowledgements.
+    if (profileRow?.supplier_id) {
+      const { data: sup } = await supabase
+        .from("suppliers")
+        .select("id, name, area")
+        .eq("id", profileRow.supplier_id)
+        .maybeSingle();
+      setSupplier((sup as LinkedSupplier) ?? null);
+    } else {
+      setSupplier(null);
+    }
+
+    // Legacy collector link (parked collector screens attribute weighings to it).
+    const { data: col } = await supabase
+      .from("collectors")
+      .select("id, name, area")
+      .eq("user_id", userId)
+      .maybeSingle();
     setCollector((col as CollectorRow) ?? null);
   }
 
@@ -45,6 +68,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await loadProfile(next.user.id);
       } else {
         setProfile(null);
+        setSupplier(null);
         setCollector(null);
       }
     });
@@ -70,7 +94,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SessionContext.Provider value={{ loading, session, profile, collector, signOut, reloadProfile }}>
+    <SessionContext.Provider value={{ loading, session, profile, supplier, collector, signOut, reloadProfile }}>
       {children}
     </SessionContext.Provider>
   );

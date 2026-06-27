@@ -1,6 +1,12 @@
-import { pgTable, uuid, text, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
+import { suppliers } from "./suppliers";
 
+// `supplier` and `driver` are field-app roles (issue #13): they log in on
+// mobile via phone OTP and have no web modules. `role` is a TS-only text enum,
+// so adding them needs no column migration. A `supplier`-role login links to
+// its `suppliers` row via `supplierId`; `current_supplier_id()` (migration
+// 0006) resolves it for supplier-scoped RLS.
 export const users = pgTable(
   "users",
   {
@@ -12,7 +18,12 @@ export const users = pgTable(
     email: text("email").notNull(),
     phone: text("phone"),
     username: text("username"),
-    role: text("role", { enum: ["owner", "manager", "supervisor", "accountant", "collector"] }).notNull(),
+    role: text("role", {
+      enum: ["owner", "manager", "supervisor", "accountant", "collector", "supplier", "driver"],
+    }).notNull(),
+    // AnyPgColumn annotation breaks the collectors→users→suppliers→collectors
+    // type cycle this FK closes (Drizzle's documented circular-reference fix).
+    supplierId: uuid("supplier_id").references((): AnyPgColumn => suppliers.id), // set for supplier-role logins
     active: boolean("active").default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

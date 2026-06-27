@@ -35,7 +35,8 @@ export const supplierAdjustments = pgTable(
     // optional pin to a payment period; when null, derived from occurred_on
     periodYear: integer("period_year"),
     periodMonth: integer("period_month"),
-    createdBy: uuid("created_by").references(() => users.id),
+    // ON DELETE SET NULL: keep the adjustment if its author is removed (0008).
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

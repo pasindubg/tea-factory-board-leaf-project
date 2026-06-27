@@ -2,7 +2,11 @@
 // "Modular architecture"). Adding a feature module = add its schema + route
 // group, then register it here. Never inline role checks in pages.
 
-export type Role = "owner" | "manager" | "supervisor" | "accountant" | "collector";
+// `supplier` and `driver` are Phase-2 field-app roles (issue #13): they sign in
+// on mobile via phone OTP and get NO web modules — they appear in the union (and
+// ROLE_LABELS) so the shared DB role type stays in sync, but are deliberately
+// absent from ALL_WEB_ROLES and every MODULES entry.
+export type Role = "owner" | "manager" | "supervisor" | "accountant" | "collector" | "supplier" | "driver";
 
 export const ALL_WEB_ROLES: readonly Role[] = ["owner", "manager", "supervisor", "accountant", "collector"];
 export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
@@ -55,6 +59,20 @@ export const MODULES: readonly ModuleDef[] = [
     entitlement: "leaf-handling",
   },
   {
+    key: "requests",
+    href: "/dashboard/requests",
+    label: "Requests",
+    roles: ["owner", "manager", "supervisor"],
+    entitlement: "leaf-handling",
+  },
+  {
+    key: "messages",
+    href: "/dashboard/messages",
+    label: "Messages",
+    roles: ["owner", "manager", "supervisor"],
+    entitlement: "leaf-handling",
+  },
+  {
     key: "payments",
     href: "/dashboard/payments",
     label: "Payments",
@@ -89,4 +107,6 @@ export const ROLE_LABELS: Record<Role, string> = {
   supervisor: "Supervisor",
   accountant: "Accountant",
   collector: "Collector",
+  supplier: "Supplier",
+  driver: "Driver",
 };
