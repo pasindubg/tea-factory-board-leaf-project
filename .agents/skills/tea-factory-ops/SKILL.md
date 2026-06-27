@@ -41,7 +41,7 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
 - **[MILESTONES.md](../../../MILESTONES.md)** — the live build plan with a concrete
   verification gate per milestone. **Check it for current status before building.**
 - **[docs/AUCTION.md](../../../docs/AUCTION.md)** — full spec for the Auction &
-  Settlement track (current wedge): state machine, data model, PDF ingestion,
+  Settlement track: state machine, data model, PDF ingestion,
   contract math, the four reconciliations. **Read before building any A-track work.**
 
 This skill is the *operational* layer (how to work here); those two are the
@@ -68,7 +68,7 @@ wedge and ships first**, ahead of the production/grades ERP milestones, which ar
 deferred. The A-track is anchored on real data: Sale **2026-023**, broker BPML,
 marks MF1530 KUMUDU / MF1530A ITTAPANA (see the `ktf-auc-fll` sample docs).
 
-**Phase 1 priority order (re-sequenced):**
+**Priority order:**
 M6 payments + superleaf ✅ → **A1 auction intake & cataloguing → A2 valuation &
 sale → A3 VAT/deductions/settlement → A4 accounting + bank/cheque reconciliation
 (Priority 2)** → then the *deferred* ERP milestones: M7 production/out-turn →

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "mcp__Claude_Preview__preview_start",
+      "WebFetch(domain:supabase.com)",
+      "Bash(time curl -s -o /tmp/bundle_head.txt -w \"bundle HTTP %{http_code}, %{size_download} bytes in %{time_total}s\\\\n\" \"http://localhost:8081/index.bundle?platform=web&dev=true\")",
+      "Bash(curl -s http://localhost:8081/)",
+      "Bash(curl -s -o /tmp/bundle.txt -w \"HTTP %{http_code}, %{size_download} bytes in %{time_total}s\\\\n\" \"http://localhost:8081/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable\")",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /tmp/bundle2.txt -w \"HTTP %{http_code}, %{size_download} bytes in %{time_total}s\\\\n\" \"http://localhost:8081/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable\")",
+      "Bash(lsof -nP -iTCP:8081 -sTCP:LISTEN)",
+      "Bash(awk 'NR==1 || /LISTEN/ {print $1, $2, $9}')",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(pkill -f \"drizzle-kit generate\")",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill)",
+      "Bash(awk -F= '{print $1\"= \\(\"length\\($2\\)\" chars\\)\"}' apps/web/.env.local)",
+      "Bash(git mv *)"
+    ]
+  }
+}
