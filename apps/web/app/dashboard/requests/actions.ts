@@ -28,11 +28,13 @@ export async function approveRequest(formData: FormData) {
 
   if (error) back(error.message);
 
-  const result = data as unknown as {
+  // approve_supplier_request returns TABLE(...) so data is an array of rows.
+  const rows = (data ?? []) as unknown as {
     approved: boolean;
     adjustment_id: string | null;
     error_message: string | null;
-  };
+  }[];
+  const result = rows[0];
 
   if (!result?.approved) {
     back(result?.error_message ?? "Approval failed.");

@@ -97,7 +97,6 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Users",
     roles: ["owner"],
     entitlement: "leaf-handling",
-    group: "Leaf Handling",
   },
   {
     key: "auction",
