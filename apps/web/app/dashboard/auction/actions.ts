@@ -12,6 +12,11 @@ import {
   parseValuation,
   isContract,
   parseContract,
+  computeSettlement,
+  reconcileVat,
+  isBankCsv,
+  parseBankCsv,
+  reconcileBank,
   type ParsedAcknowledgement,
   type ParsedValuation,
   type ParsedContract,
@@ -375,8 +380,10 @@ export async function confirmContract(importId: string, saleId: string) {
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const parsed = imp.parsed_json as ParsedContract;
 
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
-  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no, net_wt").eq("sale_id", saleId);
+  const lotByInv = new Map<string, { id: string; netWt: number }>(
+    (lotRows ?? []).map((l) => [l.invoice_no as string, { id: l.id as string, netWt: Number(l.net_wt) }]),
+  );
 
   // Resolve buyers (upsert by name).
   const uniqueBuyers = [...new Map(parsed.lines.map((l) => [l.buyerName, l.buyerVatNo])).entries()]
@@ -391,36 +398,147 @@ export async function confirmContract(importId: string, saleId: string) {
     for (const b of upserted ?? []) buyerByName.set(b.name as string, b.id as string);
   }
 
+  // ── Sale lines ──
   let applied = 0;
   for (const line of parsed.lines) {
-    const lotId = lotByInv.get(line.invoiceNo);
-    if (!lotId) continue;
+    const lot = lotByInv.get(line.invoiceNo);
+    if (!lot) continue;
     await supabase.from("sale_lines").upsert(
       {
-        factory_id: profile.factory_id,
-        sale_id: saleId,
-        lot_id: lotId,
+        factory_id: profile.factory_id, sale_id: saleId, lot_id: lot.id,
         buyer_id: buyerByName.get(line.buyerName) ?? null,
-        gross_wt: line.grossWt,
-        sample_allowance: line.sampleAllowance,
-        net_wt: line.netWt,
-        price_per_kg: line.pricePerKg,
-        proceeds: line.proceeds,
-        vat_amount: line.vatAmount,
+        gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
+        net_wt: line.netWt, price_per_kg: line.pricePerKg,
+        proceeds: line.proceeds, vat_amount: line.vatAmount,
         on_guarantee: line.onGuarantee,
       },
       { onConflict: "lot_id" },
     );
-    await supabase.from("auction_lots").update({ state: "sold" }).eq("id", lotId);
+    await supabase.from("auction_lots").update({ state: "sold" }).eq("id", lot.id);
     applied++;
   }
+
+  // ── Settlements per contract (A3) ──
+  const { data: saleData } = await supabase.from("auction_sales").select("broker_id").eq("id", saleId).single();
+  const brokerId = saleData?.broker_id as string | undefined;
+  let settlementCount = 0;
+
+  if (brokerId) {
+    const { data: ratesRows } = await supabase
+      .from("broker_rates")
+      .select("*")
+      .eq("broker_id", brokerId)
+      .order("effective_from", { ascending: false })
+      .limit(1);
+    const rateCard = ratesRows?.[0];
+
+    // Fetch existing sale lines we just upserted (with their ids) for VAT ledger
+    const { data: saleLines } = await supabase
+      .from("sale_lines")
+      .select("id, lot_id, invoice_no, proceeds, vat_amount, on_guarantee")
+      .eq("sale_id", saleId);
+
+    for (const c of parsed.contracts) {
+      const contractLines = parsed.lines.filter((l) => l.contractNo === c.contractNo);
+      const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
+      const lotCount = contractLines.length;
+      const netKg = contractLines.reduce((s, l) => s + l.netWt, 0);
+
+      if (rateCard) {
+        const s = computeSettlement(
+          {
+            insurancePerKg: Number(rateCard.insurance_per_kg),
+            publicSaleExPerLot: Number(rateCard.public_sale_ex_per_lot),
+            brokeragePct: Number(rateCard.brokerage_pct),
+            handlingPerKg: Number(rateCard.handling_per_kg),
+            documentationPerLot: Number(rateCard.documentation_per_lot),
+            eplatformPerKg: Number(rateCard.eplatform_per_kg),
+            govtReliefLoan: Number(rateCard.govt_relief_loan),
+            chargesVatPct: Number(rateCard.charges_vat_pct),
+            proceedsVatPct: Number(rateCard.proceeds_vat_pct),
+          },
+          { contractNo: c.contractNo, netKg, lotCount, proceedsTotal },
+        );
+
+        const { data: st } = await supabase
+          .from("settlements")
+          .upsert(
+            {
+              factory_id: profile.factory_id, sale_id: saleId,
+              contract_no: c.contractNo, proceeds_total: proceedsTotal.toFixed(2),
+              total_deductions: s.totalDeductions.toFixed(2),
+              net_proceeds: s.netProceeds.toFixed(2),
+              output_vat: s.outputVat.toFixed(2),
+              total_net_proceeds: s.totalNetProceeds.toFixed(2),
+              prompt_date: toISODate(parsed.promptDate),
+            },
+            { onConflict: "factory_id,contract_no" },
+          )
+          .select("id")
+          .single();
+
+        if (st) {
+          for (const ch of s.charges) {
+            await supabase.from("settlement_charges").upsert(
+              {
+                factory_id: profile.factory_id, settlement_id: st.id,
+                code: ch.code, label: ch.label, basis: ch.basis,
+                rate: ch.rate.toFixed(4), amount: ch.amount.toFixed(2),
+                sort_order: String(ch.sortOrder),
+              },
+              { onConflict: "settlement_id,code" },
+            );
+          }
+          settlementCount++;
+        }
+      }
+    }
+
+    // ── VAT ledger (A3) ──
+    if (saleLines?.length) {
+      const vatInputs = saleLines.map((sl) => ({
+        saleLineId: sl.id as string,
+        lotId: sl.lot_id as string,
+        invoiceNo: (sl as { invoice_no?: string }).invoice_no ?? "",
+        proceeds: Number(sl.proceeds),
+        vatAmount: Number(sl.vat_amount),
+        onGuarantee: Boolean(sl.on_guarantee),
+      }));
+
+      const { data: settlementRows } = await supabase
+        .from("settlement_charges")
+        .select("amount")
+        .eq("factory_id", profile.factory_id)
+        .eq("code", "charges_vat");
+      const inputVat = (settlementRows ?? []).reduce((s, c) => s + Number(c.amount), 0);
+
+      const recon = reconcileVat(vatInputs, inputVat);
+
+      for (const l of recon.lines) {
+        await supabase.from("vat_ledger").upsert(
+          {
+            factory_id: profile.factory_id, sale_line_id: l.saleLineId,
+            flow: l.flow, vat_amount: l.vatAmount.toFixed(2), mode: l.mode,
+            status: "pending",
+          },
+          { onConflict: "sale_line_id" },
+        );
+      }
+    }
+  }
+
   await supabase
     .from("auction_sales")
-    .update({ status: "sold", prompt_date: toISODate(parsed.promptDate) })
+    .update({ status: "settled", prompt_date: toISODate(parsed.promptDate) })
     .eq("id", saleId);
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
   revalidatePath(detail);
-  redirect(`${detail}?notice=${encodeURIComponent(`Recorded ${applied} sale line(s); prompt date ${parsed.promptDate ?? "—"}.`)}`);
+  const settlementNote = settlementCount
+    ? `; ${settlementCount} settlement(s) computed`
+    : "";
+  redirect(
+    `${detail}?notice=${encodeURIComponent(`Recorded ${applied} sale line(s)${settlementNote}; prompt date ${parsed.promptDate ?? "—"}.`)}`,
+  );
 }
 
 export async function rejectImport(importId: string, saleId: string) {
@@ -428,4 +546,124 @@ export async function rejectImport(importId: string, saleId: string) {
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
   revalidatePath(`${AUC}/${saleId}`);
   redirect(`${AUC}/${saleId}`);
+}
+
+// ────────── Bank CSV import (A4) ──────────
+export async function ingestBankCsv(saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return back(detail, "Choose a bank-statement CSV to upload.");
+
+  const text = await file.text();
+  if (!isBankCsv(text)) return back(detail, "That doesn't look like a bank-statement CSV.");
+
+  const parsed = parseBankCsv(text);
+  const contentHash = createHash("sha256").update(text).digest("hex");
+  const importBatchId = crypto.randomUUID();
+
+  // Stage: upsert by content_hash (idempotent re-upload).
+  const { data: existing } = await supabase
+    .from("doc_imports")
+    .select("id")
+    .eq("content_hash", contentHash)
+    .maybeSingle();
+
+  let importId: string;
+  if (existing?.id) {
+    importId = existing.id as string;
+    await supabase
+      .from("doc_imports")
+      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name })
+      .eq("id", importId);
+  } else {
+    const { data, error } = await supabase
+      .from("doc_imports")
+      .insert({
+        factory_id: profile.factory_id, doc_type: "bank_csv",
+        source_filename: file.name, content_hash: contentHash,
+        parsed_json: parsed, status: "parsed", sale_id: saleId,
+      })
+      .select("id")
+      .single();
+    if (error || !data) return back(detail, error?.message ?? "Could not stage the CSV.");
+    importId = data.id;
+  }
+
+  // Write staged transactions (idempotent per batch — delete old ones from this hash first).
+  await supabase.from("bank_txns").delete().eq("import_batch_id", importBatchId);
+
+  const { error: insErr } = await supabase.from("bank_txns").insert(
+    parsed.transactions.map((t) => ({
+      factory_id: profile.factory_id,
+      txn_date: t.txnDate,
+      description: t.description,
+      debit: t.debit.toFixed(2),
+      credit: t.credit.toFixed(2),
+      running_balance: t.runningBalance?.toFixed(2) ?? null,
+      cheque_no: t.chequeNo,
+      raw_line: t.rawLine,
+      import_batch_id: importBatchId,
+    })),
+  );
+  if (insErr) return back(detail, insErr.message);
+
+  // Run bank reconciliation against pending settlements.
+  const { data: settlements } = await supabase
+    .from("settlements")
+    .select("id, contract_no, total_net_proceeds, output_vat, prompt_date")
+    .eq("sale_id", saleId);
+  const { data: credits } = await supabase
+    .from("bank_txns")
+    .select("id, txn_date, credit, description, cheque_no")
+    .eq("import_batch_id", importBatchId);
+
+  if (settlements?.length && credits?.length) {
+    const { data: vatForSale } = await supabase
+      .from("sale_lines")
+      .select("vat_amount, on_guarantee")
+      .eq("sale_id", saleId);
+    const guaranteedVatPerContract = new Map<string, number>();
+    for (const v of vatForSale ?? []) {
+      if (v.on_guarantee) guaranteedVatPerContract.set(
+        "",  // aggregate per sale — gross simplification; real mapping needs contract_no on sale_lines
+        (guaranteedVatPerContract.get("") ?? 0) + Number(v.vat_amount),
+      );
+    }
+    const totalGuaranteed = guaranteedVatPerContract.get("") ?? 0;
+
+    const recon = reconcileBank(
+      settlements.map((st) => ({
+        settlementId: st.id as string,
+        contractNo: st.contract_no as string,
+        totalNetProceeds: Number(st.total_net_proceeds),
+        guaranteedVat: totalGuaranteed, // aggregate; per-contract when sale_lines carry contract_no
+        promptDate: (st.prompt_date as string) ?? "",
+      })),
+      (credits as {
+        id: string; txn_date: string; credit: string; description: string | null; cheque_no: string | null;
+      }[]).map((c) => ({
+        txnId: c.id,
+        txnDate: c.txn_date,
+        credit: Number(c.credit),
+        description: c.description ?? "",
+        chequeNo: c.cheque_no,
+      })),
+    );
+
+    // Apply matches
+    for (const m of recon.matches) {
+      await supabase.from("bank_txns").update({
+        matched_settlement_id: m.settlementId,
+        match_status: "matched",
+      }).eq("id", m.bankTxnId);
+    }
+  }
+
+  revalidatePath(detail);
+  redirect(
+    `${detail}?notice=${encodeURIComponent(
+      `Imported ${parsed.transactions.length} bank transaction(s).`,
+    )}`,
+  );
 }

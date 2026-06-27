@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test:payments": "tsx src/payments/calculate.test.ts",
     "test:auction": "tsx src/auction/parse-acknowledgement.test.ts",
-    "test:auction2": "tsx src/auction/parse-valuation.test.ts"
+    "test:auction2": "tsx src/auction/parse-valuation.test.ts",
+    "test:settlement": "tsx src/auction/compute-settlement.test.ts"
   },
   "dependencies": {
     "@tea/db": "workspace:*"
