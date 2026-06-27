@@ -85,6 +85,13 @@
       "when": 1782600000000,
       "tag": "0011_add_auction_valuations",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782572673660,
+      "tag": "0007_uneven_korath",
+      "breakpoints": true
     }
   ]
 }

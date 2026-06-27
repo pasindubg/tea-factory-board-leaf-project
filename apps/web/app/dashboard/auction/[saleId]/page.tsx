@@ -1,6 +1,13 @@
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
-import { addInvoicedLot, deleteLot, deleteSale, ingestAcknowledgement } from "../actions";
+import {
+  addInvoicedLot,
+  deleteLot,
+  deleteSale,
+  ingestAcknowledgement,
+  ingestValuation,
+  ingestContract,
+} from "../actions";
 
 const GRADES = ["OP", "OP1", "OPA", "PEK", "PEK1", "BOP", "BOPF", "FBOP", "DUST", "BM"];
 
@@ -55,14 +62,17 @@ export default async function SaleDetailPage({
       .order("invoice_no"),
     supabase
       .from("doc_imports")
-      .select("id, source_filename, status, parsed_at")
+      .select("id, source_filename, status, parsed_at, doc_type")
       .eq("sale_id", saleId)
-      .eq("doc_type", "acknowledgement")
       .order("parsed_at", { ascending: false }),
   ]);
 
   const rows = lots ?? [];
   const totalNet = rows.reduce((sum, l) => sum + Number(l.net_wt ?? 0), 0);
+  const allImports = imports ?? [];
+  const ackImports = allImports.filter((i) => i.doc_type === "acknowledgement");
+  const valImports = allImports.filter((i) => i.doc_type === "valuation");
+  const conImports = allImports.filter((i) => i.doc_type === "contract");
 
   return (
     <div className="space-y-8">
@@ -212,67 +222,102 @@ export default async function SaleDetailPage({
         </form>
       </section>
 
-      {/* Acknowledgement ingestion → reconciliation ① */}
-      <section>
-        <h3 className="text-lg font-medium text-stone-700">Acknowledgement</h3>
-        <p className="text-sm text-stone-500">
-          Upload the broker’s Acknowledgement PDF to catalogue these lots and reconcile against what you
-          invoiced.
-        </p>
-        <form
-          action={ingestAcknowledgement.bind(null, sale.id)}
-          className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white p-4"
-        >
-          <input
-            type="file"
-            name="file"
-            accept="application/pdf"
-            required
-            className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-green-700 file:px-3 file:py-1.5 file:text-white hover:file:bg-green-800"
-          />
-          <SubmitButton
-            pendingText="Reading…"
-            className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
-          >
-            Upload &amp; reconcile
-          </SubmitButton>
-        </form>
-
-        {(imports ?? []).length > 0 && (
-          <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
-                  <th className="px-4 py-3">File</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Uploaded</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(imports ?? []).map((im) => (
-                  <tr key={im.id} className="border-b border-stone-100 last:border-0">
-                    <td className="px-4 py-2">{im.source_filename ?? "acknowledgement.pdf"}</td>
-                    <td className="px-4 py-2">
-                      <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">
-                        {im.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-stone-500">
-                      {im.parsed_at ? new Date(im.parsed_at).toLocaleString() : "—"}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <a href={`/dashboard/auction/${sale.id}/ack/${im.id}`} className="text-green-700 hover:underline">
-                        Review
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      {/* Document ingestion → reconciliations ①/② */}
+      <IngestSection
+        title="Acknowledgement"
+        description="Catalogue these lots and reconcile (①) against what you invoiced; shutouts are flagged."
+        action={ingestAcknowledgement.bind(null, sale.id)}
+        reviewBase={`/dashboard/auction/${sale.id}/ack`}
+        imports={ackImports}
+      />
+      <IngestSection
+        title="Valuation report"
+        description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes."
+        action={ingestValuation.bind(null, sale.id)}
+        reviewBase={`/dashboard/auction/${sale.id}/valuation`}
+        imports={valImports}
+      />
+      <IngestSection
+        title="Sellers contract"
+        description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation."
+        action={ingestContract.bind(null, sale.id)}
+        reviewBase={`/dashboard/auction/${sale.id}/contract`}
+        imports={conImports}
+      />
     </div>
+  );
+}
+
+type ImportRow = { id: string; source_filename: string | null; status: string; parsed_at: string | null };
+
+function IngestSection({
+  title,
+  description,
+  action,
+  reviewBase,
+  imports,
+}: {
+  title: string;
+  description: string;
+  action: (formData: FormData) => void;
+  reviewBase: string;
+  imports: ImportRow[];
+}) {
+  return (
+    <section>
+      <h3 className="text-lg font-medium text-stone-700">{title}</h3>
+      <p className="text-sm text-stone-500">{description}</p>
+      <form
+        action={action}
+        className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white p-4"
+      >
+        <input
+          type="file"
+          name="file"
+          accept="application/pdf"
+          required
+          className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-green-700 file:px-3 file:py-1.5 file:text-white hover:file:bg-green-800"
+        />
+        <SubmitButton
+          pendingText="Reading…"
+          className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+        >
+          Upload &amp; review
+        </SubmitButton>
+      </form>
+
+      {imports.length > 0 && (
+        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+                <th className="px-4 py-3">File</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Uploaded</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {imports.map((im) => (
+                <tr key={im.id} className="border-b border-stone-100 last:border-0">
+                  <td className="px-4 py-2">{im.source_filename ?? "document.pdf"}</td>
+                  <td className="px-4 py-2">
+                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{im.status}</span>
+                  </td>
+                  <td className="px-4 py-2 text-stone-500">
+                    {im.parsed_at ? new Date(im.parsed_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <a href={`${reviewBase}/${im.id}`} className="text-green-700 hover:underline">
+                      Review
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

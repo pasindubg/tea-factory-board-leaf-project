@@ -6,3 +6,6 @@ export * from "./payments/calculate";
 // Auction & settlement (A-track): pure document parsers + reconciliations.
 export * from "./auction/parse-acknowledgement";
 export * from "./auction/reconcile";
+export * from "./auction/parse-valuation";
+export * from "./auction/parse-contract";
+export * from "./auction/reconcile-valuation";

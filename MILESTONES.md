@@ -175,8 +175,12 @@ DB integration: 12 catalogued, 2 shutout `0061`/`0063`, inv `0058`→lot `0477`)
 their invoice numbers with exact net weights; invoices 0061 and 0063 show as
 shutout; `db:verify-rls` passes.
 
-## A2 — Valuation & auction sale  (entitlement `auction`)
-Reconciliation ②.
+## A2 — Valuation & auction sale ✅ done & verified  (entitlement `auction`)
+Reconciliation ②. Parsers + reconciler in `packages/api/src/auction/`
+(`pnpm --dir packages/api test:auction2`, 21 checks). Verified end-to-end against
+the real Sale-023 Valuation + Sellers Contract (rolled-back DB integration: 12
+valuations, 12 sale lines, 8 buyers, 2 on bank guarantee; KUMUDU realised premium
++9.11%, 1,518.35 → 1,656.70 /kg). Nav split into Leaf Handling / Sales Handling.
 - Schema: `valuations` (lot, min/max price/kg, projected proceeds, tasting note),
   `buyers` (name, VAT no.), `sale_lines` (lot, buyer, price/kg, proceeds, vat,
   guarantee flag).

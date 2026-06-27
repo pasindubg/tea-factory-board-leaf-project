@@ -19,12 +19,18 @@ export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
  */
 export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
 
+// Sidebar sections. Overview has no group (it sits above the sections); every
+// other module belongs to one. Sections render in this order.
+export type ModuleGroup = "Leaf Handling" | "Sales Handling";
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling"];
+
 export type ModuleDef = {
   key: string;
   href: string;
   label: string;
   roles: readonly Role[];
   entitlement: Entitlement;
+  group?: ModuleGroup;
 };
 
 // Default access per module. Per-factory overrides are stored in module_permissions
@@ -43,6 +49,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Weighings",
     roles: ALL_WEB_ROLES,
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "suppliers",
@@ -50,6 +57,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Suppliers",
     roles: ["owner", "manager", "supervisor", "accountant"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "collectors",
@@ -57,6 +65,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Collectors",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "requests",
@@ -78,13 +87,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Payments",
     roles: ["owner", "manager", "accountant"],
     entitlement: "leaf-handling",
-  },
-  {
-    key: "auction",
-    href: "/dashboard/auction",
-    label: "Auction",
-    roles: ["owner", "manager", "accountant"],
-    entitlement: "auction",
+    group: "Leaf Handling",
   },
   {
     key: "users",
@@ -92,6 +95,15 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Users",
     roles: ["owner"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
+  },
+  {
+    key: "auction",
+    href: "/dashboard/auction",
+    label: "Auction",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
   },
 ];
 

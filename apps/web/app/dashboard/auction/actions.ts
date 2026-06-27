@@ -8,7 +8,13 @@ import {
   isAcknowledgement,
   parseAcknowledgement,
   reconcileAcknowledgement,
+  isValuation,
+  parseValuation,
+  isContract,
+  parseContract,
   type ParsedAcknowledgement,
+  type ParsedValuation,
+  type ParsedContract,
 } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { getDefaultRoles } from "@/lib/roles";
@@ -240,6 +246,184 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 }
 
 export async function rejectAcknowledgement(importId: string, saleId: string) {
+  const { supabase } = await requireProfile(roles());
+  await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
+  revalidatePath(`${AUC}/${saleId}`);
+  redirect(`${AUC}/${saleId}`);
+}
+
+// ---------- Valuation & contract ingestion (A2) ----------
+async function extractPdf(file: FormDataEntryValue | null): Promise<string | null> {
+  if (!(file instanceof File) || file.size === 0) return null;
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(await file.arrayBuffer()));
+    const extracted = await extractText(pdf, { mergePages: true });
+    return Array.isArray(extracted.text) ? extracted.text.join(" ") : extracted.text;
+  } catch {
+    return null;
+  }
+}
+
+const toISODate = (d: string | null): string | null => {
+  const m = d?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+};
+
+// Parse → stage into doc_imports (idempotent on content hash). Returns the import id.
+async function stageImport(
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  factoryId: string,
+  saleId: string,
+  docType: "valuation" | "contract",
+  filename: string,
+  text: string,
+  parsed: unknown,
+): Promise<string | null> {
+  const contentHash = createHash("sha256").update(text).digest("hex");
+  const { data: existing } = await supabase
+    .from("doc_imports")
+    .select("id")
+    .eq("content_hash", contentHash)
+    .maybeSingle();
+  if (existing?.id) {
+    await supabase
+      .from("doc_imports")
+      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: filename, doc_type: docType })
+      .eq("id", existing.id);
+    return existing.id as string;
+  }
+  const { data } = await supabase
+    .from("doc_imports")
+    .insert({
+      factory_id: factoryId,
+      doc_type: docType,
+      source_filename: filename,
+      content_hash: contentHash,
+      parsed_json: parsed,
+      status: "parsed",
+      sale_id: saleId,
+    })
+    .select("id")
+    .single();
+  return (data?.id as string) ?? null;
+}
+
+export async function ingestValuation(saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const file = formData.get("file");
+  const text = await extractPdf(file);
+  if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
+  if (!isValuation(text)) return back(detail, "That doesn't look like a Valuation Report.");
+  const parsed = parseValuation(text);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", (file as File).name, text, parsed);
+  if (!importId) return back(detail, "Could not stage the document.");
+  redirect(`${detail}/valuation/${importId}`);
+}
+
+export async function confirmValuation(importId: string, saleId: string) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
+  if (!imp?.parsed_json) return back(detail, "Staged import not found.");
+  const parsed = imp.parsed_json as ParsedValuation;
+
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
+  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
+
+  let applied = 0;
+  for (const v of parsed.lots) {
+    const lotId = lotByInv.get(v.invoiceNo);
+    if (!lotId) continue;
+    await supabase.from("valuations").upsert(
+      {
+        factory_id: profile.factory_id,
+        lot_id: lotId,
+        price_min: v.priceMin,
+        price_max: v.priceMax,
+        projected_proceeds: v.projectedProceeds,
+        tasting_note: v.tastingNote,
+      },
+      { onConflict: "lot_id" },
+    );
+    await supabase.from("auction_lots").update({ state: "valued" }).eq("id", lotId).neq("state", "shutout");
+    applied++;
+  }
+  await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
+  await supabase.from("auction_sales").update({ status: "valued" }).eq("id", saleId);
+  revalidatePath(detail);
+  redirect(`${detail}?notice=${encodeURIComponent(`Recorded valuations for ${applied} lot(s).`)}`);
+}
+
+export async function ingestContract(saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const file = formData.get("file");
+  const text = await extractPdf(file);
+  if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
+  if (!isContract(text)) return back(detail, "That doesn't look like a Sellers Contract & Account Sales document.");
+  const parsed = parseContract(text);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", (file as File).name, text, parsed);
+  if (!importId) return back(detail, "Could not stage the document.");
+  redirect(`${detail}/contract/${importId}`);
+}
+
+export async function confirmContract(importId: string, saleId: string) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
+  if (!imp?.parsed_json) return back(detail, "Staged import not found.");
+  const parsed = imp.parsed_json as ParsedContract;
+
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
+  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
+
+  // Resolve buyers (upsert by name).
+  const uniqueBuyers = [...new Map(parsed.lines.map((l) => [l.buyerName, l.buyerVatNo])).entries()]
+    .filter(([name]) => name)
+    .map(([name, vatNo]) => ({ factory_id: profile.factory_id, name, vat_no: vatNo || null }));
+  const buyerByName = new Map<string, string>();
+  if (uniqueBuyers.length > 0) {
+    const { data: upserted } = await supabase
+      .from("buyers")
+      .upsert(uniqueBuyers, { onConflict: "factory_id,name" })
+      .select("id, name");
+    for (const b of upserted ?? []) buyerByName.set(b.name as string, b.id as string);
+  }
+
+  let applied = 0;
+  for (const line of parsed.lines) {
+    const lotId = lotByInv.get(line.invoiceNo);
+    if (!lotId) continue;
+    await supabase.from("sale_lines").upsert(
+      {
+        factory_id: profile.factory_id,
+        sale_id: saleId,
+        lot_id: lotId,
+        buyer_id: buyerByName.get(line.buyerName) ?? null,
+        gross_wt: line.grossWt,
+        sample_allowance: line.sampleAllowance,
+        net_wt: line.netWt,
+        price_per_kg: line.pricePerKg,
+        proceeds: line.proceeds,
+        vat_amount: line.vatAmount,
+        on_guarantee: line.onGuarantee,
+      },
+      { onConflict: "lot_id" },
+    );
+    await supabase.from("auction_lots").update({ state: "sold" }).eq("id", lotId);
+    applied++;
+  }
+  await supabase
+    .from("auction_sales")
+    .update({ status: "sold", prompt_date: toISODate(parsed.promptDate) })
+    .eq("id", saleId);
+  await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
+  revalidatePath(detail);
+  redirect(`${detail}?notice=${encodeURIComponent(`Recorded ${applied} sale line(s); prompt date ${parsed.promptDate ?? "—"}.`)}`);
+}
+
+export async function rejectImport(importId: string, saleId: string) {
   const { supabase } = await requireProfile(roles());
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
   revalidatePath(`${AUC}/${saleId}`);
