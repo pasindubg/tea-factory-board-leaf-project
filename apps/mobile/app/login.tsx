@@ -32,7 +32,9 @@ export default function Login() {
     setBusy(true);
     setError(null);
     const { error } = await supabase.auth.signInWithOtp(
-      isPhone ? { phone: value } : { email: value, options: { shouldCreateUser: false } },
+      isPhone
+        ? { phone: value, options: { shouldCreateUser: false } }
+        : { email: value, options: { shouldCreateUser: false } },
     );
     setBusy(false);
     if (error) {
