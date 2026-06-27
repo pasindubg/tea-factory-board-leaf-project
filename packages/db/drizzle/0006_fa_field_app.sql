@@ -40,7 +40,10 @@ CREATE TABLE "supplier_requests" (
 	"handed_at" timestamp,
 	"acknowledged_at" timestamp,
 	"adjustment_id" uuid,
-	"created_at" timestamp DEFAULT now() NOT NULL
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "supplier_requests_status_check" CHECK (
+		"status" IN ('pending', 'approved', 'declined', 'handed_to_driver', 'acknowledged', 'cancelled')
+	)
 );
 --> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "supplier_id" uuid;--> statement-breakpoint
@@ -103,17 +106,72 @@ CREATE POLICY "management_delete" ON "request_types"
     AND public.current_user_role() IN ('owner', 'manager')
   );
 --> statement-breakpoint
--- supplier_requests: tenant-isolated AND supplier-scoped. Staff (supplier_id
--- NULL) act on every row in their factory; a supplier only ever sees or writes
--- rows for their own supplier_id. Status-transition rules (a supplier may only
--- acknowledge/cancel, never approve) are enforced in the server/app layer.
-CREATE POLICY "factory_isolation" ON "supplier_requests"
-  FOR ALL TO authenticated
+-- supplier_requests: tenant-isolated and role-scoped. Management can adjudicate;
+-- drivers can only mark an approved row as handed over; suppliers can only
+-- create their own pending rows and acknowledge their own handed-over rows.
+CREATE POLICY "supplier_requests_read_visibility" ON "supplier_requests"
+  FOR SELECT TO authenticated
   USING (
     factory_id = public.current_factory_id()
-    AND (public.current_supplier_id() IS NULL OR supplier_id = public.current_supplier_id())
+    AND (
+      public.current_user_role() IN ('owner', 'manager', 'supervisor', 'driver')
+      OR supplier_id = public.current_supplier_id()
+    )
+  );
+--> statement-breakpoint
+CREATE POLICY "supplier_requests_supplier_insert" ON "supplier_requests"
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() = 'supplier'
+    AND supplier_id = public.current_supplier_id()
+    AND status = 'pending'
+  );
+--> statement-breakpoint
+CREATE POLICY "supplier_requests_management_decide" ON "supplier_requests"
+  FOR UPDATE TO authenticated
+  USING (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() IN ('owner', 'manager', 'supervisor')
+    AND status = 'pending'
   )
   WITH CHECK (
     factory_id = public.current_factory_id()
-    AND (public.current_supplier_id() IS NULL OR supplier_id = public.current_supplier_id())
+    AND public.current_user_role() IN ('owner', 'manager', 'supervisor')
+    AND status IN ('approved', 'declined')
+  );
+--> statement-breakpoint
+CREATE POLICY "supplier_requests_hand_to_driver" ON "supplier_requests"
+  FOR UPDATE TO authenticated
+  USING (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() IN ('owner', 'manager', 'supervisor', 'driver')
+    AND status = 'approved'
+  )
+  WITH CHECK (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() IN ('owner', 'manager', 'supervisor', 'driver')
+    AND status = 'handed_to_driver'
+  );
+--> statement-breakpoint
+CREATE POLICY "supplier_requests_supplier_acknowledge" ON "supplier_requests"
+  FOR UPDATE TO authenticated
+  USING (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() = 'supplier'
+    AND supplier_id = public.current_supplier_id()
+    AND status = 'handed_to_driver'
+  )
+  WITH CHECK (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() = 'supplier'
+    AND supplier_id = public.current_supplier_id()
+    AND status = 'acknowledged'
+  );
+--> statement-breakpoint
+CREATE POLICY "supplier_requests_management_delete" ON "supplier_requests"
+  FOR DELETE TO authenticated
+  USING (
+    factory_id = public.current_factory_id()
+    AND public.current_user_role() IN ('owner', 'manager')
   );

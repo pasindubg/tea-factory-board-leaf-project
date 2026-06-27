@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, numeric, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, uuid, text, numeric, jsonb, timestamp, index, check } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { suppliers } from "./suppliers";
 import { users } from "./users";
@@ -46,5 +47,9 @@ export const supplierRequests = pgTable(
     index("idx_supplier_requests_factory").on(t.factoryId),
     index("idx_supplier_requests_supplier").on(t.supplierId),
     index("idx_supplier_requests_status").on(t.status),
+    check(
+      "supplier_requests_status_check",
+      sql`${t.status} IN ('pending', 'approved', 'declined', 'handed_to_driver', 'acknowledged', 'cancelled')`,
+    ),
   ],
 );

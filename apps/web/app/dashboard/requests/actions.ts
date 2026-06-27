@@ -70,7 +70,7 @@ export async function approveRequest(formData: FormData) {
     adjustmentId = adj!.id as string;
   }
 
-  const { error } = await supabase
+  const { data: approvedRows, error } = await supabase
     .from("supplier_requests")
     .update({
       status: "approved",
@@ -78,8 +78,20 @@ export async function approveRequest(formData: FormData) {
       decided_at: new Date().toISOString(),
       adjustment_id: adjustmentId,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("id");
   if (error) back(error.message);
+  if ((approvedRows ?? []).length === 0) {
+    if (adjustmentId) {
+      const { error: rollbackErr } = await supabase
+        .from("supplier_adjustments")
+        .delete()
+        .eq("id", adjustmentId);
+      if (rollbackErr) back(`Approval changed concurrently; rollback failed: ${rollbackErr.message}`);
+    }
+    back("Only pending requests can be approved.");
+  }
 
   revalidatePath(REQ);
   ok(
