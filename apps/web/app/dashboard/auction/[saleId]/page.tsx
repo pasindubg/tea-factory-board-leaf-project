@@ -13,17 +13,17 @@ import {
 const GRADES = ["OP", "OP1", "OPA", "PEK", "PEK1", "BOP", "BOPF", "FBOP", "DUST", "BM"];
 
 const LOT_STATE_STYLE: Record<string, string> = {
-  invoiced: "bg-stone-100 text-stone-600",
-  catalogued: "bg-blue-100 text-blue-800",
-  shutout: "bg-red-100 text-red-800",
-  valued: "bg-amber-100 text-amber-800",
-  sold: "bg-green-100 text-green-800",
-  withdrawn: "bg-stone-100 text-stone-500",
-  settled: "bg-green-100 text-green-800",
+  invoiced: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400",
+  catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
+  shutout: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
+  valued: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400",
+  sold: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
+  withdrawn: "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
+  settled: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
 };
 
-const input = "mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm";
-const label = "block text-sm font-medium text-stone-600";
+const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm";
+const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export default async function SaleDetailPage({
   params,
@@ -44,9 +44,9 @@ export default async function SaleDetailPage({
 
   if (!sale) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white p-8 text-center text-stone-500">
+      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Sale not found.{" "}
-        <Link href="/dashboard/auction" className="text-green-700 hover:underline">
+        <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
           Back to sales
         </Link>
       </div>
@@ -79,17 +79,17 @@ export default async function SaleDetailPage({
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link href="/dashboard/auction" className="text-sm text-green-700 hover:underline">
+          <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
             ← Sales
           </Link>
           <h2 className="mt-1 text-xl font-semibold">Sale {sale.sale_no}</h2>
-          <p className="text-sm text-stone-500">
+          <p className="text-sm text-stone-500 dark:text-stone-400">
             {broker}
             {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
             {sale.prompt_date ? ` · prompt ${sale.prompt_date}` : ""}
             {" · "}
             <span
-              className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[sale.status] ?? "bg-stone-100 text-stone-600"}`}
+              className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[sale.status] ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
             >
               {sale.status}
             </span>
@@ -99,7 +99,7 @@ export default async function SaleDetailPage({
           <form action={deleteSale.bind(null, sale.id)}>
             <SubmitButton
               pendingText="Deleting…"
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-500 hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Delete sale
             </SubmitButton>
@@ -107,22 +107,22 @@ export default async function SaleDetailPage({
         )}
       </div>
 
-      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-      {notice && <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">{notice}</p>}
+      {error && <p className="rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>}
+      {notice && <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">{notice}</p>}
 
       {/* Invoiced lots — the factory's record of what it dispatched to the broker. */}
       <section>
         <div className="flex items-baseline justify-between">
-          <h3 className="text-lg font-medium text-stone-700">Invoiced lots</h3>
-          <p className="text-sm text-stone-500">
+          <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Invoiced lots</h3>
+          <p className="text-sm text-stone-500 dark:text-stone-400">
             {rows.length} lot{rows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
           </p>
         </div>
 
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                 <th className="px-3 py-3">Invoice</th>
                 <th className="px-3 py-3">Mark</th>
                 <th className="px-3 py-3">Grade</th>
@@ -138,7 +138,7 @@ export default async function SaleDetailPage({
               {rows.map((l) => {
                 const markCode = (l.marks as unknown as { code: string } | null)?.code ?? "—";
                 return (
-                  <tr key={l.id} className="border-b border-stone-100 last:border-0">
+                  <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                     <td className="px-3 py-2 font-medium">{l.invoice_no}</td>
                     <td className="px-3 py-2">{markCode}</td>
                     <td className="px-3 py-2">{l.grade}</td>
@@ -148,7 +148,7 @@ export default async function SaleDetailPage({
                     <td className="px-3 py-2">{l.lot_no ?? "—"}</td>
                     <td className="px-3 py-2">
                       <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[l.state] ?? "bg-stone-100 text-stone-600"}`}
+                        className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[l.state] ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
                         title={l.shutout_reason ?? undefined}
                       >
                         {l.state}
@@ -157,7 +157,7 @@ export default async function SaleDetailPage({
                     <td className="px-3 py-2 text-right">
                       {l.state === "invoiced" && (
                         <form action={deleteLot.bind(null, l.id, sale.id)}>
-                          <SubmitButton pendingText="…" className="text-stone-400 hover:text-red-600 hover:underline">
+                          <SubmitButton pendingText="…" className="text-stone-400 dark:text-stone-500 hover:text-red-600 dark:hover:text-red-400 hover:underline">
                             Remove
                           </SubmitButton>
                         </form>
@@ -168,7 +168,7 @@ export default async function SaleDetailPage({
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-stone-400">
+                  <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                     No lots yet. Add the lots you invoiced to the broker for this sale.
                   </td>
                 </tr>
@@ -180,7 +180,7 @@ export default async function SaleDetailPage({
         {/* Add invoiced lot */}
         <form
           action={addInvoicedLot.bind(null, sale.id)}
-          className="mt-4 grid items-end gap-3 rounded-xl border border-stone-200 bg-white p-4 sm:grid-cols-6"
+          className="mt-4 grid items-end gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 sm:grid-cols-6"
         >
           <div className="sm:col-span-1">
             <label className={label}>Invoice no.</label>
@@ -217,7 +217,7 @@ export default async function SaleDetailPage({
           <div className="sm:col-span-1">
             <SubmitButton
               pendingText="Adding…"
-              className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
               Add lot
             </SubmitButton>
@@ -268,11 +268,11 @@ function IngestSection({
 }) {
   return (
     <section>
-      <h3 className="text-lg font-medium text-stone-700">{title}</h3>
-      <p className="text-sm text-stone-500">{description}</p>
+      <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">{title}</h3>
+      <p className="text-sm text-stone-500 dark:text-stone-400">{description}</p>
       <form
         action={action}
-        className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white p-4"
+        className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4"
       >
         <input
           type="file"
@@ -283,17 +283,17 @@ function IngestSection({
         />
         <SubmitButton
           pendingText="Reading…"
-          className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
           Upload &amp; review
         </SubmitButton>
       </form>
 
       {imports.length > 0 && (
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                 <th className="px-4 py-3">File</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Uploaded</th>
@@ -302,16 +302,16 @@ function IngestSection({
             </thead>
             <tbody>
               {imports.map((im) => (
-                <tr key={im.id} className="border-b border-stone-100 last:border-0">
+                <tr key={im.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                   <td className="px-4 py-2">{im.source_filename ?? "document.pdf"}</td>
                   <td className="px-4 py-2">
-                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{im.status}</span>
+                    <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-600 dark:text-stone-400">{im.status}</span>
                   </td>
-                  <td className="px-4 py-2 text-stone-500">
+                  <td className="px-4 py-2 text-stone-500 dark:text-stone-400">
                     {im.parsed_at ? new Date(im.parsed_at).toLocaleString() : "—"}
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <Link href={`${reviewBase}/${im.id}`} className="text-green-700 hover:underline">
+                    <Link href={`${reviewBase}/${im.id}`} className="text-green-700 dark:text-green-400 hover:underline">
                       Review
                     </Link>
                   </td>

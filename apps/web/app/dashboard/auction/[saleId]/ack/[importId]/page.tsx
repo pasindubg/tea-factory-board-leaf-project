@@ -8,10 +8,10 @@ import {
 import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
 
 const STATUS_STYLE: Record<ReconStatus, string> = {
-  catalogued: "bg-blue-100 text-blue-800",
-  shutout: "bg-red-100 text-red-800",
-  missing: "bg-amber-100 text-amber-800",
-  unexpected: "bg-purple-100 text-purple-800",
+  catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
+  shutout: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
+  missing: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400",
+  unexpected: "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400",
 };
 
 export default async function AckReviewPage({
@@ -31,9 +31,9 @@ export default async function AckReviewPage({
 
   if (!imp || imp.sale_id !== saleId || !imp.parsed_json) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white p-8 text-center text-stone-500">
+      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <a href={detail} className="text-green-700 hover:underline">
+        <a href={detail} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
         </a>
       </div>
@@ -61,34 +61,34 @@ export default async function AckReviewPage({
   const confirmed = imp.status === "confirmed";
   const s = recon.summary;
   const chips: [string, number, string][] = [
-    ["Catalogued", s.catalogued, "bg-blue-100 text-blue-800"],
-    ["Shutout", s.shutout, "bg-red-100 text-red-800"],
-    ["Missing", s.missing, "bg-amber-100 text-amber-800"],
-    ["Unexpected", s.unexpected, "bg-purple-100 text-purple-800"],
-    ["Weight mismatches", s.weightMismatches, "bg-stone-100 text-stone-700"],
+    ["Catalogued", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
+    ["Shutout", s.shutout, "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"],
+    ["Missing", s.missing, "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"],
+    ["Unexpected", s.unexpected, "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400"],
+    ["Weight mismatches", s.weightMismatches, "bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300"],
   ];
 
   return (
     <div className="space-y-6">
       <div>
-        <a href={detail} className="text-sm text-green-700 hover:underline">
+        <a href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
           ← Sale {sale?.sale_no ?? ""}
         </a>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ① — invoice ↔ acknowledgement</h2>
-        <p className="text-sm text-stone-500">
+        <p className="text-sm text-stone-500 dark:text-stone-400">
           {imp.source_filename ?? "acknowledgement.pdf"} · sale {parsed.saleNo ?? "—"} · sale date{" "}
           {parsed.saleDate ?? "—"}
         </p>
       </div>
 
       {confirmed && (
-        <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
+        <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">
           This acknowledgement has been confirmed — lot states below are applied.
         </p>
       )}
 
       {parsed.issues.length > 0 && (
-        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
           <p className="font-medium">Parse warnings — review before confirming:</p>
           <ul className="ml-4 list-disc">
             {parsed.issues.map((i, idx) => (
@@ -105,16 +105,16 @@ export default async function AckReviewPage({
           </span>
         ))}
         {s.shutout > 0 && (
-          <span className="rounded-full bg-red-50 px-3 py-1 text-sm text-red-700">
+          <span className="rounded-full bg-red-50 dark:bg-red-950 px-3 py-1 text-sm text-red-700 dark:text-red-400">
             {s.shutoutKg.toFixed(2)} kg left at warehouse
           </span>
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="px-3 py-3">Invoice</th>
               <th className="px-3 py-3">Result</th>
               <th className="px-3 py-3">Invoiced</th>
@@ -126,7 +126,7 @@ export default async function AckReviewPage({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.invoiceNo} className="border-b border-stone-100 last:border-0">
+              <tr key={r.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                 <td className="px-3 py-2 font-medium">{r.invoiceNo}</td>
                 <td className="px-3 py-2">
                   <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[r.status]}`}>{r.status}</span>
@@ -143,12 +143,12 @@ export default async function AckReviewPage({
                     ? "—"
                     : `${r.weightDelta > 0 ? "+" : ""}${r.weightDelta.toFixed(2)}`}
                 </td>
-                <td className="px-3 py-2 text-xs text-stone-500">
+                <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
                   {r.status === "missing" && "Invoiced but absent from the acknowledgement"}
                   {r.status === "unexpected" && "In the acknowledgement but never invoiced"}
-                  {r.gradeMismatch && <span className="text-amber-700"> grade differs</span>}
+                  {r.gradeMismatch && <span className="text-amber-700 dark:text-amber-400"> grade differs</span>}
                   {r.weightDelta != null && Math.abs(r.weightDelta) > 0.01 && (
-                    <span className="text-amber-700"> weight differs</span>
+                    <span className="text-amber-700 dark:text-amber-400"> weight differs</span>
                   )}
                 </td>
               </tr>
@@ -162,7 +162,7 @@ export default async function AckReviewPage({
           <form action={confirmAcknowledgement.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="Cataloguing…"
-              className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
               Confirm — catalogue {s.catalogued} lot(s)
             </SubmitButton>
@@ -170,7 +170,7 @@ export default async function AckReviewPage({
           <form action={rejectAcknowledgement.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="…"
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-600 hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Reject
             </SubmitButton>

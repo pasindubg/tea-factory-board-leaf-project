@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 
-const inputClass = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-green-600 focus:outline-none";
+const inputClass = "rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
 
 type Option = { id: string; name: string };
 
@@ -64,11 +64,11 @@ export function WeighingsFilter({
       )}
       <button
         disabled={isPending}
-        className="rounded-md border border-stone-300 px-4 py-1.5 text-sm hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isPending ? "Loading…" : "Filter"}
       </button>
-      <a href="/dashboard/weighings" className="text-sm text-stone-500 hover:underline">
+      <a href="/dashboard/weighings" className="text-sm text-stone-500 dark:text-stone-400 hover:underline">
         Clear
       </a>
     </form>

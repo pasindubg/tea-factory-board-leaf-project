@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 const inputClass =
-  "mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-green-600 focus:outline-none";
+  "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
 
 function LoginForm() {
   const router = useRouter();
@@ -111,19 +111,19 @@ function LoginForm() {
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-sm rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
+      <div className="w-full max-w-sm rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 shadow-sm">
         <h1 className="text-xl font-semibold">Tea Factory Ops</h1>
-        <p className="mt-1 text-sm text-stone-500">Sign in to your factory dashboard</p>
+        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">Sign in to your factory dashboard</p>
 
         {/* Mode tabs */}
-        <div className="mt-5 flex rounded-lg border border-stone-200 p-0.5 text-sm">
+        <div className="mt-5 flex rounded-lg border border-stone-200 dark:border-stone-700 p-0.5 text-sm">
           <button
             type="button"
             onClick={() => switchMode("otp")}
             className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
               mode === "otp"
-                ? "bg-green-700 text-white"
-                : "text-stone-500 hover:text-stone-700"
+                ? "bg-green-700 dark:bg-green-600 text-white"
+                : "text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
             }`}
           >
             Email code
@@ -133,8 +133,8 @@ function LoginForm() {
             onClick={() => switchMode("password")}
             className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
               mode === "password"
-                ? "bg-green-700 text-white"
-                : "text-stone-500 hover:text-stone-700"
+                ? "bg-green-700 dark:bg-green-600 text-white"
+                : "text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
             }`}
           >
             Username
@@ -142,7 +142,7 @@ function LoginForm() {
         </div>
 
         {error && (
-          <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+          <p className="mt-4 rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">
             {error}
           </p>
         )}
@@ -164,14 +164,14 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
             >
               {busy ? "Sending…" : "Send sign-in code"}
             </button>
             <button
               type="button"
               onClick={() => { if (email) { setError(null); setOtpStep("code"); } }}
-              className="w-full text-sm text-stone-500 hover:text-stone-700"
+              className="w-full text-sm text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
             >
               I already have a code
             </button>
@@ -180,7 +180,7 @@ function LoginForm() {
 
         {mode === "otp" && otpStep === "code" && (
           <form onSubmit={verifyCode} className="mt-5 space-y-4">
-            <p className="text-sm text-stone-600">
+            <p className="text-sm text-stone-600 dark:text-stone-400">
               We sent a sign-in email to <span className="font-medium">{email}</span>. Enter the
               code, or click the link in the email.
             </p>
@@ -198,11 +198,11 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
             >
               {busy ? "Verifying…" : "Sign in"}
             </button>
-            <button type="button" onClick={() => setOtpStep("email")} className="w-full text-sm text-stone-500 hover:text-stone-700">
+            <button type="button" onClick={() => setOtpStep("email")} className="w-full text-sm text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200">
               Use a different email
             </button>
           </form>
@@ -237,7 +237,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
             >
               {busy ? "Signing in…" : "Sign in"}
             </button>

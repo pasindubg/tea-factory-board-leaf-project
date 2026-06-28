@@ -26,7 +26,7 @@ export function PaymentsNav() {
   }
 
   return (
-    <nav className="mb-6 flex flex-wrap gap-1 border-b border-stone-200">
+    <nav className="mb-6 flex flex-wrap gap-1 border-b border-stone-200 dark:border-stone-700">
       {tabs.map((t) => {
         const active = t.exact ? pathname === t.href : pathname.startsWith(t.href);
         const isLoading = isPending && pendingHref === t.href;
@@ -36,8 +36,8 @@ export function PaymentsNav() {
             onClick={() => navigate(t.href)}
             className={`-mb-px border-b-2 px-3 py-2 text-sm transition-opacity ${
               active
-                ? "border-green-700 font-medium text-green-800"
-                : "border-transparent text-stone-600 hover:text-stone-900"
+                ? "border-green-700 dark:border-green-500 font-medium text-green-800 dark:text-green-400"
+                : "border-transparent text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
             } ${isLoading ? "opacity-60" : ""}`}
           >
             {t.label}

@@ -10,10 +10,10 @@ import {
 import { confirmContract, rejectImport } from "../../../actions";
 
 const CLASS_STYLE: Record<ValClass, string> = {
-  above: "bg-green-100 text-green-800",
-  within: "bg-blue-100 text-blue-800",
-  below: "bg-red-100 text-red-800",
-  "no-valuation": "bg-stone-100 text-stone-500",
+  above: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
+  within: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
+  below: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
+  "no-valuation": "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
 };
 
 export default async function ContractReviewPage({
@@ -32,9 +32,9 @@ export default async function ContractReviewPage({
     .single();
   if (!imp || imp.sale_id !== saleId || !imp.parsed_json) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white p-8 text-center text-stone-500">
+      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <a href={detail} className="text-green-700 hover:underline">
+        <a href={detail} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
         </a>
       </div>
@@ -84,24 +84,24 @@ export default async function ContractReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <a href={detail} className="text-sm text-green-700 hover:underline">
+        <a href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
           ← Sale {sale?.sale_no ?? ""}
         </a>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
-        <p className="text-sm text-stone-500">
+        <p className="text-sm text-stone-500 dark:text-stone-400">
           {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} sale lines · prompt {parsed.promptDate ?? "—"}
         </p>
       </div>
 
-      {confirmed && <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">Sale lines confirmed and applied.</p>}
+      {confirmed && <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">Sale lines confirmed and applied.</p>}
       {!hasValuations && (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
           No valuations recorded yet — upload the Valuation Report first to compare against it. You can still
           confirm the sale prices.
         </p>
       )}
       {parsed.issues.length > 0 && (
-        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
           <p className="font-medium">Parse warnings:</p>
           <ul className="ml-4 list-disc">
             {parsed.issues.map((i, idx) => (
@@ -113,23 +113,23 @@ export default async function ContractReviewPage({
 
       {hasValuations && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-green-100 px-3 py-1 text-sm text-green-800">Above: <strong>{s.above}</strong></span>
-          <span className="rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-800">Within: <strong>{s.within}</strong></span>
-          <span className="rounded-full bg-red-100 px-3 py-1 text-sm text-red-800">Below: <strong>{s.below}</strong></span>
-          <span className="rounded-full bg-stone-100 px-3 py-1 text-sm text-stone-700">
+          <span className="rounded-full bg-green-100 dark:bg-green-900 px-3 py-1 text-sm text-green-800 dark:text-green-400">Above: <strong>{s.above}</strong></span>
+          <span className="rounded-full bg-blue-100 dark:bg-blue-900 px-3 py-1 text-sm text-blue-800 dark:text-blue-400">Within: <strong>{s.within}</strong></span>
+          <span className="rounded-full bg-red-100 dark:bg-red-900 px-3 py-1 text-sm text-red-800 dark:text-red-400">Below: <strong>{s.below}</strong></span>
+          <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-3 py-1 text-sm text-stone-700 dark:text-stone-300">
             Valued avg {s.valuationAvg.toLocaleString()} → realised {s.realisedAvg.toLocaleString()} /kg
           </span>
-          <span className={`rounded-full px-3 py-1 text-sm font-medium ${s.premiumPct >= 0 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+          <span className={`rounded-full px-3 py-1 text-sm font-medium ${s.premiumPct >= 0 ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"}`}>
             {s.premiumPct >= 0 ? "+" : ""}
             {s.premiumPct}% vs valuation
           </span>
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="px-3 py-3">Invoice</th>
               <th className="px-3 py-3">Buyer</th>
               <th className="px-3 py-3 text-right">Price/kg</th>
@@ -146,7 +146,7 @@ export default async function ContractReviewPage({
               const r = lotId ? reconByLot.get(lotId) : undefined;
               const cls = r?.classification ?? "no-valuation";
               return (
-                <tr key={l.invoiceNo} className="border-b border-stone-100 last:border-0">
+                <tr key={l.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                   <td className="px-3 py-2 font-medium">{l.invoiceNo}</td>
                   <td className="px-3 py-2 text-xs">{l.buyerName}</td>
                   <td className="px-3 py-2 text-right">{l.pricePerKg.toLocaleString()}</td>
@@ -166,7 +166,7 @@ export default async function ContractReviewPage({
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {l.vatAmount.toLocaleString()}
-                    {l.onGuarantee && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-800">guar.</span>}
+                    {l.onGuarantee && <span className="ml-1 rounded bg-amber-100 dark:bg-amber-900 px-1 text-amber-800 dark:text-amber-400">guar.</span>}
                   </td>
                 </tr>
               );
@@ -180,7 +180,7 @@ export default async function ContractReviewPage({
           <form action={confirmContract.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="Saving…"
-              className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
               Confirm — record {saleInputs.length} sale line(s)
             </SubmitButton>
@@ -188,7 +188,7 @@ export default async function ContractReviewPage({
           <form action={rejectImport.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="…"
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-600 hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Reject
             </SubmitButton>

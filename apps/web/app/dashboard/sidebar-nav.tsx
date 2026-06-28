@@ -65,8 +65,8 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
         onClick={() => navigate(item.href)}
         className={`flex w-full items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActive
-            ? "bg-green-50 text-green-800"
-            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+            ? "bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-400"
+            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
         } ${isLoading ? "opacity-60" : ""}`}
       >
         <span className="flex-1 text-left">{item.label}</span>
@@ -109,8 +109,8 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
               onClick={() => toggleSection(group)}
               className={`flex w-full items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                 isSectionActive
-                  ? "bg-green-50 text-green-800"
-                  : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                  ? "bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-400"
+                  : "text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
               }`}
             >
               <span className="flex-1 text-left">{group}</span>
@@ -123,7 +123,7 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
               </span>
             </button>
             {isExpanded && (
-              <div className="ml-3 mt-0.5 space-y-1 border-l-2 border-stone-200 pl-2">
+              <div className="ml-3 mt-0.5 space-y-1 border-l-2 border-stone-200 pl-2 dark:border-stone-700">
                 {gItems.map(renderItem)}
               </div>
             )}

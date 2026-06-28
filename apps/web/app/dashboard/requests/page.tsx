@@ -55,16 +55,16 @@ export default async function RequestsPage({
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold">Supplier requests</h1>
-        <p className="mt-1 text-sm text-stone-500">
+        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
           Advances, fertiliser and tea-packet requests raised by suppliers from the field app.
         </p>
       </div>
 
       {sp.error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{sp.error}</div>
+        <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-4 py-3 text-sm text-red-800 dark:text-red-400">{sp.error}</div>
       )}
       {sp.notice && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+        <div className="rounded-md border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950 px-4 py-3 text-sm text-green-800 dark:text-green-400">
           {sp.notice}
         </div>
       )}
@@ -72,24 +72,24 @@ export default async function RequestsPage({
       {/* ⚠ Handed to driver but not acknowledged — the driver-didn't-deliver signal */}
       {handed.length > 0 && (
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-700">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
             ⚠ Handed to driver — awaiting supplier acknowledgement ({handed.length})
           </h2>
           <div className="mt-3 space-y-2">
             {handed.map((r) => (
               <div
                 key={r.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 px-4 py-3"
               >
                 <div>
                   <p className="font-medium">
                     {supplierName(r)} — {typeLabel(r.type_key)} · {fmtAmount(r.amount)}
                   </p>
-                  <p className="text-xs text-amber-700">
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
                     Handed {fmtDate(r.handed_at)}. The supplier has not confirmed receipt on their app yet.
                   </p>
                 </div>
-                <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-900">
+                <span className="rounded-full bg-amber-200 dark:bg-amber-800 px-2 py-0.5 text-xs font-medium text-amber-900 dark:text-amber-400">
                   unacknowledged
                 </span>
               </div>
@@ -111,14 +111,14 @@ export default async function RequestsPage({
                   <input type="hidden" name="id" value={r.id} />
                   <SubmitButton
                     pendingText="…"
-                    className="rounded-md bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800"
+                    className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
                   >
                     Approve
                   </SubmitButton>
                 </form>
                 <form action={declineRequest}>
                   <input type="hidden" name="id" value={r.id} />
-                  <SubmitButton pendingText="…" className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100">
+                  <SubmitButton pendingText="…" className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800">
                     Decline
                   </SubmitButton>
                 </form>
@@ -138,7 +138,7 @@ export default async function RequestsPage({
               <RequestSummary supplier={supplierName(r)} type={typeLabel(r.type_key)} amount={fmtAmount(r.amount)} note={r.note} when={r.requested_at} />
               <form action={handToDriver}>
                 <input type="hidden" name="id" value={r.id} />
-                <SubmitButton pendingText="…" className="rounded-md bg-stone-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-900">
+                <SubmitButton pendingText="…" className="rounded-md bg-stone-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-900 dark:hover:bg-stone-700">
                   Mark handed to driver
                 </SubmitButton>
               </form>
@@ -167,14 +167,14 @@ export default async function RequestsPage({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">{title}</h2>
-      <div className="mt-3 divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">{children}</div>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">{title}</h2>
+      <div className="mt-3 divide-y divide-stone-100 dark:divide-stone-800 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">{children}</div>
     </section>
   );
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="px-4 py-8 text-center text-sm text-stone-400">{children}</p>;
+  return <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">{children}</p>;
 }
 
 function RequestSummary({
@@ -195,7 +195,7 @@ function RequestSummary({
       <p className="font-medium">
         {supplier} — {type} · {amount}
       </p>
-      <p className="text-xs text-stone-500">
+      <p className="text-xs text-stone-500 dark:text-stone-400">
         Requested {new Date(when).toLocaleString()}
         {note ? ` · "${note}"` : ""}
       </p>
@@ -205,12 +205,12 @@ function RequestSummary({
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    acknowledged: "bg-green-100 text-green-800",
-    declined: "bg-stone-100 text-stone-500",
-    cancelled: "bg-stone-100 text-stone-500",
+    acknowledged: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
+    declined: "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
+    cancelled: "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${styles[status] ?? "bg-stone-100 text-stone-500"}`}>
+    <span className={`rounded-full px-2 py-0.5 text-xs ${styles[status] ?? "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400"}`}>
       {status}
     </span>
   );

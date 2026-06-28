@@ -225,10 +225,85 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
 - **Commit/PR only when the user asks.** Branch per change (e.g. `feat/m6-payments`);
   the user reviews via PR. `gh` CLI isn't installed — use the GitHub API with stored
   git credentials, or ask the user.
-- **Verify before claiming done:** type-check + the relevant `db:verify-*` gate +,
-  for UI, a `preview_*` walk-through. Clean up any test rows you create in the real
-  Supabase DB.
+- **Verify before claiming done:** type-check + lint + the relevant `db:verify-*`
+  gate +, for UI, a `preview_*` walk-through. Clean up any test rows you create in the
+  real Supabase DB.
 - **Keep the docs in lockstep.** A scope/ordering change means editing MILESTONES.md
   and PRODUCT.md (and this skill) in the same breath, plus the project memory file.
 - Known open items: confirm the real **payment formula** with the factory before M6;
   dashboard timestamps currently render in UTC, not Asia/Colombo (tracked separately).
+
+## Common gotchas & lessons learned
+
+These are mistakes that have burned us in PRs/CI. Read them before writing code.
+
+### Next.js App Router — client components
+
+- **`usePathname()` returns `string | null`.** It can be `null` during SSR or in
+  loading boundaries. Always write `usePathname() ?? ""` before calling
+  `.startsWith()` or other string methods — a null pathname will throw.
+- **Never use raw `<a>` for internal navigation.** Next.js lint
+  (`@next/next/no-html-link-for-pages`) forbids `<a href="/dashboard/...">`.
+  Always use `<Link>` from `next/link` instead. The CI `pnpm turbo lint` step is a
+  hard gate — raw `<a>` tags will fail the build.
+- **Server→client props are new references.** When a server component filters
+  `MODULES.filter(...)` and passes the result to a client component, that array is
+  a fresh reference on every SSR render. Never put it directly in a `useEffect`
+  dependency array — extract the derived value you actually care about via
+  `useMemo` and depend on that. Otherwise you get infinite re-render loops.
+- **`usePathname()` for section highlighting in sidebars:** compute active groups
+  with `useMemo`, sync expanded state with `useEffect` depending only on that
+  memoized value. The `useState` initializer should mirror the same logic so the
+  first render is correct (no flash of closed sections).
+
+### Supabase / Postgres — RPC & migrations
+
+- **RPC: TABLE returns an array.** When a Postgres function uses
+  `RETURNS TABLE(col type, ...)`, `supabase.rpc()` puts the rows in `data` as an
+  **array**. Access `data[0]` for a single-row result. Treating `data` as the
+  object directly (e.g., `data.approved`) will be `undefined` and cause silent
+  failures or "Cannot read properties of undefined".
+- **Hand-written migrations need manual tracking.** If you author a `.sql` file
+  by hand (not via `drizzle-kit generate`), you must also:
+  1. Add an entry to `packages/db/drizzle/meta/_journal.json` (increment `idx`,
+     set a `when` timestamp, and the `tag` matching the filename).
+  2. After applying the migration, insert a record into
+     `drizzle.__drizzle_migrations` so drizzle-kit doesn't try to re-apply it.
+     The `created_at` column is `bigint` (epoch ms), not a timestamp.
+  3. Use the `postgres` npm package (already a dependency of `packages/db`) to
+     run the SQL — `pg` is not installed separately.
+- **`pnpm install` before `db:migrate`.** If `packages/db/node_modules` is
+  missing, `db:migrate` will exit code 1 without a clear error. Run
+  `pnpm install` from the repo root first.
+- **`db:migrate` needs `.env` sourced:**
+  ```bash
+  cd ~/Desktop/board-leaf-project && set -a; . ./.env; set +a
+  ```
+
+### PostgreSQL functions — state machines & atomicity
+
+- **Always enforce state machines at the DB level.** A `CHECK` constraint only
+  validates the *domain* of values, not valid *transitions*. Add a `BEFORE UPDATE`
+  trigger that compares `OLD.status` with `NEW.status` and raises on invalid
+  transitions. This is defense-in-depth — even admin-client writes (bypassing RLS)
+  cannot skip the state machine.
+- **Atomic approve/update flows should live in a PG function.** Multi-step
+  app-code flows (read → check → insert → update) have TOCTOU race conditions
+  even with `.eq("status", "pending")` guards because the read and write aren't
+  in the same transaction. Wrap them in a single `LANGUAGE plpgsql` function
+  using `SELECT ... FOR UPDATE` to lock the row. Call it via `supabase.rpc()`.
+- **`SECURITY DEFINER` functions need `SET search_path = public`.** Otherwise
+  they're vulnerable to search-path injection. Every `SECURITY DEFINER` function
+  in this repo already follows this pattern — copy the existing ones.
+
+### CI pipeline
+
+- The CI runs **`pnpm turbo lint`** and **`pnpm turbo typecheck`** as hard gates.
+  Both must pass. Lint uses `next lint` which enforces `<Link>` usage, unused
+  variable checks, and other Next.js-specific rules.
+- **Run both locally before pushing:**
+  ```bash
+  pnpm turbo lint && pnpm turbo typecheck
+  ```
+- If `apps/web/.next` has stale type caches after deleting route folders, clear
+  it: `rm -rf apps/web/.next`.

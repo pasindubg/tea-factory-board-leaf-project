@@ -48,12 +48,12 @@ export default async function PaymentsPage({
   return (
     <div>
       {params.error && (
-        <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+        <p className="mb-4 rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">
           {params.error}
         </p>
       )}
       {params.notice && (
-        <p className="mb-4 rounded-md bg-green-50 p-3 text-sm text-green-800" role="status">
+        <p className="mb-4 rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-800 dark:text-green-400" role="status">
           {params.notice}
         </p>
       )}
@@ -66,22 +66,22 @@ export default async function PaymentsPage({
           <input type="hidden" name="month" value={month} />
           <SubmitButton
             pendingText="Generating…"
-            className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+            className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
           >
             {rows.length ? "Regenerate" : "Generate"} {MONTHS[month - 1]} {year}
           </SubmitButton>
         </form>
       </div>
 
-      <p className="mt-2 text-xs text-stone-500">
+      <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
         Generating recomputes pending statements from current rates, tiers, and adjustments. Already-paid statements are
         left untouched.
       </p>
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3 text-right">Kg</th>
               <th className="px-4 py-3 text-right">Gross</th>
@@ -95,16 +95,16 @@ export default async function PaymentsPage({
             {rows.map((r) => {
               const paid = r.status === "paid";
               return (
-                <tr key={r.id} className="border-b border-stone-100 last:border-0">
+                <tr key={r.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                   <td className="px-4 py-3 font-medium">{r.suppliers?.name ?? "—"}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{Number(r.total_kg).toFixed(2)}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{lkr(r.gross_amount)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-stone-500">{lkr(r.deduction_amount)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-stone-500 dark:text-stone-400">{lkr(r.deduction_amount)}</td>
                   <td className="px-4 py-3 text-right font-medium tabular-nums">{lkr(r.total_amount)}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        paid ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
+                        paid ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"
                       }`}
                     >
                       {r.status}
@@ -112,14 +112,14 @@ export default async function PaymentsPage({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-4">
-                      <a href={`/dashboard/payments/${r.id}`} className="text-sm text-green-700 hover:underline">
+                      <a href={`/dashboard/payments/${r.id}`} className="text-sm text-green-700 dark:text-green-400 hover:underline">
                         Statement
                       </a>
                       <form action={setPaymentStatus}>
                         <input type="hidden" name="payment_id" value={r.id} />
                         <input type="hidden" name="paid" value={paid ? "false" : "true"} />
                         <input type="hidden" name="return_to" value={`/dashboard/payments?year=${year}&month=${month}`} />
-                        <SubmitButton pendingText="…" className="text-sm text-stone-600 hover:underline">
+                        <SubmitButton pendingText="…" className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
                           {paid ? "Mark pending" : "Mark paid"}
                         </SubmitButton>
                       </form>
@@ -130,7 +130,7 @@ export default async function PaymentsPage({
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-stone-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                   No statements for {MONTHS[month - 1]} {year}. Click Generate to create them from this month&apos;s
                   weighings.
                 </td>
@@ -139,7 +139,7 @@ export default async function PaymentsPage({
           </tbody>
           {rows.length > 0 && (
             <tfoot>
-              <tr className="border-t border-stone-200 font-medium">
+              <tr className="border-t border-stone-200 dark:border-stone-700 font-medium">
                 <td className="px-4 py-3">Total ({rows.length})</td>
                 <td className="px-4 py-3 text-right tabular-nums">{totals.kg.toFixed(2)}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.gross)}</td>

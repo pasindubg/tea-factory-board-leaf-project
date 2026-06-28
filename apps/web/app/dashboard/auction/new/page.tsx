@@ -14,13 +14,13 @@ export default async function NewSalePage({
 
   return (
     <div className="max-w-lg">
-      <h2 className="text-lg font-medium text-stone-700">New sale</h2>
+      <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New sale</h2>
       {error && (
-        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p className="mt-3 rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>
       )}
 
       {(brokers ?? []).length === 0 ? (
-        <p className="mt-4 rounded-md bg-amber-50 px-3 py-3 text-sm text-amber-800">
+        <p className="mt-4 rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-3 text-sm text-amber-800 dark:text-amber-400">
           Add a broker first under{" "}
           <Link href="/dashboard/auction/registry" className="font-medium underline">
             Brokers &amp; marks
@@ -30,11 +30,11 @@ export default async function NewSalePage({
       ) : (
         <form action={createSale} className="mt-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-stone-600">Broker</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Broker</label>
             <select
               name="broker_id"
               required
-              className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             >
               {(brokers ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
@@ -44,32 +44,32 @@ export default async function NewSalePage({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600">Sale number</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Sale number</label>
             <input
               name="sale_no"
               required
               placeholder="2026-023"
-              className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600">Sale date</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Sale date</label>
             <input
               type="date"
               name="sale_date"
-              className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>
           <div className="flex gap-2">
             <SubmitButton
               pendingText="Creating…"
-              className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
               Create sale
             </SubmitButton>
             <Link
               href="/dashboard/auction"
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-600 hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Cancel
             </Link>

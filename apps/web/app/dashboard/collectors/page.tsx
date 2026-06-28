@@ -16,16 +16,16 @@ export default async function CollectorsPage() {
         <h1 className="text-2xl font-semibold">Collectors</h1>
         <a
           href="/dashboard/collectors/new"
-          className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
           Add collector
         </a>
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <div className="mt-6 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Area</th>
               <th className="px-4 py-3">Phone</th>
@@ -36,25 +36,25 @@ export default async function CollectorsPage() {
           </thead>
           <tbody>
             {(collectors ?? []).map((c) => (
-              <tr key={c.id} className="border-b border-stone-100 last:border-0">
+              <tr key={c.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                 <td className="px-4 py-3 font-medium">{c.name}</td>
                 <td className="px-4 py-3">{c.area ?? "—"}</td>
                 <td className="px-4 py-3">{c.phone ?? "—"}</td>
                 <td className="px-4 py-3">{c.nic_number ?? "—"}</td>
                 <td className="px-4 py-3">
                   {c.active ? (
-                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">active</span>
+                    <span className="rounded-full bg-green-100 dark:bg-green-900 px-2 py-0.5 text-xs text-green-800 dark:text-green-400">active</span>
                   ) : (
-                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">inactive</span>
+                    <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-500 dark:text-stone-400">inactive</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex justify-end gap-2">
-                    <a href={`/dashboard/collectors/${c.id}/edit`} className="text-green-700 hover:underline">
+                    <a href={`/dashboard/collectors/${c.id}/edit`} className="text-green-700 dark:text-green-400 hover:underline">
                       Edit
                     </a>
                     <form action={setCollectorActive.bind(null, c.id, !c.active)}>
-                      <SubmitButton pendingText="…" className="text-stone-500 hover:underline">
+                      <SubmitButton pendingText="…" className="text-stone-500 dark:text-stone-400 hover:underline">
                         {c.active ? "Deactivate" : "Reactivate"}
                       </SubmitButton>
                     </form>
@@ -64,7 +64,7 @@ export default async function CollectorsPage() {
             ))}
             {(collectors ?? []).length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-stone-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                   No collectors yet.
                 </td>
               </tr>

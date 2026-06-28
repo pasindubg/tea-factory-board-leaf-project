@@ -40,12 +40,12 @@ export default async function WeighingsPage({
         <div>
           <h1 className="text-2xl font-semibold">Weighings</h1>
           {isCollector && ownCollector && (
-            <p className="mt-1 text-sm text-stone-500">Your records — {ownCollector.name}</p>
+            <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">Your records — {ownCollector.name}</p>
           )}
         </div>
         <Link
           href="/dashboard/weighings/new"
-          className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800"
+          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
           Record weighing
         </Link>
@@ -62,15 +62,15 @@ export default async function WeighingsPage({
       />
 
       <div className="mt-2 flex justify-end">
-        <span className="rounded-md bg-green-50 px-3 py-1.5 text-sm font-medium text-green-800">
+        <span className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-1.5 text-sm font-medium text-green-800 dark:text-green-400">
           Total: {totalKg.toFixed(2)} kg ({(weighings ?? []).length} records)
         </span>
       </div>
 
-      <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="px-4 py-3">Time</th>
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3">Collector</th>
@@ -80,7 +80,7 @@ export default async function WeighingsPage({
           </thead>
           <tbody>
             {(weighings ?? []).map((w) => (
-              <tr key={w.id} className="border-b border-stone-100 last:border-0">
+              <tr key={w.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                 <td className="px-4 py-3">
                   {new Date(w.collected_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </td>
@@ -89,12 +89,12 @@ export default async function WeighingsPage({
                 </td>
                 <td className="px-4 py-3">{(w.collectors as unknown as { name: string } | null)?.name ?? "—"}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{Number(w.weight_kg).toFixed(2)}</td>
-                <td className="px-4 py-3 text-stone-500">{w.notes ?? ""}</td>
+                <td className="px-4 py-3 text-stone-500 dark:text-stone-400">{w.notes ?? ""}</td>
               </tr>
             ))}
             {(weighings ?? []).length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-stone-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                   No weighings found.
                 </td>
               </tr>
