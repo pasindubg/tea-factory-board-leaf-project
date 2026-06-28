@@ -25,6 +25,7 @@ import { requireProfile } from "@/lib/profile";
 import { getDefaultRoles } from "@/lib/roles";
 
 const AUC = "/dashboard/auction";
+const REP = "/dashboard/auction/reports";
 const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 const roles = () => getDefaultRoles("auction");
@@ -71,7 +72,7 @@ export async function createSale(formData: FormData) {
   const brokerId = str(formData.get("broker_id"));
   const saleNo = str(formData.get("sale_no"));
   if (!brokerId) back(np, "Pick a broker.");
-  if (!saleNo) back(np, "Sale number is required.");
+  if (!saleNo) back(np, "Dispatch number is required.");
   const { data, error } = await supabase
     .from("auction_sales")
     .insert({
@@ -79,6 +80,7 @@ export async function createSale(formData: FormData) {
       broker_id: brokerId,
       sale_no: saleNo,
       sale_date: str(formData.get("sale_date")) || null,
+      target_sale_no: str(formData.get("target_sale_no")) || null,
     })
     .select("id")
     .single();
@@ -87,16 +89,181 @@ export async function createSale(formData: FormData) {
   redirect(`${AUC}/${data.id}`);
 }
 
+export { createSale as createDispatch };
+
 export async function deleteSale(id: string) {
-  const { supabase } = await requireProfile(roles());
+  const { supabase } = await requireProfile(["owner"]);
+  // Cascade: remove all dependent records before the sale.
+  const { data: lotIds } = await supabase.from("auction_lots").select("id").eq("sale_id", id);
+  const ids = (lotIds ?? []).map((l) => l.id as string);
+  if (ids.length > 0) {
+    const { data: slIds } = await supabase.from("sale_lines").select("id").in("lot_id", ids);
+    await supabase.from("vat_ledger").delete().in("sale_line_id", (slIds ?? []).map((s) => s.id as string));
+    await supabase.from("valuations").delete().in("lot_id", ids);
+    await supabase.from("sale_lines").delete().in("lot_id", ids);
+    await supabase.from("lot_invoices").delete().in("lot_id", ids);
+    await supabase.from("auction_audit").delete().in("lot_id", ids);
+  }
+  const { data: settlementIds } = await supabase.from("settlements").select("id").eq("sale_id", id);
+  const sids = (settlementIds ?? []).map((s) => s.id as string);
+  if (sids.length > 0) {
+    await supabase.from("settlement_charges").delete().in("settlement_id", sids);
+    await supabase.from("bank_txns").delete().in("matched_settlement_id", sids);
+    await supabase.from("settlements").delete().in("id", sids);
+  }
+  await supabase.from("auction_audit").delete().eq("sale_id", id);
+  await supabase.from("doc_imports").delete().eq("sale_id", id);
   await supabase.from("auction_lots").delete().eq("sale_id", id);
   await supabase.from("auction_sales").delete().eq("id", id);
   revalidatePath(AUC);
   redirect(AUC);
 }
 
-// ---------- Invoiced lots (factory's dispatch record) ----------
-export async function addInvoicedLot(saleId: string, formData: FormData) {
+export async function updateSale(id: string, formData: FormData) {
+  const { supabase } = await requireProfile(["owner"]);
+  const updates: Record<string, string | null> = {};
+  const status = str(formData.get("status"));
+  const target = str(formData.get("target_sale_no"));
+  const saleNo = str(formData.get("sale_no"));
+  const saleDate = str(formData.get("sale_date"));
+  const dispatchDate = str(formData.get("dispatch_date"));
+  if (status) updates.status = status;
+  if (target) updates.target_sale_no = target || null;
+  if (saleNo) updates.sale_no = saleNo;
+  if (saleDate) updates.sale_date = saleDate;
+  if (dispatchDate) updates.dispatch_date = dispatchDate;
+  if (Object.keys(updates).length > 0) {
+    await supabase.from("auction_sales").update(updates).eq("id", id);
+  }
+  revalidatePath(AUC);
+}
+
+export async function updateLot(id: string, saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const updates: Record<string, string | number | null> = {};
+  const invoiceNo = str(formData.get("invoice_no"));
+  const grade = str(formData.get("grade"));
+  const bags = num(formData.get("bags"));
+  const kgPerBag = num(formData.get("kg_per_bag"));
+  const lotNo = str(formData.get("lot_no"));
+  const newState = str(formData.get("state"));
+  if (invoiceNo) updates.invoice_no = invoiceNo;
+  if (grade) updates.grade = grade;
+  // Always update lot_no if present in the form (even if clearing it)
+  if (formData.has("lot_no")) updates.lot_no = lotNo || null;
+  if (bags > 0) updates.bags = bags;
+  if (kgPerBag > 0) updates.kg_per_bag = kgPerBag;
+  if (bags > 0 && kgPerBag > 0) updates.net_wt = Number((bags * kgPerBag).toFixed(2));
+
+  // State override — managers/owners only, for when the PDF parser missed something.
+  const isOwner = profile.role === "owner";
+  const validStates = ["invoiced", "dispatched", "pending", "catalogued", "missing", "shutout", "valued", "withdrawn"];
+  if (newState && isOwner && validStates.includes(newState)) {
+    updates.state = newState;
+    if (newState === "shutout") updates.shutout_reason = str(formData.get("shutout_reason")) || "Manual override";
+    else updates.shutout_reason = null;
+  }
+
+  if (Object.keys(updates).length === 0) redirect(detail);
+  await supabase.from("auction_lots").update(updates).eq("id", id);
+  revalidatePath(detail);
+  redirect(detail);
+}
+
+export async function markReprint(lotId: string, saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const targetSaleNo = str(formData.get("target_sale_no"));
+  const sampleKg = Math.max(0, num(formData.get("sample_kg")) || 0);
+  const { data: lot } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, mark_id, invoice_no, grade, bags, kg_per_bag, net_wt, state, auction_sales(broker_id)")
+    .eq("id", lotId).single();
+  if (!lot) return back(detail, "Lot not found.");
+  if (!["valued", "withdrawn", "catalogued"].includes(lot.state as string))
+    return back(detail, "Only an unsold catalogued/valued lot can be re-printed.");
+  await supabase.from("auction_lots").update({ state: "re-print" }).eq("id", lotId);
+  if (targetSaleNo) {
+    const brokerId = (lot.auction_sales as unknown as { broker_id: string } | null)?.broker_id;
+    if (brokerId) {
+      const { data: ns } = await supabase.from("auction_sales")
+        .select("id").eq("broker_id", brokerId).eq("sale_no", targetSaleNo).maybeSingle();
+      let nsId = ns?.id as string | undefined;
+      if (!nsId) {
+        const { data: cr } = await supabase.from("auction_sales")
+          .insert({ factory_id: profile.factory_id, broker_id: brokerId, sale_no: targetSaleNo, status: "dispatched" })
+          .select("id").single();
+        nsId = cr?.id as string;
+      }
+      if (nsId) {
+        const newNet = Number((Number(lot.net_wt) - sampleKg).toFixed(2));
+        await supabase.from("auction_lots").insert({
+          factory_id: profile.factory_id, sale_id: nsId, mark_id: lot.mark_id,
+          invoice_no: lot.invoice_no, grade: lot.grade, bags: lot.bags,
+          kg_per_bag: lot.kg_per_bag, net_wt: newNet, state: "invoiced",
+        });
+      }
+    }
+  }
+  revalidatePath(detail);
+  redirect(`${detail}?notice=Lot re-printed.`);
+}
+
+// ---------- Orphan resolver & audit ----------
+async function writeAudit(supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"], factoryId: string, row: {
+  saleId?: string | null; lotId?: string | null; action: string; detail: string;
+  reason?: string | null; actor: string; confidenceShown?: number | null; weightDelta?: number | null;
+}) {
+  await supabase.from("auction_audit").insert({
+    factory_id: factoryId, sale_id: row.saleId ?? null, lot_id: row.lotId ?? null,
+    action: row.action, detail: row.detail, reason: row.reason ?? null, actor: row.actor,
+    confidence_shown: row.confidenceShown != null ? row.confidenceShown.toFixed(4) : null,
+    weight_delta: row.weightDelta != null ? row.weightDelta.toFixed(2) : null,
+  });
+}
+
+export async function linkOrphanLot(input: {
+  saleId: string; lotId: string; invoiceNo: string; orphanNetWt: number;
+  candidateLotNo: string | null; candidateMarkCode: string | null; candidateGrade: string; candidateNetWt: number;
+  confidence: number; reason?: string;
+}) {
+  const { supabase, profile } = await requireProfile(roles());
+  const markId = input.candidateMarkCode ? (await supabase.from("marks").select("id").eq("code", input.candidateMarkCode).maybeSingle()).data?.id as string ?? null : null;
+  const weightDelta = Number((input.candidateNetWt - input.orphanNetWt).toFixed(2));
+  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "catalogued", shutout_reason: null }).eq("id", input.lotId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Linked", detail: `Invoice ${input.invoiceNo} → lot ${input.candidateLotNo ?? "—"}`, reason: input.reason, actor: profile.name, confidenceShown: input.confidence, weightDelta: weightDelta !== 0 ? weightDelta : null });
+  revalidatePath(`${AUC}/${input.saleId}`);
+}
+
+export async function markShutout(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
+  const { supabase, profile } = await requireProfile(roles());
+  await supabase.from("auction_lots").update({ state: "shutout", shutout_reason: "Marked shut out" }).eq("id", input.lotId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Marked shut out", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
+  revalidatePath(`${AUC}/${input.saleId}`);
+}
+
+export async function markMissing(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
+  const { supabase, profile } = await requireProfile(roles());
+  await supabase.from("auction_lots").update({ state: "missing" }).eq("id", input.lotId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Marked missing", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
+  revalidatePath(`${AUC}/${input.saleId}`);
+}
+
+export async function markPending(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
+  const { supabase, profile } = await requireProfile(roles());
+  await supabase.from("auction_lots").update({ state: "pending", shutout_reason: null }).eq("id", input.lotId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Left unresolved", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
+  revalidatePath(`${AUC}/${input.saleId}`);
+}
+
+export async function rejectCandidate(input: { saleId: string; lotId: string; invoiceNo: string; candidateLotNo: string | null }) {
+  const { supabase, profile } = await requireProfile(roles());
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Rejected", detail: `Lot ${input.candidateLotNo ?? "—"} rejected for invoice ${input.invoiceNo}`, actor: profile.name });
+  revalidatePath(`${AUC}/${input.saleId}`);
+}
+
+export async function addDispatchedLot(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireProfile(roles());
   const detail = `${AUC}/${saleId}`;
   const invoiceNo = str(formData.get("invoice_no"));
@@ -105,29 +272,46 @@ export async function addInvoicedLot(saleId: string, formData: FormData) {
   const kgPerBag = num(formData.get("kg_per_bag"));
   if (!invoiceNo) back(detail, "Invoice number is required.");
   if (!grade) back(detail, "Grade is required.");
-  if (!(bags > 0) || !(kgPerBag > 0)) back(detail, "Bags and kg/bag must both be positive.");
+  if (!(bags > 0) || !(kgPerBag > 0)) back(detail, "Bags and kg/bag must be positive.");
   const netWt = Number((bags * kgPerBag).toFixed(2));
   const { error } = await supabase.from("auction_lots").insert({
-    factory_id: profile.factory_id,
-    sale_id: saleId,
-    mark_id: str(formData.get("mark_id")) || null,
-    invoice_no: invoiceNo,
-    grade,
-    bags,
-    kg_per_bag: kgPerBag,
-    net_wt: netWt,
-    state: "invoiced",
+    factory_id: profile.factory_id, sale_id: saleId, mark_id: str(formData.get("mark_id")) || null,
+    invoice_no: invoiceNo, lot_no: str(formData.get("lot_no")) || null,
+    grade, bags, kg_per_bag: kgPerBag, net_wt: netWt, state: "invoiced",
   });
   if (error) back(detail, error.message);
   revalidatePath(detail);
   redirect(detail);
 }
 
-// Only invoiced lots can be removed by hand (to fix entry mistakes); catalogued
-// lots are owned by the ingested acknowledgement.
+export async function confirmBankMatches(saleId: string, importId: string) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const { data: settlements } = await supabase.from("settlements").select("id, contract_no, total_net_proceeds, prompt_date").eq("sale_id", saleId);
+  const { data: credits } = await supabase.from("bank_txns").select("id, txn_date, credit, description, cheque_no").eq("import_batch_id", importId).is("matched_settlement_id", null);
+  if (!settlements?.length || !credits?.length) redirect(`${detail}/bank/${importId}`);
+  const { data: vatForSale } = await supabase.from("sale_lines").select("vat_amount, on_guarantee").eq("sale_id", saleId);
+  const totalGuaranteed = (vatForSale ?? []).filter(v => v.on_guarantee).reduce((s, v) => s + Number(v.vat_amount ?? 0), 0);
+  const recon = reconcileBank(
+    settlements!.map(st => ({ settlementId: st.id as string, contractNo: st.contract_no as string, totalNetProceeds: Number(st.total_net_proceeds), guaranteedVat: totalGuaranteed, promptDate: (st.prompt_date as string) ?? "" })),
+    credits!.map(c => ({ txnId: c.id as string, txnDate: c.txn_date as string, credit: Number(c.credit), description: (c.description as string) ?? "", chequeNo: c.cheque_no as string | null })),
+  );
+  for (const m of recon.matches) await supabase.from("bank_txns").update({ matched_settlement_id: m.settlementId, match_status: "matched" }).eq("id", m.bankTxnId);
+  if (recon.matches.length > 0) await writeAudit(supabase, profile.factory_id, { saleId, action: "Bank auto-matched", detail: `${recon.matches.length} credits matched`, actor: profile.name });
+  redirect(`${detail}/bank/${importId}?notice=Applied ${recon.matches.length} match(es).`);
+}
+
+export async function linkBankCredit(input: { saleId: string; importId: string; txnId: string; settlementId: string; contractNo: string; credit: number; confidence: number; reason?: string }) {
+  const { supabase, profile } = await requireProfile(roles());
+  await supabase.from("bank_txns").update({ matched_settlement_id: input.settlementId, match_status: "matched" }).eq("id", input.txnId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, action: "Bank linked", detail: `Credit ${input.credit.toFixed(2)} → ${input.contractNo}`, actor: profile.name, confidenceShown: input.confidence });
+  revalidatePath(`${AUC}/${input.saleId}/bank/${input.importId}`);
+}
+
+// Only invoiced lots can be removed by hand (to fix entry mistakes).
 export async function deleteLot(id: string, saleId: string) {
   const { supabase } = await requireProfile(roles());
-  await supabase.from("auction_lots").delete().eq("id", id).eq("state", "invoiced");
+  await supabase.from("auction_lots").delete().eq("id", id).in("state", ["invoiced", "dispatched", "pending"]);
   revalidatePath(`${AUC}/${saleId}`);
 }
 
@@ -238,6 +422,9 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       })
       .eq("id", row.invoiced.id);
   }
+
+  // Remaining dispatched lots not in this ack → pending (may be in a later ack).
+  await supabase.from("auction_lots").update({ state: "pending" }).eq("sale_id", saleId).eq("state", "invoiced");
 
   await supabase
     .from("doc_imports")
@@ -666,4 +853,118 @@ export async function ingestBankCsv(saleId: string, formData: FormData) {
       `Imported ${parsed.transactions.length} bank transaction(s).`,
     )}`,
   );
+}
+
+// ─── Report Analyser: auto-detect sale from document ───
+async function resolveSale(
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  factoryId: string,
+  saleNo: string | null,
+): Promise<string | null> {
+  const sn = saleNo?.trim();
+  if (!sn) return null;
+  const { data: existing } = await supabase
+    .from("auction_sales")
+    .select("id")
+    .eq("sale_no", sn)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  if (existing?.id) return existing.id as string;
+  const { data: br } = await supabase.from("brokers").select("id").eq("factory_id", factoryId).limit(1).single();
+  if (!br?.id) return null;
+  const { data: created } = await supabase
+    .from("auction_sales")
+    .insert({ factory_id: factoryId, broker_id: br.id, sale_no: sn, status: "dispatched" })
+    .select("id")
+    .single();
+  return (created?.id as string) ?? null;
+}
+
+export async function ingestAckAuto(formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return back(REP, "Choose an Acknowledgement PDF.");
+  let text: string;
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(await file.arrayBuffer()));
+    const extracted = await extractText(pdf, { mergePages: true });
+    text = Array.isArray(extracted.text) ? extracted.text.join(" ") : extracted.text;
+  } catch { return back(REP, "Could not read that PDF."); }
+  if (!isAcknowledgement(text)) return back(REP, "Not a valid Acknowledgement.");
+  const parsed = parseAcknowledgement(text);
+  const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
+  if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
+  const contentHash = createHash("sha256").update(text).digest("hex");
+  const { data: existing } = await supabase.from("doc_imports").select("id").eq("content_hash", contentHash).maybeSingle();
+  let importId = existing?.id as string | undefined;
+  if (importId) {
+    await supabase.from("doc_imports").update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name }).eq("id", importId);
+  } else {
+    const { data, error } = await supabase.from("doc_imports").insert({
+      factory_id: profile.factory_id, doc_type: "acknowledgement", source_filename: file.name, content_hash: contentHash, parsed_json: parsed, status: "parsed", sale_id: saleId,
+    }).select("id").single();
+    if (error || !data) return back(REP, error?.message ?? "Could not stage.");
+    importId = data.id;
+  }
+  redirect(`${AUC}/${saleId}/ack/${importId}`);
+}
+
+export async function ingestValAuto(formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const file = formData.get("file");
+  const text = await extractPdf(file);
+  if (!text) return back(REP, "Choose a valid Valuation PDF.");
+  if (!isValuation(text)) return back(REP, "Not a valid Valuation Report.");
+  const parsed = parseValuation(text);
+  const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
+  if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", (file as File).name, text, parsed);
+  if (!importId) return back(REP, "Could not stage.");
+  redirect(`${AUC}/${saleId}/valuation/${importId}`);
+}
+
+export async function ingestConAuto(formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const file = formData.get("file");
+  const text = await extractPdf(file);
+  if (!text) return back(REP, "Choose a valid Contract PDF.");
+  if (!isContract(text)) return back(REP, "Not a valid Sellers Contract.");
+  const parsed = parseContract(text);
+  const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
+  if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", (file as File).name, text, parsed);
+  if (!importId) return back(REP, "Could not stage.");
+  redirect(`${AUC}/${saleId}/contract/${importId}`);
+}
+
+export async function ingestBankAuto(formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return back(REP, "Choose a bank CSV.");
+  const text = await file.text();
+  if (!isBankCsv(text)) return back(REP, "Not a valid bank CSV.");
+  const parsed = parseBankCsv(text);
+  // Bank CSVs don't carry sale_no; try the most recent dispatched sale.
+  const { data: lastSale } = await supabase.from("auction_sales").select("id").eq("factory_id", profile.factory_id).order("created_at", { ascending: false }).limit(1).single();
+  const saleId = (lastSale?.id as string) ?? null;
+  if (!saleId) return back(REP, "No dispatch found. Create one first.");
+  const importBatchId = crypto.randomUUID();
+  const contentHash = createHash("sha256").update(text).digest("hex");
+  const { data: existing } = await supabase.from("doc_imports").select("id").eq("content_hash", contentHash).maybeSingle();
+  let importId: string;
+  if (existing?.id) {
+    importId = existing.id as string;
+    await supabase.from("doc_imports").update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name }).eq("id", importId);
+  } else {
+    const { data, error } = await supabase.from("doc_imports").insert({
+      factory_id: profile.factory_id, doc_type: "bank_csv", source_filename: file.name, content_hash: contentHash, parsed_json: parsed, status: "parsed", sale_id: saleId,
+    }).select("id").single();
+    if (error || !data) return back(REP, error?.message ?? "Could not stage.");
+    importId = data.id;
+  }
+  await supabase.from("bank_txns").delete().eq("import_batch_id", importBatchId);
+  await supabase.from("bank_txns").insert(parsed.transactions.map((t) => ({
+    factory_id: profile.factory_id, txn_date: t.txnDate, description: t.description, debit: t.debit.toFixed(2), credit: t.credit.toFixed(2), running_balance: t.runningBalance?.toFixed(2) ?? null, cheque_no: t.chequeNo, raw_line: t.rawLine, import_batch_id: importBatchId,
+  })));
+  redirect(`${AUC}/${saleId}/bank/${importId}`);
 }

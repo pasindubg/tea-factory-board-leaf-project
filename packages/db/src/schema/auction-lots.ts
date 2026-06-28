@@ -28,12 +28,28 @@ export const auctionLots = pgTable(
     netWt: numeric("net_wt", { precision: 10, scale: 2 }).notNull(),
     store: text("store"),
     category: text("category"),
+    // Dispatch-first lifecycle: dispatched → catalogued | pending | shutout →
+    // valued → sold | re-print | withdrawn → settled. `pending` = dispatched but
+    // absent from the current (partial) acknowledgement, may roll to a later sale.
+    // `re-print` = unsold, re-sampled, rolled to the next sale.
     state: text("state", {
-      enum: ["invoiced", "catalogued", "shutout", "valued", "sold", "withdrawn", "settled"],
+      enum: [
+        "dispatched",
+        "catalogued",
+        "pending",
+        "missing", // explicit human decision: expected & overdue, no catalogue counterpart
+        "shutout",
+        "valued",
+        "sold",
+        "re-print",
+        "withdrawn",
+        "settled",
+      ],
     })
-      .default("invoiced")
+      .default("dispatched")
       .notNull(),
     shutoutReason: text("shutout_reason"),
+    reprintSourceLotId: uuid("reprint_source_lot_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

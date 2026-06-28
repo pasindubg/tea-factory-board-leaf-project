@@ -220,12 +220,29 @@ Reconciliation ③.
 299,898.85 from parsed lines; VAT split shows 718,812 cash / 166,860 guaranteed;
 the net VAT-payable figure computes.
 
+> **Dispatch-first redesign + resolvers (28 Jun 2026).** The model was corrected to
+> be **dispatch-first** (the factory dispatches lots to a 3rd-party store; the broker
+> catalogues a *partial* subset): lot state `invoiced`→`dispatched`, new states
+> `pending` (absent from this ack) / `re-print` (unsold→rolls forward) / `missing`
+> (explicit mark); `lot_invoices` child table for 1-lot→many-invoices (migration
+> 0014). Added: **orphan-resolver Compare panel** on recon ① (link a pending invoice
+> to an unexpected catalogue lot, scored + audited), **`auction_audit`** table
+> (migration 0015), the **bank-recon review UI** below, and a **cross-sale
+> dashboard** (`/dashboard/auction/dashboard`). Migration 0012 (settlements etc.) was
+> found missing from the live DB and applied. All verified via DB integration +
+> tests; uncommitted on `pasindu/auction-flow-reconsiliation`.
+
 ## A4 — Accounting integration & bank reconciliation  (Priority 2, entitlement `accounts`)
 Reconciliation ④ + the accounting hook.
 - Bank statement CSV import (Commercial Bank format) → `bank_txns` (date,
-  description, debit, credit, running balance, cheque no).
+  description, debit, credit, running balance, cheque no). ✅ stage→review→confirm
+  (upload on sale detail → review page `[saleId]/bank/[importId]`).
 - Reconciliation ④: match expected Total Net Proceeds (by prompt date) to bank
   credits; cheque reconciliation (the many CHEQUE debits/credits); flag unmatched.
+  ✅ review UI: per-settlement status (settled / cash-only / under-paid / over-paid /
+  awaiting / unpaid) with a prompt-date grace window, auto-match suggestions, and an
+  unattributed-credit↔unpaid-settlement resolver (scored on amount/date/narration,
+  audited).
 - Seed P&L / cash-flow from auction revenue + settlement deductions; leave the
   **hook** to absorb supplier payments (M6), production cost and wider expenses
   when the ERP-domain milestones land — this is where the full accounting system

@@ -55,22 +55,22 @@ const invoicedClean: InvoicedLot[] = ack.lots.map((l) => ({
   netWt: l.netWt,
 }));
 const recon = reconcileAcknowledgement(invoicedClean, ack);
-ok("clean recon: 12 catalogued, 2 shutout, 0 missing/unexpected",
+ok("clean recon: 12 catalogued, 2 shutout, 0 pending/unexpected",
   recon.summary.catalogued === 12 && recon.summary.shutout === 2 &&
-    recon.summary.missing === 0 && recon.summary.unexpected === 0 && recon.summary.weightMismatches === 0,
+    recon.summary.pending === 0 && recon.summary.unexpected === 0 && recon.summary.weightMismatches === 0,
   JSON.stringify(recon.summary));
 ok("clean recon: shutout stock = 430 kg", recon.summary.shutoutKg === 430, `${recon.summary.shutoutKg}`);
 
 // ---- reconcile: anomalies (missing, unexpected, weight delta) ----
 const invoicedDirty: InvoicedLot[] = [
   { id: "a", invoiceNo: "0058", grade: "OP", netWt: 275 }, // 5kg short of ack (280)
-  { id: "b", invoiceNo: "9999", grade: "OP", netWt: 100 }, // invoiced but not in ack → missing
+  { id: "b", invoiceNo: "9999", grade: "OP", netWt: 100 }, // dispatched but not in this ack → pending
   // 0074, 0061, 0063, … not invoiced here → those ack rows become "unexpected"
 ];
 const recon2 = reconcileAcknowledgement(invoicedDirty, ack);
 const r58 = recon2.rows.find((r) => r.invoiceNo === "0058");
 ok("anomaly: 0058 weight delta +5", !!r58 && r58.weightDelta === 5, `${r58?.weightDelta}`);
-ok("anomaly: 1 missing (9999)", recon2.summary.missing === 1);
+ok("anomaly: 1 pending (9999 not in this partial ack)", recon2.summary.pending === 1, `${recon2.summary.pending}`);
 ok("anomaly: 13 unexpected (ack rows not invoiced)", recon2.summary.unexpected === 13, `${recon2.summary.unexpected}`);
 ok("anomaly: 1 weight mismatch flagged", recon2.summary.weightMismatches === 1);
 

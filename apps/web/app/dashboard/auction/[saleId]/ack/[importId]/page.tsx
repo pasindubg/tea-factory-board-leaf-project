@@ -6,11 +6,13 @@ import {
   type ReconStatus,
 } from "@tea/api";
 import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
+import { buildInvoicedLots } from "../../../recon-helpers";
+import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
 
 const STATUS_STYLE: Record<ReconStatus, string> = {
   catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
   shutout: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
-  missing: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400",
+  pending: "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300",
   unexpected: "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400",
 };
 
@@ -43,18 +45,56 @@ export default async function AckReviewPage({
   const { data: sale } = await supabase.from("auction_sales").select("sale_no").eq("id", saleId).single();
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt")
+    .select("id, invoice_no, grade, net_wt, state, lot_no, marks(code), lot_invoices(invoice_no)")
     .eq("sale_id", saleId);
+  const { data: auditRows } = await supabase
+    .from("auction_audit")
+    .select("action, detail, reason, actor, confidence_shown, created_at")
+    .eq("sale_id", saleId)
+    .order("created_at", { ascending: false })
+    .limit(50);
 
   const parsed = imp.parsed_json as ParsedAcknowledgement;
-  const invoiced = (lotRows ?? []).map((l) => ({
-    id: l.id as string,
-    invoiceNo: l.invoice_no as string,
-    grade: l.grade as string,
-    netWt: Number(l.net_wt),
-  }));
+  const invoiced = buildInvoicedLots(lotRows ?? []);
   const recon = reconcileAcknowledgement(invoiced, parsed);
-  const order: Record<ReconStatus, number> = { missing: 0, unexpected: 1, shutout: 2, catalogued: 3 };
+  const order: Record<ReconStatus, number> = { pending: 0, unexpected: 1, shutout: 2, catalogued: 3 };
+
+  // ── Orphan-resolver inputs (#19) ──
+  // Orphans = pending invoiced lots still factory-side (drop ones already resolved
+  // by a manual link/mark). Candidates = "unexpected" ack lots not yet consumed
+  // (their lot_no isn't already on a catalogued lot in the DB).
+  const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
+  const cataloguedLotNos = new Set(
+    (lotRows ?? []).filter((l) => l.state === "catalogued" && l.lot_no).map((l) => l.lot_no as string),
+  );
+  const markOf = (id: string) => (lotById.get(id)?.marks as unknown as { code: string } | null)?.code ?? null;
+  const orphans: Orphan[] = recon.rows
+    .filter((r) => r.status === "pending" && r.invoiced)
+    .filter((r) => ["dispatched", "pending"].includes(lotById.get(r.invoiced!.id)?.state as string))
+    .map((r) => ({
+      lotId: r.invoiced!.id,
+      invoiceNo: r.invoiceNo,
+      grade: r.invoiced!.grade,
+      netWt: r.invoiced!.netWt,
+      markCode: markOf(r.invoiced!.id),
+    }));
+  const candidates: Candidate[] = recon.rows
+    .filter((r) => r.status === "unexpected" && r.ack && !cataloguedLotNos.has(r.ack.lotNo ?? ""))
+    .map((r) => ({
+      key: r.ack!.lotNo ?? r.invoiceNo,
+      lotNo: r.ack!.lotNo,
+      grade: r.ack!.grade,
+      netWt: r.ack!.netWt,
+      markCode: r.ack!.markCode,
+    }));
+  const audit: AuditRow[] = (auditRows ?? []).map((a) => ({
+    action: a.action as string,
+    detail: a.detail as string,
+    reason: (a.reason as string) ?? null,
+    actor: a.actor as string,
+    confidenceShown: a.confidence_shown != null ? Number(a.confidence_shown) : null,
+    createdAt: a.created_at as string,
+  }));
   const rows = [...recon.rows].sort(
     (a, b) => order[a.status] - order[b.status] || a.invoiceNo.localeCompare(b.invoiceNo),
   );
@@ -63,7 +103,7 @@ export default async function AckReviewPage({
   const chips: [string, number, string][] = [
     ["Catalogued", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
     ["Shutout", s.shutout, "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"],
-    ["Missing", s.missing, "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"],
+    ["Pending", s.pending, "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300"],
     ["Unexpected", s.unexpected, "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400"],
     ["Weight mismatches", s.weightMismatches, "bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300"],
   ];
@@ -109,7 +149,15 @@ export default async function AckReviewPage({
             {s.shutoutKg.toFixed(2)} kg left at warehouse
           </span>
         )}
+        {s.pending > 0 && (
+          <span className="rounded-full bg-sky-50 dark:bg-sky-950 px-3 py-1 text-sm text-sky-700 dark:text-sky-300">
+            {s.pendingKg.toFixed(2)} kg dispatched, not yet catalogued
+          </span>
+        )}
       </div>
+
+      {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
+      <ComparePanel saleId={saleId} importId={importId} orphans={orphans} candidates={candidates} audit={audit} />
 
       <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
@@ -144,7 +192,7 @@ export default async function AckReviewPage({
                     : `${r.weightDelta > 0 ? "+" : ""}${r.weightDelta.toFixed(2)}`}
                 </td>
                 <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
-                  {r.status === "missing" && "Invoiced but absent from the acknowledgement"}
+                  {r.status === "pending" && "Dispatched, not in this ack — may roll to a later sale"}
                   {r.status === "unexpected" && "In the acknowledgement but never invoiced"}
                   {r.gradeMismatch && <span className="text-amber-700 dark:text-amber-400"> grade differs</span>}
                   {r.weightDelta != null && Math.abs(r.weightDelta) > 0.01 && (

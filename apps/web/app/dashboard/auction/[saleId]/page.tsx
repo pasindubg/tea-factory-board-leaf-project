@@ -2,28 +2,28 @@ import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import {
-  addInvoicedLot,
-  deleteLot,
-  deleteSale,
+  addDispatchedLot,
   ingestAcknowledgement,
   ingestValuation,
   ingestContract,
+  ingestBankCsv,
 } from "../actions";
+import { DispatchLotForm } from "./dispatch-lot-form";
+import { DispatchedLotsTable } from "./dispatched-lots-table";
+import { DeleteDispatchButton } from "./delete-dispatch-button";
 
-const GRADES = ["OP", "OP1", "OPA", "PEK", "PEK1", "BOP", "BOPF", "FBOP", "DUST", "BM"];
-
-const LOT_STATE_STYLE: Record<string, string> = {
-  invoiced: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400",
-  catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
-  shutout: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
-  valued: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400",
-  sold: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
-  withdrawn: "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
-  settled: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
+// Simplified state buckets for cleaner display.
+const STATE_BUCKET: Record<string, { label: string; style: string }> = {
+  dispatched:  { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
+  pending:     { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
+  catalogued:  { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
+  valued:      { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
+  sold:        { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
+  settled:     { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
+  shutout:     { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
+  withdrawn:   { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
+  "re-print":  { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
 };
-
-const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm";
-const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export default async function SaleDetailPage({
   params,
@@ -32,13 +32,14 @@ export default async function SaleDetailPage({
   params: Promise<{ saleId: string }>;
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const isOwner = profile.role === "owner";
   const { saleId } = await params;
   const { error, notice } = await searchParams;
 
   const { data: sale } = await supabase
     .from("auction_sales")
-    .select("id, sale_no, sale_date, prompt_date, status, brokers(name)")
+    .select("id, sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
     .eq("id", saleId)
     .single();
 
@@ -47,7 +48,7 @@ export default async function SaleDetailPage({
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Sale not found.{" "}
         <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sales
+          Back to Dispatches Overview
         </Link>
       </div>
     );
@@ -58,7 +59,9 @@ export default async function SaleDetailPage({
     supabase.from("marks").select("id, code, name").order("code"),
     supabase
       .from("auction_lots")
-      .select("id, invoice_no, lot_no, grade, bags, kg_per_bag, net_wt, state, shutout_reason, marks(code)")
+      .select(
+        "id, invoice_no, lot_no, grade, bags, kg_per_bag, net_wt, state, shutout_reason, marks(code), lot_invoices(invoice_no)",
+      )
       .eq("sale_id", saleId)
       .order("invoice_no"),
     supabase
@@ -74,179 +77,99 @@ export default async function SaleDetailPage({
   const ackImports = allImports.filter((i) => i.doc_type === "acknowledgement");
   const valImports = allImports.filter((i) => i.doc_type === "valuation");
   const conImports = allImports.filter((i) => i.doc_type === "contract");
+  const bankImports = allImports.filter((i) => i.doc_type === "bank_csv");
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
-            ← Sales
+            ← Dispatches Overview
           </Link>
-          <h2 className="mt-1 text-xl font-semibold">Sale {sale.sale_no}</h2>
+          <h2 className="mt-1 text-xl font-semibold">Dispatch {sale.sale_no}</h2>
           <p className="text-sm text-stone-500 dark:text-stone-400">
             {broker}
+            {sale.dispatch_date ? ` · dispatched ${sale.dispatch_date}` : ""}
             {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
             {sale.prompt_date ? ` · prompt ${sale.prompt_date}` : ""}
             {" · "}
             <span
-              className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[sale.status] ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
+              className={`rounded-full px-2 py-0.5 text-xs ${STATE_BUCKET[sale.status]?.style ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
+              title={`Actual status: ${sale.status}`}
             >
-              {sale.status}
+              {STATE_BUCKET[sale.status]?.label ?? sale.status}
             </span>
           </p>
         </div>
-        {sale.status === "draft" && (
-          <form action={deleteSale.bind(null, sale.id)}>
-            <SubmitButton
-              pendingText="Deleting…"
-              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
-            >
-              Delete sale
-            </SubmitButton>
-          </form>
+        {(sale.status === "dispatched" || sale.status === "draft") && isOwner && (
+          <DeleteDispatchButton saleId={sale.id} />
         )}
       </div>
 
       {error && <p className="rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>}
       {notice && <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">{notice}</p>}
 
-      {/* Invoiced lots — the factory's record of what it dispatched to the broker. */}
+      {/* Document ingestion → reconciliations ①/② — 2 per row */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <IngestSection
+          title="Acknowledgement"
+          description="Catalogue lots and reconcile (①) against what you invoiced; shutouts are flagged."
+          action={ingestAcknowledgement.bind(null, sale.id)}
+          reviewBase={`/dashboard/auction/${sale.id}/ack`}
+          imports={ackImports}
+        />
+        <IngestSection
+          title="Valuation report"
+          description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes."
+          action={ingestValuation.bind(null, sale.id)}
+          reviewBase={`/dashboard/auction/${sale.id}/valuation`}
+          imports={valImports}
+        />
+        <IngestSection
+          title="Sellers contract"
+          description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation."
+          action={ingestContract.bind(null, sale.id)}
+          reviewBase={`/dashboard/auction/${sale.id}/contract`}
+          imports={conImports}
+        />
+        <IngestSection
+          title="Bank statement (CSV)"
+          description="Upload the bank statement to reconcile (④) settlements against the credits that actually arrived."
+          action={ingestBankCsv.bind(null, sale.id)}
+          reviewBase={`/dashboard/auction/${sale.id}/bank`}
+          imports={bankImports}
+          accept=".csv,text/csv"
+        />
+      </div>
+
+      {/* Dispatched lots — the factory's record of what it sent to the broker's store. */}
       <section>
         <div className="flex items-baseline justify-between">
-          <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Invoiced lots</h3>
-          <p className="text-sm text-stone-500 dark:text-stone-400">
-            {rows.length} lot{rows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
-          </p>
+          <div>
+            <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Dispatched lots</h3>
+            <p className="text-sm text-stone-500 dark:text-stone-400">
+              {rows.length} lot{rows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
+            </p>
+          </div>
+          <DispatchLotForm action={addDispatchedLot.bind(null, sale.id)} marks={marks ?? []} />
         </div>
 
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                <th className="px-3 py-3">Invoice</th>
-                <th className="px-3 py-3">Mark</th>
-                <th className="px-3 py-3">Grade</th>
-                <th className="px-3 py-3 text-right">Bags</th>
-                <th className="px-3 py-3 text-right">kg/bag</th>
-                <th className="px-3 py-3 text-right">Net kg</th>
-                <th className="px-3 py-3">Lot no.</th>
-                <th className="px-3 py-3">State</th>
-                <th className="px-3 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((l) => {
-                const markCode = (l.marks as unknown as { code: string } | null)?.code ?? "—";
-                return (
-                  <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                    <td className="px-3 py-2 font-medium">{l.invoice_no}</td>
-                    <td className="px-3 py-2">{markCode}</td>
-                    <td className="px-3 py-2">{l.grade}</td>
-                    <td className="px-3 py-2 text-right">{l.bags ?? "—"}</td>
-                    <td className="px-3 py-2 text-right">{l.kg_per_bag != null ? Number(l.kg_per_bag).toFixed(2) : "—"}</td>
-                    <td className="px-3 py-2 text-right">{Number(l.net_wt).toFixed(2)}</td>
-                    <td className="px-3 py-2">{l.lot_no ?? "—"}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${LOT_STATE_STYLE[l.state] ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
-                        title={l.shutout_reason ?? undefined}
-                      >
-                        {l.state}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {l.state === "invoiced" && (
-                        <form action={deleteLot.bind(null, l.id, sale.id)}>
-                          <SubmitButton pendingText="…" className="text-stone-400 dark:text-stone-500 hover:text-red-600 dark:hover:text-red-400 hover:underline">
-                            Remove
-                          </SubmitButton>
-                        </form>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                    No lots yet. Add the lots you invoiced to the broker for this sale.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="mt-4">
+          <DispatchedLotsTable rows={rows.map(l => ({
+            id: l.id as string,
+            invoice_no: l.invoice_no as string | null,
+            lot_no: l.lot_no as string | null,
+            grade: l.grade as string | null,
+            bags: l.bags as number | null,
+            kg_per_bag: l.kg_per_bag as number | null,
+            net_wt: l.net_wt as number | string | null,
+            state: l.state as string | null,
+            shutout_reason: l.shutout_reason as string | null,
+            marks: (l.marks as unknown as { code: string } | null) ?? null,
+            lot_invoices: (l.lot_invoices as unknown as { invoice_no: string }[] | null) ?? null,
+          }))} saleId={sale.id} isOwner={isOwner} />
         </div>
-
-        {/* Add invoiced lot */}
-        <form
-          action={addInvoicedLot.bind(null, sale.id)}
-          className="mt-4 grid items-end gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 sm:grid-cols-6"
-        >
-          <div className="sm:col-span-1">
-            <label className={label}>Invoice no.</label>
-            <input name="invoice_no" required placeholder="0058" className={input} />
-          </div>
-          <div className="sm:col-span-1">
-            <label className={label}>Mark</label>
-            <select name="mark_id" className={input} defaultValue="">
-              <option value="">—</option>
-              {(marks ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.code}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="sm:col-span-1">
-            <label className={label}>Grade</label>
-            <input name="grade" required list="auction-grades" placeholder="OP" className={input} />
-            <datalist id="auction-grades">
-              {GRADES.map((g) => (
-                <option key={g} value={g} />
-              ))}
-            </datalist>
-          </div>
-          <div className="sm:col-span-1">
-            <label className={label}>Bags</label>
-            <input name="bags" type="number" min="1" step="1" required placeholder="10" className={input} />
-          </div>
-          <div className="sm:col-span-1">
-            <label className={label}>kg / bag</label>
-            <input name="kg_per_bag" type="number" min="0" step="0.01" required placeholder="28" className={input} />
-          </div>
-          <div className="sm:col-span-1">
-            <SubmitButton
-              pendingText="Adding…"
-              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-            >
-              Add lot
-            </SubmitButton>
-          </div>
-        </form>
       </section>
-
-      {/* Document ingestion → reconciliations ①/② */}
-      <IngestSection
-        title="Acknowledgement"
-        description="Catalogue these lots and reconcile (①) against what you invoiced; shutouts are flagged."
-        action={ingestAcknowledgement.bind(null, sale.id)}
-        reviewBase={`/dashboard/auction/${sale.id}/ack`}
-        imports={ackImports}
-      />
-      <IngestSection
-        title="Valuation report"
-        description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes."
-        action={ingestValuation.bind(null, sale.id)}
-        reviewBase={`/dashboard/auction/${sale.id}/valuation`}
-        imports={valImports}
-      />
-      <IngestSection
-        title="Sellers contract"
-        description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation."
-        action={ingestContract.bind(null, sale.id)}
-        reviewBase={`/dashboard/auction/${sale.id}/contract`}
-        imports={conImports}
-      />
     </div>
   );
 }
@@ -259,58 +182,60 @@ function IngestSection({
   action,
   reviewBase,
   imports,
+  accept = "application/pdf",
 }: {
   title: string;
   description: string;
   action: (formData: FormData) => void;
   reviewBase: string;
   imports: ImportRow[];
+  accept?: string;
 }) {
   return (
     <section>
-      <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">{title}</h3>
-      <p className="text-sm text-stone-500 dark:text-stone-400">{description}</p>
+      <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">{title}</h3>
+      <p className="text-xs text-stone-400 dark:text-stone-500 leading-relaxed">{description}</p>
       <form
         action={action}
-        className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4"
+        className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50/50 dark:bg-stone-800/50 p-3 hover:border-stone-300 dark:hover:border-stone-600 transition-colors"
       >
         <input
           type="file"
           name="file"
-          accept="application/pdf"
+          accept={accept}
           required
-          className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-green-700 file:px-3 file:py-1.5 file:text-white hover:file:bg-green-800"
+          className="text-xs file:mr-2 file:rounded file:border-0 file:bg-green-700 file:px-2 file:py-1 file:text-xs file:text-white hover:file:bg-green-800"
         />
         <SubmitButton
-          pendingText="Reading…"
-          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+          pendingText="…"
+          className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
           Upload &amp; review
         </SubmitButton>
       </form>
 
       {imports.length > 0 && (
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-          <table className="w-full text-sm">
+        <div className="mt-2 overflow-x-auto rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                <th className="px-4 py-3">File</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Uploaded</th>
-                <th className="px-4 py-3"></th>
+              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-[10px] uppercase tracking-wide text-stone-400 dark:text-stone-500">
+                <th className="px-3 py-2">File</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Uploaded</th>
+                <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {imports.map((im) => (
                 <tr key={im.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                  <td className="px-4 py-2">{im.source_filename ?? "document.pdf"}</td>
-                  <td className="px-4 py-2">
-                    <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-600 dark:text-stone-400">{im.status}</span>
+                  <td className="px-3 py-1.5 truncate max-w-[120px]">{im.source_filename ?? "document.pdf"}</td>
+                  <td className="px-3 py-1.5">
+                    <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-[10px] text-stone-600 dark:text-stone-400">{im.status}</span>
                   </td>
-                  <td className="px-4 py-2 text-stone-500 dark:text-stone-400">
+                  <td className="px-3 py-1.5 text-stone-400 dark:text-stone-500">
                     {im.parsed_at ? new Date(im.parsed_at).toLocaleString() : "—"}
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="px-3 py-1.5 text-right">
                     <Link href={`${reviewBase}/${im.id}`} className="text-green-700 dark:text-green-400 hover:underline">
                       Review
                     </Link>

@@ -22,6 +22,8 @@ export * from "./brokers";
 export * from "./marks";
 export * from "./auction-sales";
 export * from "./auction-lots";
+export * from "./lot-invoices";
+export * from "./auction-audit";
 export * from "./doc-imports";
 export * from "./valuations";
 export * from "./buyers";

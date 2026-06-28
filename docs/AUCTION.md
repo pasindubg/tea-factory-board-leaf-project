@@ -68,16 +68,30 @@ factory's bank.
 A **lot** is the spine. Each document advances its state and asserts one
 reconciliation.
 
+> **Dispatch-first model.** The factory does **not** create a sale. It
+> **dispatches** lots to a 3rd-party store first; the broker later catalogues a
+> **subset** (acknowledgements are *partial*) → values → sells; unsold lots are
+> **re-printed** (re-sampled, slight kg loss) and roll to the next sale ~3 weeks
+> later. So the lot's first state is `dispatched` (was `invoiced`), a dispatched
+> lot absent from the *current* ack is `pending` (not an error — may roll
+> forward), and an unsold lot becomes `re-print`. `missing` is only ever set by an
+> explicit human decision in the orphan resolver, never by the reconciliation.
+
 ```mermaid
 stateDiagram-v2
-    [*] --> Invoiced: factory creates invoice & dispatches lot
-    Invoiced --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
-    Invoiced --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
+    [*] --> Dispatched: factory invoices & dispatches lot to the store
+    Dispatched --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
+    Dispatched --> Pending: dispatched but absent from this (partial) ack  [Recon ①]
+    Dispatched --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
+    Pending --> Catalogued: catalogued by a later ack
+    Pending --> Missing: explicit human decision — expected & overdue, no counterpart
     Catalogued --> Valued: Valuation Report confirmed
     Valued --> Sold: Sellers Contract confirmed — buyer + actual price  [Recon ②, ③]
+    Valued --> Reprint: unsold — re-sampled, rolls to the next sale
     Valued --> Withdrawn: catalogued & valued but absent from the contract
     Sold --> Settled: Total Net Proceeds matched to a bank credit  [Recon ④]
-    Shutout --> [*]: rolls to next sale (re-invoiced)
+    Reprint --> [*]: a fresh dispatched lot is created under the next sale
+    Shutout --> [*]: rolls to next sale (re-dispatched)
     Withdrawn --> [*]
     Settled --> [*]
 ```
@@ -105,12 +119,20 @@ Each is a deterministic, testable calculation. Worked figures are from Sale 023.
 ### ① Invoice ↔ Acknowledgement
 - **Answers:** did everything the factory invoiced get catalogued, at the right weight?
 - **Inputs:** `lots` (state `invoiced`) vs the parsed Acknowledgement (catalogued + shutout rows).
-- **Algorithm:** for each invoiced lot, find its `invoice_no` in the Acknowledgement →
+- **Algorithm:** for each dispatched lot, find any of its `invoice_no`(s) in the Acknowledgement →
   - in catalogued section → `catalogued`; assert `net_wt` equal (flag weight delta);
   - in shutout section → `shutout` with reason; surface as un-realized stock;
-  - absent from both → **flag missing**.
+  - absent from both → **`pending`** (partial ack — may be catalogued later or roll
+    to a later sale; **not** an error). `missing` is only set by an explicit human
+    decision in the orphan resolver.
   Also flag any catalogued/shutout row with no matching invoice (broker added something unexpected).
-- **Outputs / flags:** `catalogued`, `shutout`, `weight_mismatch`, `missing_invoice`, `unexpected_catalogue_row`.
+- **Orphan resolver:** the ambiguous rows (`pending` invoiced lots ↔ `unexpected`
+  catalogue lots) are reconciled manually in a **Compare** panel: candidates are
+  ranked by a transparent per-dimension score (grade family, Δkg, lot proximity),
+  nothing auto-links, and every link/mark is written to `auction_audit` with the
+  filed Δkg. Same pattern reused for recon ④ (unattributed credit ↔ unpaid
+  settlement, scored on amount / date / narration).
+- **Outputs / flags:** `catalogued`, `shutout`, `weight_mismatch`, `pending`, `unexpected_catalogue_row`.
 - **Sale 023:** 12 lots catalogued (11 under `MF1530`, 1 under `MF1530A`); invoices **`0061`** (OPA, 200 kg) and **`0063`** (OPA, 230 kg) shut out → 430 kg of stock rolls to the next sale.
 
 ### ② Valuation ↔ Sale price
@@ -178,7 +200,16 @@ auction_sales     id, factory_id, broker_id, sale_no, sale_date, prompt_date,
 auction_lots      id, factory_id, sale_id, mark_id, invoice_no, lot_no, grade(text),
                   bags(int), kg_per_bag, gross_wt, sample_allowance, net_wt,
                   store, category, state, shutout_reason
-                  -- state ∈ invoiced|catalogued|shutout|valued|sold|withdrawn|settled
+                  -- invoice_no is the denormalized PRIMARY; lot_invoices is the
+                  --   source of truth (a lot rarely carries >1 invoice). lot_no is
+                  --   optional at dispatch (usually assigned at cataloguing).
+                  -- state ∈ dispatched|catalogued|pending|missing|shutout|valued|
+                  --         sold|re-print|withdrawn|settled
+lot_invoices      id, factory_id, lot_id, invoice_no       -- 1 lot → 1..n invoices
+auction_audit     id, factory_id, sale_id?, lot_id?, action, detail, reason, actor,
+                  confidence_shown, weight_delta, created_at
+                  -- every MANUAL recon decision (orphan link/mark, bank link) — the
+                  --   filed Δkg on a link lives in weight_delta so it isn't lost
 valuations        id, factory_id, lot_id, price_min, price_max,
                   projected_proceeds, tasting_note, valued_at
 sale_lines        id, factory_id, sale_id, lot_id, buyer_id, gross_wt,

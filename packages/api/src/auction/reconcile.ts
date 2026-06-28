@@ -5,7 +5,11 @@ import type { ParsedAcknowledgement } from "./parse-acknowledgement";
 
 export type InvoicedLot = { id: string; invoiceNo: string; grade: string; netWt: number };
 
-export type ReconStatus = "catalogued" | "shutout" | "missing" | "unexpected";
+// Acknowledgements are PARTIAL: a lot the factory dispatched but the broker has
+// not yet catalogued is `pending` (it may appear in a later ack / roll to a later
+// sale), NOT an error. Only an explicit human decision marks a lot genuinely
+// `missing` (see the orphan resolver) — the pure reconciliation never does.
+export type ReconStatus = "catalogued" | "shutout" | "pending" | "unexpected";
 
 export type ReconRow = {
   invoiceNo: string;
@@ -19,10 +23,11 @@ export type ReconRow = {
 export type ReconSummary = {
   catalogued: number;
   shutout: number;
-  missing: number; // invoiced but absent from the acknowledgement
+  pending: number; // dispatched but absent from this (partial) ack — may roll forward
   unexpected: number; // in the acknowledgement but never invoiced
   weightMismatches: number;
   shutoutKg: number; // stock left at the warehouse, rolls to the next sale
+  pendingKg: number; // dispatched stock still at the store, not yet catalogued
 };
 
 export type Reconciliation = { rows: ReconRow[]; summary: ReconSummary };
@@ -66,7 +71,7 @@ export function reconcileAcknowledgement(
     if (matched.has(inv.invoiceNo)) continue;
     rows.push({
       invoiceNo: inv.invoiceNo,
-      status: "missing",
+      status: "pending",
       invoiced: { id: inv.id, grade: inv.grade, netWt: inv.netWt },
       ack: null,
       weightDelta: null,
@@ -78,11 +83,14 @@ export function reconcileAcknowledgement(
   const summary: ReconSummary = {
     catalogued: count("catalogued"),
     shutout: count("shutout"),
-    missing: count("missing"),
+    pending: count("pending"),
     unexpected: count("unexpected"),
     weightMismatches: rows.filter((r) => r.weightDelta != null && Math.abs(r.weightDelta) > 0.01).length,
     shutoutKg: Number(
       rows.filter((r) => r.status === "shutout").reduce((s, r) => s + (r.ack?.netWt ?? 0), 0).toFixed(2),
+    ),
+    pendingKg: Number(
+      rows.filter((r) => r.status === "pending").reduce((s, r) => s + (r.invoiced?.netWt ?? 0), 0).toFixed(2),
     ),
   };
 

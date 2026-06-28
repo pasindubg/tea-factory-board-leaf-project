@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
-import { createSale } from "../actions";
+import { createDispatch } from "../actions";
 
-export default async function NewSalePage({
+export default async function NewDispatchPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
@@ -14,7 +14,11 @@ export default async function NewSalePage({
 
   return (
     <div className="max-w-lg">
-      <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New sale</h2>
+      <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New dispatch</h2>
+      <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+        Pick the broker and enter your dispatch number. You&apos;ll add the lots
+        (invoice no., grade, bags) on the next screen.
+      </p>
       {error && (
         <p className="mt-3 rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>
       )}
@@ -28,7 +32,7 @@ export default async function NewSalePage({
           .
         </p>
       ) : (
-        <form action={createSale} className="mt-4 space-y-4">
+        <form action={createDispatch} className="mt-4 space-y-4">
           <div>
             <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Broker</label>
             <select
@@ -44,16 +48,40 @@ export default async function NewSalePage({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Sale number</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Dispatch number</label>
             <input
               name="sale_no"
               required
+              placeholder="DSP-001"
+              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
+              Target sale number <span className="text-xs text-stone-400 dark:text-stone-500">(the auction sale, e.g. 2026-023)</span>
+            </label>
+            <input
+              name="target_sale_no"
               placeholder="2026-023"
               className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Sale date</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
+              Dispatch date <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              name="dispatch_date"
+              required
+              defaultValue={new Date().toISOString().split("T")[0]}
+              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
+              Sale date <span className="text-xs text-stone-400 dark:text-stone-500">(optional — ~3 weeks after dispatch)</span>
+            </label>
             <input
               type="date"
               name="sale_date"
@@ -65,7 +93,7 @@ export default async function NewSalePage({
               pendingText="Creating…"
               className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
-              Create sale
+              Create dispatch
             </SubmitButton>
             <Link
               href="/dashboard/auction"

@@ -15,13 +15,18 @@ export const auctionSales = pgTable(
     brokerId: uuid("broker_id")
       .references(() => brokers.id)
       .notNull(),
-    saleNo: text("sale_no").notNull(), // e.g. 2026-023
-    saleDate: date("sale_date"),
-    promptDate: date("prompt_date"), // filled from the contract (A3)
+    saleNo: text("sale_no").notNull(), // dispatch number, e.g. DSP-001
+    dispatchDate: date("dispatch_date").notNull().default("now()"), // when dispatched physically
+    targetSaleNo: text("target_sale_no"), // the auction sale this dispatch targets (e.g. 2026-023)
+    saleDate: date("sale_date"), // auction date (~3 weeks after dispatch)
+    promptDate: date("prompt_date"), // settlement prompt date, filled from the contract (A3)
+    // Dispatch-first: a sale starts as `dispatched` (lots sent to the store, no
+    // ack yet) and is populated with sale details only after the broker documents
+    // arrive. `draft` is retained for back-compat with pre-redesign rows.
     status: text("status", {
-      enum: ["draft", "catalogued", "valued", "sold", "settled"],
+      enum: ["dispatched", "draft", "catalogued", "valued", "sold", "settled"],
     })
-      .default("draft")
+      .default("dispatched")
       .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

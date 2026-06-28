@@ -31,6 +31,7 @@ export type ModuleDef = {
   roles: readonly Role[];
   entitlement: Entitlement;
   group?: ModuleGroup;
+  subGroup?: string;
 };
 
 // Default access per module. Per-factory overrides are stored in module_permissions
@@ -99,12 +100,54 @@ export const MODULES: readonly ModuleDef[] = [
     entitlement: "leaf-handling",
   },
   {
-    key: "auction",
-    href: "/dashboard/auction",
-    label: "Auction",
+    key: "auction-dashboard",
+    href: "/dashboard/auction/dashboard",
+    label: "Dashboard",
     roles: ["owner", "manager", "accountant"],
     entitlement: "auction",
     group: "Sales Handling",
+  },
+  {
+    key: "auction-sales",
+    href: "/dashboard/auction/sales",
+    label: "Sales",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-reports",
+    href: "/dashboard/auction/reports",
+    label: "Report Analyser",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-registry",
+    href: "/dashboard/auction/registry",
+    label: "Brokers & marks",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction",
+    href: "/dashboard/auction",
+    label: "Dispatches Overview",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+    subGroup: "Dispatch Handling",
+  },
+  {
+    key: "auction-dispatch-detail",
+    href: "/dashboard/auction",
+    label: "Dispatch Detail",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+    subGroup: "Dispatch Handling",
   },
 ];
 

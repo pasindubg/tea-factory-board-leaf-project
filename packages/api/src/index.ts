@@ -13,3 +13,5 @@ export * from "./auction/compute-settlement";
 export * from "./auction/reconcile-vat";
 export * from "./auction/parse-bank-csv";
 export * from "./auction/reconcile-bank";
+export * from "./auction/match-orphans";
+export * from "./auction/match-bank";

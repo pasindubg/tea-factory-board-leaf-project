@@ -4,8 +4,37 @@ import { useRouter, usePathname } from "next/navigation";
 import { useTransition, useState, useEffect } from "react";
 
 const tabs = [
-  { href: "/dashboard/auction", label: "Sales", match: (p: string) => p === "/dashboard/auction" || p.startsWith("/dashboard/auction/") && !p.startsWith("/dashboard/auction/registry") },
-  { href: "/dashboard/auction/registry", label: "Brokers & marks", match: (p: string) => p.startsWith("/dashboard/auction/registry") },
+  {
+    href: "/dashboard/auction/dashboard",
+    label: "Dashboard",
+    match: (p: string) => p.startsWith("/dashboard/auction/dashboard"),
+  },
+  {
+    href: "/dashboard/auction",
+    label: "Dispatch Handling",
+    match: (p: string) =>
+      p === "/dashboard/auction" ||
+      (p.startsWith("/dashboard/auction/") &&
+        !p.startsWith("/dashboard/auction/dashboard") &&
+        !p.startsWith("/dashboard/auction/sales") &&
+        !p.startsWith("/dashboard/auction/reports") &&
+        !p.startsWith("/dashboard/auction/registry")),
+  },
+  {
+    href: "/dashboard/auction/sales",
+    label: "Sales",
+    match: (p: string) => p.startsWith("/dashboard/auction/sales"),
+  },
+  {
+    href: "/dashboard/auction/reports",
+    label: "Reports",
+    match: (p: string) => p.startsWith("/dashboard/auction/reports"),
+  },
+  {
+    href: "/dashboard/auction/registry",
+    label: "Brokers & marks",
+    match: (p: string) => p.startsWith("/dashboard/auction/registry"),
+  },
 ];
 
 export function AuctionNav() {
