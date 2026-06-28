@@ -127,6 +127,13 @@
       "when": 1783300000000,
       "tag": "0017_target_sale_no",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783400000000,
+      "tag": "0018_broker_rates",
+      "breakpoints": true
     }
   ]
 }
