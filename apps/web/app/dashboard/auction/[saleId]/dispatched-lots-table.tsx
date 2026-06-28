@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateLot, deleteLot, markReprint } from "../actions";
+import { stateBucket } from "../state-buckets";
 
 type LotRow = {
   id: string;
@@ -16,19 +17,6 @@ type LotRow = {
   shutout_reason: string | null;
   marks: { code: string } | null;
   lot_invoices: { invoice_no: string }[] | null;
-};
-
-const STATE_BUCKET: Record<string, { label: string; style: string }> = {
-  invoiced:    { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
-  dispatched:  { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
-  pending:     { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
-  catalogued:  { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
-  valued:      { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
-  sold:        { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
-  settled:     { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
-  shutout:     { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
-  withdrawn:   { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
-  "re-print":  { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
 };
 
 export function DispatchedLotsTable({
@@ -64,7 +52,7 @@ export function DispatchedLotsTable({
             const isEditing = editingId === l.id;
             const invoices = (l.lot_invoices ?? []).map((i) => i.invoice_no);
             const invoiceLabel = invoices.length ? invoices.join(", ") : l.invoice_no ?? "";
-            const bucket = STATE_BUCKET[l.state ?? ""];
+            const bucket = stateBucket(l.state);
             const removable = l.state === "dispatched" || l.state === "pending" || l.state === "invoiced";
             const reprintable = l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
 
@@ -194,7 +182,6 @@ export function EditRow({
 
   const invoices = (lot.lot_invoices ?? []).map((i) => i.invoice_no);
   const invoiceLabel = invoices.length ? invoices.join(", ") : lot.invoice_no ?? "";
-  const bucket = STATE_BUCKET[lot.state ?? ""];
 
   return (
     <>
@@ -265,8 +252,8 @@ export function EditRow({
             ))}
           </select>
         ) : (
-          <span className={`rounded-full px-2 py-0.5 text-xs ${STATE_BUCKET[lot.state ?? ""]?.style ?? "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
-            {STATE_BUCKET[lot.state ?? ""]?.label ?? lot.state}
+          <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(lot.state).style}`}>
+            {stateBucket(lot.state).label}
           </span>
         )}
       </td>

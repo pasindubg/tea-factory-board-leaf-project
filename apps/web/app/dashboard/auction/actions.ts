@@ -31,6 +31,9 @@ const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 const roles = () => getDefaultRoles("auction");
 const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
+type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
+type DocType = "acknowledgement" | "valuation" | "contract" | "bank_csv";
+
 // ---------- Registry: brokers & marks ----------
 export async function createBroker(formData: FormData) {
   const { supabase, profile } = await requireProfile(roles());
@@ -156,7 +159,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
   if (kgPerBag > 0) updates.kg_per_bag = kgPerBag;
   if (bags > 0 && kgPerBag > 0) updates.net_wt = Number((bags * kgPerBag).toFixed(2));
 
-  // State override — managers/owners only, for when the PDF parser missed something.
+  // State override — owners only, for when the PDF parser missed something.
   const isOwner = profile.role === "owner";
   const validStates = ["invoiced", "dispatched", "pending", "catalogued", "missing", "shutout", "valued", "withdrawn"];
   if (newState && isOwner && validStates.includes(newState)) {
@@ -211,7 +214,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
 }
 
 // ---------- Orphan resolver & audit ----------
-async function writeAudit(supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"], factoryId: string, row: {
+async function writeAudit(supabase: Supa, factoryId: string, row: {
   saleId?: string | null; lotId?: string | null; action: string; detail: string;
   reason?: string | null; actor: string; confidenceShown?: number | null; weightDelta?: number | null;
 }) {
@@ -231,30 +234,33 @@ export async function linkOrphanLot(input: {
   const { supabase, profile } = await requireProfile(roles());
   const markId = input.candidateMarkCode ? (await supabase.from("marks").select("id").eq("code", input.candidateMarkCode).maybeSingle()).data?.id as string ?? null : null;
   const weightDelta = Number((input.candidateNetWt - input.orphanNetWt).toFixed(2));
-  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "catalogued", shutout_reason: null }).eq("id", input.lotId);
+  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "catalogued", shutout_reason: null }).eq("id", input.lotId).eq("sale_id", input.saleId);
   await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Linked", detail: `Invoice ${input.invoiceNo} → lot ${input.candidateLotNo ?? "—"}`, reason: input.reason, actor: profile.name, confidenceShown: input.confidence, weightDelta: weightDelta !== 0 ? weightDelta : null });
   revalidatePath(`${AUC}/${input.saleId}`);
 }
 
-export async function markShutout(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
+// The three "leave this orphan in state X" resolver actions differ only by the
+// column patch and the audit label, so they share one body. The sale_id guard is
+// belt-and-suspenders on top of RLS — a lot can only be moved within its own sale.
+type OrphanStateInput = { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string };
+
+async function setOrphanState(input: OrphanStateInput, patch: Record<string, string | null>, action: string) {
   const { supabase, profile } = await requireProfile(roles());
-  await supabase.from("auction_lots").update({ state: "shutout", shutout_reason: "Marked shut out" }).eq("id", input.lotId);
-  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Marked shut out", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
+  await supabase.from("auction_lots").update(patch).eq("id", input.lotId).eq("sale_id", input.saleId);
+  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action, detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
   revalidatePath(`${AUC}/${input.saleId}`);
 }
 
-export async function markMissing(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
-  const { supabase, profile } = await requireProfile(roles());
-  await supabase.from("auction_lots").update({ state: "missing" }).eq("id", input.lotId);
-  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Marked missing", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
-  revalidatePath(`${AUC}/${input.saleId}`);
+export async function markShutout(input: OrphanStateInput) {
+  await setOrphanState(input, { state: "shutout", shutout_reason: "Marked shut out" }, "Marked shut out");
 }
 
-export async function markPending(input: { saleId: string; lotId: string; invoiceNo: string; orphanGrade: string; orphanNetWt: number; reason?: string }) {
-  const { supabase, profile } = await requireProfile(roles());
-  await supabase.from("auction_lots").update({ state: "pending", shutout_reason: null }).eq("id", input.lotId);
-  await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Left unresolved", detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
-  revalidatePath(`${AUC}/${input.saleId}`);
+export async function markMissing(input: OrphanStateInput) {
+  await setOrphanState(input, { state: "missing" }, "Marked missing");
+}
+
+export async function markPending(input: OrphanStateInput) {
+  await setOrphanState(input, { state: "pending", shutout_reason: null }, "Left unresolved");
 }
 
 export async function rejectCandidate(input: { saleId: string; lotId: string; invoiceNo: string; candidateLotNo: string | null }) {
@@ -287,18 +293,9 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
 export async function confirmBankMatches(saleId: string, importId: string) {
   const { supabase, profile } = await requireProfile(roles());
   const detail = `${AUC}/${saleId}`;
-  const { data: settlements } = await supabase.from("settlements").select("id, contract_no, total_net_proceeds, prompt_date").eq("sale_id", saleId);
-  const { data: credits } = await supabase.from("bank_txns").select("id, txn_date, credit, description, cheque_no").eq("import_batch_id", importId).is("matched_settlement_id", null);
-  if (!settlements?.length || !credits?.length) redirect(`${detail}/bank/${importId}`);
-  const { data: vatForSale } = await supabase.from("sale_lines").select("vat_amount, on_guarantee").eq("sale_id", saleId);
-  const totalGuaranteed = (vatForSale ?? []).filter(v => v.on_guarantee).reduce((s, v) => s + Number(v.vat_amount ?? 0), 0);
-  const recon = reconcileBank(
-    settlements!.map(st => ({ settlementId: st.id as string, contractNo: st.contract_no as string, totalNetProceeds: Number(st.total_net_proceeds), guaranteedVat: totalGuaranteed, promptDate: (st.prompt_date as string) ?? "" })),
-    credits!.map(c => ({ txnId: c.id as string, txnDate: c.txn_date as string, credit: Number(c.credit), description: (c.description as string) ?? "", chequeNo: c.cheque_no as string | null })),
-  );
-  for (const m of recon.matches) await supabase.from("bank_txns").update({ matched_settlement_id: m.settlementId, match_status: "matched" }).eq("id", m.bankTxnId);
-  if (recon.matches.length > 0) await writeAudit(supabase, profile.factory_id, { saleId, action: "Bank auto-matched", detail: `${recon.matches.length} credits matched`, actor: profile.name });
-  redirect(`${detail}/bank/${importId}?notice=Applied ${recon.matches.length} match(es).`);
+  const applied = await autoMatchBank(supabase, saleId, importId);
+  if (applied > 0) await writeAudit(supabase, profile.factory_id, { saleId, action: "Bank auto-matched", detail: `${applied} credits matched`, actor: profile.name });
+  redirect(`${detail}/bank/${importId}?notice=${encodeURIComponent(`Applied ${applied} match(es).`)}`);
 }
 
 export async function linkBankCredit(input: { saleId: string; importId: string; txnId: string; settlementId: string; contractNo: string; credit: number; confidence: number; reason?: string }) {
@@ -320,52 +317,12 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   const { supabase, profile } = await requireProfile(roles());
   const detail = `${AUC}/${saleId}`;
   const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return back(detail, "Choose an Acknowledgement PDF to upload.");
-
-  let text: string;
-  try {
-    const pdf = await getDocumentProxy(new Uint8Array(await file.arrayBuffer()));
-    const extracted = await extractText(pdf, { mergePages: true });
-    text = Array.isArray(extracted.text) ? extracted.text.join(" ") : extracted.text;
-  } catch {
-    return back(detail, "Could not read that PDF — is it a valid file?");
-  }
+  const text = await extractPdf(file);
+  if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
   if (!isAcknowledgement(text)) return back(detail, "That doesn't look like an Acknowledgement document.");
-
   const parsed = parseAcknowledgement(text);
-  const contentHash = createHash("sha256").update(text).digest("hex");
-
-  // Idempotent on (factory_id, content_hash): re-uploading the same file re-stages,
-  // never double-writes.
-  const { data: existing } = await supabase
-    .from("doc_imports")
-    .select("id")
-    .eq("content_hash", contentHash)
-    .maybeSingle();
-
-  let importId = existing?.id as string | undefined;
-  if (importId) {
-    await supabase
-      .from("doc_imports")
-      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name })
-      .eq("id", importId);
-  } else {
-    const { data, error } = await supabase
-      .from("doc_imports")
-      .insert({
-        factory_id: profile.factory_id,
-        doc_type: "acknowledgement",
-        source_filename: file.name,
-        content_hash: contentHash,
-        parsed_json: parsed,
-        status: "parsed",
-        sale_id: saleId,
-      })
-      .select("id")
-      .single();
-    if (error || !data) return back(detail, error?.message ?? "Could not stage the document.");
-    importId = data.id;
-  }
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", (file as File).name, text, parsed);
+  if (!importId) return back(detail, "Could not stage the document.");
   redirect(`${detail}/ack/${importId}`);
 }
 
@@ -461,12 +418,14 @@ const toISODate = (d: string | null): string | null => {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 };
 
-// Parse → stage into doc_imports (idempotent on content hash). Returns the import id.
+// Parse → stage into doc_imports (idempotent on factory_id + content hash).
+// Returns the import id. The single staging path for every document type — the
+// four ingest flows used to each carry their own near-identical copy.
 async function stageImport(
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  supabase: Supa,
   factoryId: string,
   saleId: string,
-  docType: "valuation" | "contract",
+  docType: DocType,
   filename: string,
   text: string,
   parsed: unknown,
@@ -475,6 +434,7 @@ async function stageImport(
   const { data: existing } = await supabase
     .from("doc_imports")
     .select("id")
+    .eq("factory_id", factoryId)
     .eq("content_hash", contentHash)
     .maybeSingle();
   if (existing?.id) {
@@ -736,53 +696,26 @@ export async function rejectImport(importId: string, saleId: string) {
 }
 
 // ────────── Bank CSV import (A4) ──────────
-export async function ingestBankCsv(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
-  const detail = `${AUC}/${saleId}`;
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return back(detail, "Choose a bank-statement CSV to upload.");
-
-  const text = await file.text();
-  if (!isBankCsv(text)) return back(detail, "That doesn't look like a bank-statement CSV.");
-
+// Stage a bank CSV and (re)write its transactions, keyed to the doc_import id.
+// The review page reads bank_txns by import_batch_id = importId, so keying on the
+// doc_import id is what makes them visible — and makes a re-upload replace the
+// previous batch instead of leaving orphaned duplicates. Optionally auto-matches.
+async function stageBankCsv(
+  supabase: Supa,
+  factoryId: string,
+  saleId: string,
+  file: File,
+  text: string,
+  autoMatch: boolean,
+): Promise<{ importId: string; count: number } | { error: string }> {
   const parsed = parseBankCsv(text);
-  const contentHash = createHash("sha256").update(text).digest("hex");
-  const importBatchId = crypto.randomUUID();
+  const importId = await stageImport(supabase, factoryId, saleId, "bank_csv", file.name, text, parsed);
+  if (!importId) return { error: "Could not stage the CSV." };
 
-  // Stage: upsert by content_hash (idempotent re-upload).
-  const { data: existing } = await supabase
-    .from("doc_imports")
-    .select("id")
-    .eq("content_hash", contentHash)
-    .maybeSingle();
-
-  let importId: string;
-  if (existing?.id) {
-    importId = existing.id as string;
-    await supabase
-      .from("doc_imports")
-      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name })
-      .eq("id", importId);
-  } else {
-    const { data, error } = await supabase
-      .from("doc_imports")
-      .insert({
-        factory_id: profile.factory_id, doc_type: "bank_csv",
-        source_filename: file.name, content_hash: contentHash,
-        parsed_json: parsed, status: "parsed", sale_id: saleId,
-      })
-      .select("id")
-      .single();
-    if (error || !data) return back(detail, error?.message ?? "Could not stage the CSV.");
-    importId = data.id;
-  }
-
-  // Write staged transactions (idempotent per batch — delete old ones from this hash first).
-  await supabase.from("bank_txns").delete().eq("import_batch_id", importBatchId);
-
+  await supabase.from("bank_txns").delete().eq("import_batch_id", importId);
   const { error: insErr } = await supabase.from("bank_txns").insert(
     parsed.transactions.map((t) => ({
-      factory_id: profile.factory_id,
+      factory_id: factoryId,
       txn_date: t.txnDate,
       description: t.description,
       debit: t.debit.toFixed(2),
@@ -790,74 +723,74 @@ export async function ingestBankCsv(saleId: string, formData: FormData) {
       running_balance: t.runningBalance?.toFixed(2) ?? null,
       cheque_no: t.chequeNo,
       raw_line: t.rawLine,
-      import_batch_id: importBatchId,
+      import_batch_id: importId,
     })),
   );
-  if (insErr) return back(detail, insErr.message);
+  if (insErr) return { error: insErr.message };
 
-  // Run bank reconciliation against pending settlements.
+  if (autoMatch) await autoMatchBank(supabase, saleId, importId);
+  return { importId, count: parsed.transactions.length };
+}
+
+// Reconcile a batch's still-unmatched credits against the sale's settlements and
+// apply the high-confidence matches. Returns how many were applied. Shared by the
+// ingest path and the "apply suggested matches" action.
+async function autoMatchBank(supabase: Supa, saleId: string, importId: string): Promise<number> {
   const { data: settlements } = await supabase
     .from("settlements")
-    .select("id, contract_no, total_net_proceeds, output_vat, prompt_date")
+    .select("id, contract_no, total_net_proceeds, prompt_date")
     .eq("sale_id", saleId);
   const { data: credits } = await supabase
     .from("bank_txns")
     .select("id, txn_date, credit, description, cheque_no")
-    .eq("import_batch_id", importBatchId);
-
-  if (settlements?.length && credits?.length) {
-    const { data: vatForSale } = await supabase
-      .from("sale_lines")
-      .select("vat_amount, on_guarantee")
-      .eq("sale_id", saleId);
-    const guaranteedVatPerContract = new Map<string, number>();
-    for (const v of vatForSale ?? []) {
-      if (v.on_guarantee) guaranteedVatPerContract.set(
-        "",  // aggregate per sale — gross simplification; real mapping needs contract_no on sale_lines
-        (guaranteedVatPerContract.get("") ?? 0) + Number(v.vat_amount),
-      );
-    }
-    const totalGuaranteed = guaranteedVatPerContract.get("") ?? 0;
-
-    const recon = reconcileBank(
-      settlements.map((st) => ({
-        settlementId: st.id as string,
-        contractNo: st.contract_no as string,
-        totalNetProceeds: Number(st.total_net_proceeds),
-        guaranteedVat: totalGuaranteed, // aggregate; per-contract when sale_lines carry contract_no
-        promptDate: (st.prompt_date as string) ?? "",
-      })),
-      (credits as {
-        id: string; txn_date: string; credit: string; description: string | null; cheque_no: string | null;
-      }[]).map((c) => ({
-        txnId: c.id,
-        txnDate: c.txn_date,
-        credit: Number(c.credit),
-        description: c.description ?? "",
-        chequeNo: c.cheque_no,
-      })),
-    );
-
-    // Apply matches
-    for (const m of recon.matches) {
-      await supabase.from("bank_txns").update({
-        matched_settlement_id: m.settlementId,
-        match_status: "matched",
-      }).eq("id", m.bankTxnId);
-    }
-  }
-
-  revalidatePath(detail);
-  redirect(
-    `${detail}?notice=${encodeURIComponent(
-      `Imported ${parsed.transactions.length} bank transaction(s).`,
-    )}`,
+    .eq("import_batch_id", importId)
+    .is("matched_settlement_id", null);
+  if (!settlements?.length || !credits?.length) return 0;
+  const { data: vatForSale } = await supabase
+    .from("sale_lines")
+    .select("vat_amount, on_guarantee")
+    .eq("sale_id", saleId);
+  const guaranteedVat = (vatForSale ?? []).filter((v) => v.on_guarantee).reduce((s, v) => s + Number(v.vat_amount ?? 0), 0);
+  const recon = reconcileBank(
+    settlements.map((st) => ({
+      settlementId: st.id as string,
+      contractNo: st.contract_no as string,
+      totalNetProceeds: Number(st.total_net_proceeds),
+      guaranteedVat,
+      promptDate: (st.prompt_date as string) ?? "",
+    })),
+    credits.map((c) => ({
+      txnId: c.id as string,
+      txnDate: c.txn_date as string,
+      credit: Number(c.credit),
+      description: (c.description as string) ?? "",
+      chequeNo: c.cheque_no as string | null,
+    })),
   );
+  await Promise.all(
+    recon.matches.map((m) =>
+      supabase.from("bank_txns").update({ matched_settlement_id: m.settlementId, match_status: "matched" }).eq("id", m.bankTxnId),
+    ),
+  );
+  return recon.matches.length;
+}
+
+export async function ingestBankCsv(saleId: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(roles());
+  const detail = `${AUC}/${saleId}`;
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return back(detail, "Choose a bank-statement CSV to upload.");
+  const text = await file.text();
+  if (!isBankCsv(text)) return back(detail, "That doesn't look like a bank-statement CSV.");
+  const staged = await stageBankCsv(supabase, profile.factory_id, saleId, file, text, true);
+  if ("error" in staged) return back(detail, staged.error);
+  revalidatePath(detail);
+  redirect(`${detail}?notice=${encodeURIComponent(`Imported ${staged.count} bank transaction(s).`)}`);
 }
 
 // ─── Report Analyser: auto-detect sale from document ───
 async function resolveSale(
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  supabase: Supa,
   factoryId: string,
   saleNo: string | null,
 ): Promise<string | null> {
@@ -883,29 +816,14 @@ async function resolveSale(
 export async function ingestAckAuto(formData: FormData) {
   const { supabase, profile } = await requireProfile(roles());
   const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return back(REP, "Choose an Acknowledgement PDF.");
-  let text: string;
-  try {
-    const pdf = await getDocumentProxy(new Uint8Array(await file.arrayBuffer()));
-    const extracted = await extractText(pdf, { mergePages: true });
-    text = Array.isArray(extracted.text) ? extracted.text.join(" ") : extracted.text;
-  } catch { return back(REP, "Could not read that PDF."); }
+  const text = await extractPdf(file);
+  if (text === null) return back(REP, "Choose a valid Acknowledgement PDF.");
   if (!isAcknowledgement(text)) return back(REP, "Not a valid Acknowledgement.");
   const parsed = parseAcknowledgement(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const contentHash = createHash("sha256").update(text).digest("hex");
-  const { data: existing } = await supabase.from("doc_imports").select("id").eq("content_hash", contentHash).maybeSingle();
-  let importId = existing?.id as string | undefined;
-  if (importId) {
-    await supabase.from("doc_imports").update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name }).eq("id", importId);
-  } else {
-    const { data, error } = await supabase.from("doc_imports").insert({
-      factory_id: profile.factory_id, doc_type: "acknowledgement", source_filename: file.name, content_hash: contentHash, parsed_json: parsed, status: "parsed", sale_id: saleId,
-    }).select("id").single();
-    if (error || !data) return back(REP, error?.message ?? "Could not stage.");
-    importId = data.id;
-  }
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", (file as File).name, text, parsed);
+  if (!importId) return back(REP, "Could not stage.");
   redirect(`${AUC}/${saleId}/ack/${importId}`);
 }
 
@@ -943,28 +861,11 @@ export async function ingestBankAuto(formData: FormData) {
   if (!(file instanceof File) || file.size === 0) return back(REP, "Choose a bank CSV.");
   const text = await file.text();
   if (!isBankCsv(text)) return back(REP, "Not a valid bank CSV.");
-  const parsed = parseBankCsv(text);
-  // Bank CSVs don't carry sale_no; try the most recent dispatched sale.
+  // Bank CSVs don't carry sale_no; attach to the most recent dispatch.
   const { data: lastSale } = await supabase.from("auction_sales").select("id").eq("factory_id", profile.factory_id).order("created_at", { ascending: false }).limit(1).single();
   const saleId = (lastSale?.id as string) ?? null;
   if (!saleId) return back(REP, "No dispatch found. Create one first.");
-  const importBatchId = crypto.randomUUID();
-  const contentHash = createHash("sha256").update(text).digest("hex");
-  const { data: existing } = await supabase.from("doc_imports").select("id").eq("content_hash", contentHash).maybeSingle();
-  let importId: string;
-  if (existing?.id) {
-    importId = existing.id as string;
-    await supabase.from("doc_imports").update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: file.name }).eq("id", importId);
-  } else {
-    const { data, error } = await supabase.from("doc_imports").insert({
-      factory_id: profile.factory_id, doc_type: "bank_csv", source_filename: file.name, content_hash: contentHash, parsed_json: parsed, status: "parsed", sale_id: saleId,
-    }).select("id").single();
-    if (error || !data) return back(REP, error?.message ?? "Could not stage.");
-    importId = data.id;
-  }
-  await supabase.from("bank_txns").delete().eq("import_batch_id", importBatchId);
-  await supabase.from("bank_txns").insert(parsed.transactions.map((t) => ({
-    factory_id: profile.factory_id, txn_date: t.txnDate, description: t.description, debit: t.debit.toFixed(2), credit: t.credit.toFixed(2), running_balance: t.runningBalance?.toFixed(2) ?? null, cheque_no: t.chequeNo, raw_line: t.rawLine, import_batch_id: importBatchId,
-  })));
-  redirect(`${AUC}/${saleId}/bank/${importId}`);
+  const staged = await stageBankCsv(supabase, profile.factory_id, saleId, file, text, false);
+  if ("error" in staged) return back(REP, staged.error);
+  redirect(`${AUC}/${saleId}/bank/${staged.importId}`);
 }

@@ -11,19 +11,7 @@ import {
 import { DispatchLotForm } from "./dispatch-lot-form";
 import { DispatchedLotsTable } from "./dispatched-lots-table";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
-
-// Simplified state buckets for cleaner display.
-const STATE_BUCKET: Record<string, { label: string; style: string }> = {
-  dispatched:  { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
-  pending:     { label: "Pending",  style: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400" },
-  catalogued:  { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
-  valued:      { label: "Active",   style: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400" },
-  sold:        { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
-  settled:     { label: "Sold",     style: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" },
-  shutout:     { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
-  withdrawn:   { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
-  "re-print":  { label: "Issue",    style: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400" },
-};
+import { stateBucket } from "../state-buckets";
 
 export default async function SaleDetailPage({
   params,
@@ -94,10 +82,10 @@ export default async function SaleDetailPage({
             {sale.prompt_date ? ` · prompt ${sale.prompt_date}` : ""}
             {" · "}
             <span
-              className={`rounded-full px-2 py-0.5 text-xs ${STATE_BUCKET[sale.status]?.style ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
+              className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(sale.status).style}`}
               title={`Actual status: ${sale.status}`}
             >
-              {STATE_BUCKET[sale.status]?.label ?? sale.status}
+              {stateBucket(sale.status).label}
             </span>
           </p>
         </div>
