@@ -1,10 +1,22 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export function IntakeChart({ data }: { data: { day: string; kg: number }[] }) {
   const { theme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  // Avoid hydration mismatch — recharts renders differently between SSR and
+  // client (SVG dimensions, theme-dependent colors). Render a placeholder
+  // during SSR; the real chart appears after mount.
+  if (!mounted) {
+    return <div className="h-60 w-full rounded-lg bg-stone-100 dark:bg-stone-800" />;
+  }
+
   const isDark = theme === "dark";
 
   return (
