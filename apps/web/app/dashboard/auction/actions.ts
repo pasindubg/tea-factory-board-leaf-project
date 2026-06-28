@@ -354,31 +354,37 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   const markCodes = [...new Set(parsed.lots.map((l) => l.markCode))];
   const { data: existingMarks } = await supabase.from("marks").select("id, code").in("code", markCodes);
   const markByCode = new Map<string, string>((existingMarks ?? []).map((m) => [m.code as string, m.id as string]));
-  for (const code of markCodes) {
-    if (markByCode.has(code)) continue;
-    const name = parsed.lots.find((l) => l.markCode === code)?.markName ?? code;
-    const { data: m } = await supabase
+  const newCodes = markCodes.filter((code) => !markByCode.has(code));
+  if (newCodes.length > 0) {
+    const { data: created } = await supabase
       .from("marks")
-      .insert({ factory_id: profile.factory_id, code, name })
-      .select("id")
-      .single();
-    if (m) markByCode.set(code, m.id as string);
+      .insert(newCodes.map((code) => ({
+        factory_id: profile.factory_id,
+        code,
+        name: parsed.lots.find((l) => l.markCode === code)?.markName ?? code,
+      })))
+      .select("id, code");
+    for (const m of created ?? []) markByCode.set(m.code as string, m.id as string);
   }
 
-  // Apply cataloguing to every matched invoiced lot.
-  for (const row of recon.rows) {
-    if (!row.invoiced || (row.status !== "catalogued" && row.status !== "shutout")) continue;
-    await supabase
-      .from("auction_lots")
-      .update({
-        lot_no: row.ack?.lotNo ?? null,
-        mark_id: row.ack ? markByCode.get(row.ack.markCode) ?? null : null,
-        state: row.status,
-        shutout_reason:
-          row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
-      })
-      .eq("id", row.invoiced.id);
-  }
+  // Apply cataloguing to every matched invoiced lot (in parallel — each touches a
+  // distinct lot, then the sweep below moves whatever's left).
+  await Promise.all(
+    recon.rows
+      .filter((row) => row.invoiced && (row.status === "catalogued" || row.status === "shutout"))
+      .map((row) =>
+        supabase
+          .from("auction_lots")
+          .update({
+            lot_no: row.ack?.lotNo ?? null,
+            mark_id: row.ack ? markByCode.get(row.ack.markCode) ?? null : null,
+            state: row.status,
+            shutout_reason:
+              row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
+          })
+          .eq("id", row.invoiced!.id),
+      ),
+  );
 
   // Remaining dispatched lots not in this ack → pending (may be in a later ack).
   await supabase.from("auction_lots").update({ state: "pending" }).eq("sale_id", saleId).eq("state", "invoiced");
@@ -483,23 +489,22 @@ export async function confirmValuation(importId: string, saleId: string) {
   const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
   const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
 
-  let applied = 0;
-  for (const v of parsed.lots) {
-    const lotId = lotByInv.get(v.invoiceNo);
-    if (!lotId) continue;
-    await supabase.from("valuations").upsert(
-      {
-        factory_id: profile.factory_id,
-        lot_id: lotId,
-        price_min: v.priceMin,
-        price_max: v.priceMax,
-        projected_proceeds: v.projectedProceeds,
-        tasting_note: v.tastingNote,
-      },
-      { onConflict: "lot_id" },
-    );
-    await supabase.from("auction_lots").update({ state: "valued" }).eq("id", lotId).neq("state", "shutout");
-    applied++;
+  // One valuation per lot (last line wins, as the sequential upsert did); flip
+  // matched lots to "valued" in a single statement.
+  const valued = parsed.lots.filter((v) => lotByInv.has(v.invoiceNo));
+  const applied = valued.length;
+  const valuationByLot = new Map<string, Record<string, unknown>>();
+  for (const v of valued) {
+    const lotId = lotByInv.get(v.invoiceNo)!;
+    valuationByLot.set(lotId, {
+      factory_id: profile.factory_id, lot_id: lotId,
+      price_min: v.priceMin, price_max: v.priceMax,
+      projected_proceeds: v.projectedProceeds, tasting_note: v.tastingNote,
+    });
+  }
+  if (valuationByLot.size > 0) {
+    await supabase.from("valuations").upsert([...valuationByLot.values()], { onConflict: "lot_id" });
+    await supabase.from("auction_lots").update({ state: "valued" }).in("id", [...valuationByLot.keys()]).neq("state", "shutout");
   }
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
   await supabase.from("auction_sales").update({ status: "valued" }).eq("id", saleId);
@@ -545,24 +550,24 @@ export async function confirmContract(importId: string, saleId: string) {
     for (const b of upserted ?? []) buyerByName.set(b.name as string, b.id as string);
   }
 
-  // ── Sale lines ──
-  let applied = 0;
-  for (const line of parsed.lines) {
-    const lot = lotByInv.get(line.invoiceNo);
-    if (!lot) continue;
-    await supabase.from("sale_lines").upsert(
-      {
-        factory_id: profile.factory_id, sale_id: saleId, lot_id: lot.id,
-        buyer_id: buyerByName.get(line.buyerName) ?? null,
-        gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
-        net_wt: line.netWt, price_per_kg: line.pricePerKg,
-        proceeds: line.proceeds, vat_amount: line.vatAmount,
-        on_guarantee: line.onGuarantee,
-      },
-      { onConflict: "lot_id" },
-    );
-    await supabase.from("auction_lots").update({ state: "sold" }).eq("id", lot.id);
-    applied++;
+  // ── Sale lines (one row per lot; last contract line wins, as before) ──
+  const matchedLines = parsed.lines.filter((line) => lotByInv.has(line.invoiceNo));
+  const applied = matchedLines.length;
+  const saleLineByLot = new Map<string, Record<string, unknown>>();
+  for (const line of matchedLines) {
+    const lot = lotByInv.get(line.invoiceNo)!;
+    saleLineByLot.set(lot.id, {
+      factory_id: profile.factory_id, sale_id: saleId, lot_id: lot.id,
+      buyer_id: buyerByName.get(line.buyerName) ?? null,
+      gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
+      net_wt: line.netWt, price_per_kg: line.pricePerKg,
+      proceeds: line.proceeds, vat_amount: line.vatAmount,
+      on_guarantee: line.onGuarantee,
+    });
+  }
+  if (saleLineByLot.size > 0) {
+    await supabase.from("sale_lines").upsert([...saleLineByLot.values()], { onConflict: "lot_id" });
+    await supabase.from("auction_lots").update({ state: "sold" }).in("id", [...saleLineByLot.keys()]);
   }
 
   // ── Settlements per contract (A3) ──
@@ -585,59 +590,64 @@ export async function confirmContract(importId: string, saleId: string) {
       .select("id, lot_id, invoice_no, proceeds, vat_amount, on_guarantee")
       .eq("sale_id", saleId);
 
-    for (const c of parsed.contracts) {
-      const contractLines = parsed.lines.filter((l) => l.contractNo === c.contractNo);
-      const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
-      const lotCount = contractLines.length;
-      const netKg = contractLines.reduce((s, l) => s + l.netWt, 0);
+    if (rateCard) {
+      const rates = {
+        insurancePerKg: Number(rateCard.insurance_per_kg),
+        publicSaleExPerLot: Number(rateCard.public_sale_ex_per_lot),
+        brokeragePct: Number(rateCard.brokerage_pct),
+        handlingPerKg: Number(rateCard.handling_per_kg),
+        documentationPerLot: Number(rateCard.documentation_per_lot),
+        eplatformPerKg: Number(rateCard.eplatform_per_kg),
+        govtReliefLoan: Number(rateCard.govt_relief_loan),
+        chargesVatPct: Number(rateCard.charges_vat_pct),
+        proceedsVatPct: Number(rateCard.proceeds_vat_pct),
+      };
+      // Compute every contract's settlement first (pure), then write all
+      // settlements and all their charge lines in two batched upserts.
+      const computed = parsed.contracts.map((c) => {
+        const contractLines = parsed.lines.filter((l) => l.contractNo === c.contractNo);
+        const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
+        const s = computeSettlement(rates, {
+          contractNo: c.contractNo,
+          netKg: contractLines.reduce((sum, l) => sum + l.netWt, 0),
+          lotCount: contractLines.length,
+          proceedsTotal,
+        });
+        return { contractNo: c.contractNo, proceedsTotal, s };
+      });
 
-      if (rateCard) {
-        const s = computeSettlement(
-          {
-            insurancePerKg: Number(rateCard.insurance_per_kg),
-            publicSaleExPerLot: Number(rateCard.public_sale_ex_per_lot),
-            brokeragePct: Number(rateCard.brokerage_pct),
-            handlingPerKg: Number(rateCard.handling_per_kg),
-            documentationPerLot: Number(rateCard.documentation_per_lot),
-            eplatformPerKg: Number(rateCard.eplatform_per_kg),
-            govtReliefLoan: Number(rateCard.govt_relief_loan),
-            chargesVatPct: Number(rateCard.charges_vat_pct),
-            proceedsVatPct: Number(rateCard.proceeds_vat_pct),
-          },
-          { contractNo: c.contractNo, netKg, lotCount, proceedsTotal },
-        );
+      const { data: upsertedSettlements } = await supabase
+        .from("settlements")
+        .upsert(
+          computed.map(({ contractNo, proceedsTotal, s }) => ({
+            factory_id: profile.factory_id, sale_id: saleId,
+            contract_no: contractNo, proceeds_total: proceedsTotal.toFixed(2),
+            total_deductions: s.totalDeductions.toFixed(2),
+            net_proceeds: s.netProceeds.toFixed(2),
+            output_vat: s.outputVat.toFixed(2),
+            total_net_proceeds: s.totalNetProceeds.toFixed(2),
+            prompt_date: toISODate(parsed.promptDate),
+          })),
+          { onConflict: "factory_id,contract_no" },
+        )
+        .select("id, contract_no");
+      const settlementIdByContract = new Map<string, string>(
+        (upsertedSettlements ?? []).map((r) => [r.contract_no as string, r.id as string]),
+      );
+      settlementCount = settlementIdByContract.size;
 
-        const { data: st } = await supabase
-          .from("settlements")
-          .upsert(
-            {
-              factory_id: profile.factory_id, sale_id: saleId,
-              contract_no: c.contractNo, proceeds_total: proceedsTotal.toFixed(2),
-              total_deductions: s.totalDeductions.toFixed(2),
-              net_proceeds: s.netProceeds.toFixed(2),
-              output_vat: s.outputVat.toFixed(2),
-              total_net_proceeds: s.totalNetProceeds.toFixed(2),
-              prompt_date: toISODate(parsed.promptDate),
-            },
-            { onConflict: "factory_id,contract_no" },
-          )
-          .select("id")
-          .single();
-
-        if (st) {
-          for (const ch of s.charges) {
-            await supabase.from("settlement_charges").upsert(
-              {
-                factory_id: profile.factory_id, settlement_id: st.id,
-                code: ch.code, label: ch.label, basis: ch.basis,
-                rate: ch.rate.toFixed(4), amount: ch.amount.toFixed(2),
-                sort_order: String(ch.sortOrder),
-              },
-              { onConflict: "settlement_id,code" },
-            );
-          }
-          settlementCount++;
-        }
+      const chargeRows = computed.flatMap(({ contractNo, s }) => {
+        const settlementId = settlementIdByContract.get(contractNo);
+        if (!settlementId) return [];
+        return s.charges.map((ch) => ({
+          factory_id: profile.factory_id, settlement_id: settlementId,
+          code: ch.code, label: ch.label, basis: ch.basis,
+          rate: ch.rate.toFixed(4), amount: ch.amount.toFixed(2),
+          sort_order: String(ch.sortOrder),
+        }));
+      });
+      if (chargeRows.length > 0) {
+        await supabase.from("settlement_charges").upsert(chargeRows, { onConflict: "settlement_id,code" });
       }
     }
 
@@ -661,13 +671,13 @@ export async function confirmContract(importId: string, saleId: string) {
 
       const recon = reconcileVat(vatInputs, inputVat);
 
-      for (const l of recon.lines) {
+      if (recon.lines.length > 0) {
         await supabase.from("vat_ledger").upsert(
-          {
+          recon.lines.map((l) => ({
             factory_id: profile.factory_id, sale_line_id: l.saleLineId,
             flow: l.flow, vat_amount: l.vatAmount.toFixed(2), mode: l.mode,
             status: "pending",
-          },
+          })),
           { onConflict: "sale_line_id" },
         );
       }
