@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { computeStatement, type AdjustmentInput, type CalcInput } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
+import { friendlyError } from "@/lib/errors";
 
 const PAY = "/dashboard/payments";
 const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
@@ -268,6 +269,9 @@ export async function generatePayments(formData: FormData) {
         ? Number(a.period_year) === year && Number(a.period_month) === month
         : a.occurred_on >= startISO.slice(0, 10) && a.occurred_on < endISO.slice(0, 10);
     if (!inPeriod) continue;
+    // Skip water-penalty adjustments — per-delivery water penalties are
+    // computed from weighing.water_penalty flags; manual ones would double-count.
+    if (a.kind === "water_penalty") continue;
     (adjBySupplier.get(a.supplier_id) ?? adjBySupplier.set(a.supplier_id, []).get(a.supplier_id)!).push(a);
   }
   const weighBySupplier = new Map<string, WeighRow[]>();

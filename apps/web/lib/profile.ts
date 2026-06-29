@@ -28,7 +28,11 @@ export async function requireProfile(allowed: readonly Role[] = MANAGEMENT_ROLES
     // /login redirect below instead of surfacing a scary error page.
     if (error && error.name !== "AuthSessionMissingError") throw error;
     user = data.user;
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNREFUSED")) {
+      throw new Error(`fetch failed: ${msg}`);
+    }
     throw new Error("Could not verify your session right now — please retry.");
   }
   if (!user) redirect("/login");
@@ -67,7 +71,11 @@ export async function requireModuleAccess(moduleKey: string) {
     // /login redirect below instead of surfacing a scary error page.
     if (error && error.name !== "AuthSessionMissingError") throw error;
     user = data.user;
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNREFUSED")) {
+      throw new Error(`fetch failed: ${msg}`);
+    }
     throw new Error("Could not verify your session right now — please retry.");
   }
   if (!user) redirect("/login");

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { MONTHS } from "@/lib/money";
 
-const inputClass = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-green-600 focus:outline-none";
+const inputClass = "rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
 
 export function PaymentsFilter({ year, month }: { year: number; month: number }) {
   const router = useRouter();
@@ -40,7 +40,7 @@ export function PaymentsFilter({ year, month }: { year: number; month: number })
       </label>
       <button
         disabled={isPending}
-        className="rounded-md border border-stone-300 px-4 py-1.5 text-sm hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isPending ? "Loading…" : "View"}
       </button>

@@ -47,34 +47,34 @@ export default async function DashboardPage() {
   return (
     <div>
       <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p className="mt-1 text-sm text-stone-500">{new Date().toLocaleDateString([], { dateStyle: "full" })}</p>
+      <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{new Date().toLocaleDateString([], { dateStyle: "full" })}</p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <p className="text-sm text-stone-500">Today&apos;s intake</p>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+          <p className="text-sm text-stone-500 dark:text-stone-400">Today&apos;s intake</p>
           <p className="mt-2 text-2xl font-semibold">
-            {todayTotal.toFixed(2)} <span className="text-base font-normal text-stone-400">kg</span>
+            {todayTotal.toFixed(2)} <span className="text-base font-normal text-stone-400 dark:text-stone-500">kg</span>
           </p>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <p className="text-sm text-stone-500">Weighings today</p>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+          <p className="text-sm text-stone-500 dark:text-stone-400">Weighings today</p>
           <p className="mt-2 text-2xl font-semibold">{(todayWeighings ?? []).length}</p>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <p className="text-sm text-stone-500">Active suppliers</p>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+          <p className="text-sm text-stone-500 dark:text-stone-400">Active suppliers</p>
           <p className="mt-2 text-2xl font-semibold">{supplierCount ?? 0}</p>
         </div>
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <div className="rounded-xl border border-stone-200 bg-white p-5 lg:col-span-2">
-          <h2 className="text-sm font-medium text-stone-700">Intake — last 7 days</h2>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5 lg:col-span-2">
+          <h2 className="text-sm font-medium text-stone-700 dark:text-stone-300">Intake — last 7 days</h2>
           <div className="mt-4">
             <IntakeChart data={chartData} />
           </div>
         </div>
-        <div className="rounded-xl border border-stone-200 bg-white p-5">
-          <h2 className="text-sm font-medium text-stone-700">Today by collector</h2>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+          <h2 className="text-sm font-medium text-stone-700 dark:text-stone-300">Today by collector</h2>
           <ul className="mt-4 space-y-2">
             {[...byCollector.entries()].map(([name, kg]) => (
               <li key={name} className="flex items-center justify-between text-sm">
@@ -82,24 +82,24 @@ export default async function DashboardPage() {
                 <span className="font-medium tabular-nums">{kg.toFixed(2)} kg</span>
               </li>
             ))}
-            {byCollector.size === 0 && <li className="text-sm text-stone-400">No intake recorded today.</li>}
+            {byCollector.size === 0 && <li className="text-sm text-stone-400 dark:text-stone-500">No intake recorded today.</li>}
           </ul>
         </div>
       </div>
 
-      <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
+      <div className="mt-6 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-stone-700">Recent weighings</h2>
-          <a href="/dashboard/weighings" className="text-sm text-green-700 hover:underline">
+          <h2 className="text-sm font-medium text-stone-700 dark:text-stone-300">Recent weighings</h2>
+          <a href="/dashboard/weighings" className="text-sm text-green-700 dark:text-green-400 hover:underline">
             View all
           </a>
         </div>
-        <ul className="mt-4 divide-y divide-stone-100">
+        <ul className="mt-4 divide-y divide-stone-100 dark:divide-stone-800">
           {(recent ?? []).map((w) => (
             <li key={w.id} className="flex items-center justify-between py-2 text-sm">
               <span>
                 <span className="font-medium">{(w.suppliers as unknown as { name: string } | null)?.name ?? "—"}</span>
-                <span className="text-stone-400">
+                <span className="text-stone-400 dark:text-stone-500">
                   {" "}
                   · {(w.collectors as unknown as { name: string } | null)?.name ?? "—"} ·{" "}
                   {new Date(w.collected_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
               <span className="font-medium tabular-nums">{Number(w.weight_kg).toFixed(2)} kg</span>
             </li>
           ))}
-          {(recent ?? []).length === 0 && <li className="py-2 text-sm text-stone-400">No weighings yet.</li>}
+          {(recent ?? []).length === 0 && <li className="py-2 text-sm text-stone-400 dark:text-stone-500">No weighings yet.</li>}
         </ul>
       </div>
     </div>

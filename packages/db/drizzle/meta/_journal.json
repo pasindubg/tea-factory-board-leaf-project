@@ -71,6 +71,69 @@
       "when": 1782413097327,
       "tag": "0009_request_type_key_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782503307223,
+      "tag": "0010_add_auction_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782600000000,
+      "tag": "0011_add_auction_valuations",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782700000000,
+      "tag": "0012_auction_settlements_vat_bank",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782800000000,
+      "tag": "0013_status_transition_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782900000000,
+      "tag": "0014_lot_invoices_dispatch_first",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1783000000000,
+      "tag": "0015_auction_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1783200000000,
+      "tag": "0016_dispatch_dates_reprint",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0017_target_sale_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783400000000,
+      "tag": "0018_broker_rates",
+      "breakpoints": true
     }
   ]
 }

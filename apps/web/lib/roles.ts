@@ -17,7 +17,12 @@ export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
  * checkout — until then every factory implicitly has all entitlements, but
  * every module must declare its key from day one.
  */
-export type Entitlement = "leaf-handling" | "production" | "accounts";
+export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
+
+// Sidebar sections. Overview has no group (it sits above the sections); every
+// other module belongs to one. Sections render in this order.
+export type ModuleGroup = "Leaf Handling" | "Sales Handling";
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling"];
 
 export type ModuleDef = {
   key: string;
@@ -25,6 +30,8 @@ export type ModuleDef = {
   label: string;
   roles: readonly Role[];
   entitlement: Entitlement;
+  group?: ModuleGroup;
+  subGroup?: string;
 };
 
 // Default access per module. Per-factory overrides are stored in module_permissions
@@ -43,6 +50,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Weighings",
     roles: ALL_WEB_ROLES,
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "suppliers",
@@ -50,6 +58,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Suppliers",
     roles: ["owner", "manager", "supervisor", "accountant"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "collectors",
@@ -57,6 +66,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Collectors",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "requests",
@@ -64,6 +74,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Requests",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "messages",
@@ -71,6 +82,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Messages",
     roles: ["owner", "manager", "supervisor"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "payments",
@@ -78,6 +90,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Payments",
     roles: ["owner", "manager", "accountant"],
     entitlement: "leaf-handling",
+    group: "Leaf Handling",
   },
   {
     key: "users",
@@ -85,6 +98,56 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Users",
     roles: ["owner"],
     entitlement: "leaf-handling",
+  },
+  {
+    key: "auction-dashboard",
+    href: "/dashboard/auction/dashboard",
+    label: "Dashboard",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-sales",
+    href: "/dashboard/auction/sales",
+    label: "Sales",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-reports",
+    href: "/dashboard/auction/reports",
+    label: "Report Analyser",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-registry",
+    href: "/dashboard/auction/registry",
+    label: "Brokers & marks",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction",
+    href: "/dashboard/auction",
+    label: "Dispatches Overview",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+    subGroup: "Dispatch Handling",
+  },
+  {
+    key: "auction-dispatch-detail",
+    href: "/dashboard/auction",
+    label: "Dispatch Detail",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+    subGroup: "Dispatch Handling",
   },
 ];
 

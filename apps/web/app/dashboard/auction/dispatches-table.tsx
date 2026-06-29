@@ -1,0 +1,247 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { deleteSale, updateSale } from "./actions";
+
+type SaleRow = {
+  id: string;
+  sale_no: string;
+  target_sale_no?: string;
+  dispatch_date?: string;
+  sale_date?: string;
+  prompt_date?: string;
+  status: string;
+  brokers: { name: string } | null;
+};
+
+const STATE_PILL: Record<string, string> = {
+  dispatched: "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700",
+  draft:      "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700",
+  catalogued: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800",
+  valued:     "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",
+  sold:       "bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800",
+  settled:    "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800",
+};
+
+const ALL_STATES = ["dispatched","draft","catalogued","valued","sold","settled"];
+
+export function DispatchesTable({
+  sales,
+  isOwner,
+}: {
+  sales: SaleRow[];
+  isOwner: boolean;
+}) {
+  const router = useRouter();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const allSelected = sales.length > 0 && selected.size === sales.length;
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(sales.map((s) => s.id)));
+  }
+
+  async function deleteSelected() {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} dispatch(es)? This cannot be undone.`)) return;
+    setDeleting(true);
+    for (const id of selected) {
+      try { await deleteSale(id); } catch {}
+    }
+    setDeleting(false);
+    router.refresh();
+  }
+
+  async function deleteOne(id: string) {
+    if (!confirm("Delete this dispatch? This cannot be undone.")) return;
+    await deleteSale(id);
+    router.refresh();
+  }
+
+  async function changeStatus(id: string, newStatus: string) {
+    setSaving(true);
+    const form = new FormData();
+    form.set("status", newStatus);
+    await updateSale(id, form);
+    setSaving(false);
+    router.refresh();
+  }
+
+  async function saveField(id: string, field: string, value: string) {
+    setSaving(true);
+    const form = new FormData();
+    form.set(field, value);
+    await updateSale(id, form);
+    setSaving(false);
+    router.refresh();
+  }
+
+  return (
+    <div className="rounded-xl border border-stone-200 bg-white overflow-x-auto dark:border-stone-700 dark:bg-stone-900">
+      {isOwner && selected.size > 0 && (
+        <div className="flex items-center gap-3 border-b border-stone-100 px-4 py-2.5 dark:border-stone-800">
+          <span className="text-xs font-medium text-stone-600 dark:text-stone-400">{selected.size} selected</span>
+          <button
+            onClick={deleteSelected}
+            disabled={deleting}
+            className="inline-flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" />
+            </svg>
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      )}
+      {saving && (
+        <div className="flex items-center gap-2 border-b border-stone-100 px-4 py-1.5 dark:border-stone-800">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
+          <span className="text-xs text-green-700 dark:text-green-400">Saving…</span>
+        </div>
+      )}
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-stone-200 text-left text-xs font-semibold uppercase tracking-wider text-stone-400 dark:border-stone-700 dark:text-stone-500">
+            {isOwner && (
+              <th className="w-8 px-4 py-3">
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} className="rounded" />
+              </th>
+            )}
+            <th className="px-4 py-3">Dispatch no.</th>
+            <th className="px-4 py-3">Broker</th>
+            <th className="px-4 py-3">Target sale</th>
+            <th className="px-4 py-3">Dispatched</th>
+            <th className="px-4 py-3">Sale date</th>
+            <th className="px-4 py-3">Prompt</th>
+            <th className="px-4 py-3">Status</th>
+            {isOwner && <th className="w-16 px-4 py-3"></th>}
+          </tr>
+        </thead>
+        <tbody>
+          {sales.map((s) => {
+            const broker = s.brokers?.name ?? "—";
+            const isEditing = editingId === s.id;
+            return (
+              <tr
+                key={s.id}
+                className={`border-b border-stone-100 last:border-0 transition-colors dark:border-stone-800 ${
+                  selected.has(s.id) ? "bg-green-50/70 dark:bg-green-950/50" : "hover:bg-stone-50 dark:hover:bg-stone-800/50"
+                }`}
+              >
+                {isOwner && (
+                  <td className="px-4 py-2.5">
+                    <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="rounded" />
+                  </td>
+                )}
+                <td className="px-4 py-2.5 font-medium">
+                  {isEditing ? (
+                    <input
+                      defaultValue={s.sale_no}
+                      onBlur={(e) => {
+                        if (e.target.value !== s.sale_no) saveField(s.id, "sale_no", e.target.value);
+                      }}
+                      className="w-24 rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
+                    />
+                  ) : (
+                    <Link href={`/dashboard/auction/${s.id}`} className="text-green-700 hover:underline dark:text-green-400">
+                      {s.sale_no}
+                    </Link>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-stone-600 dark:text-stone-400">{broker}</td>
+                <td className="px-4 py-2.5">
+                  {isEditing ? (
+                    <input
+                      defaultValue={s.target_sale_no ?? ""}
+                      onBlur={(e) => {
+                        saveField(s.id, "target_sale_no", e.target.value);
+                      }}
+                      placeholder="—"
+                      className="w-24 rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
+                    />
+                  ) : (
+                    s.target_sale_no ?? <span className="text-stone-300 dark:text-stone-600">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.dispatch_date ?? "—"}</td>
+                <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.sale_date ?? "—"}</td>
+                <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.prompt_date ?? "—"}</td>
+                <td className="px-4 py-2.5">
+                  {isOwner ? (
+                    <select
+                      value={s.status}
+                      onChange={(e) => changeStatus(s.id, e.target.value)}
+                      disabled={saving}
+                      className="rounded-full border border-stone-200 px-2.5 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-500/30 bg-white dark:bg-stone-800 dark:border-stone-700 disabled:opacity-50"
+                    >
+                      {ALL_STATES.map((st) => (
+                        <option key={st} value={st}>{st}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATE_PILL[s.status] ?? "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700"}`}>
+                      {s.status}
+                    </span>
+                  )}
+                </td>
+                {isOwner && (
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setEditingId(isEditing ? null : s.id)}
+                        className={`rounded p-1 transition-colors ${
+                          isEditing
+                            ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400"
+                            : "text-stone-400 hover:text-stone-600 hover:bg-stone-100 dark:text-stone-500 dark:hover:text-stone-300 dark:hover:bg-stone-800"
+                        }`}
+                        title={isEditing ? "Done" : "Edit"}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
+                          <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => deleteOne(s.id)}
+                        className="rounded p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 transition-colors dark:text-stone-500 dark:hover:text-red-400 dark:hover:bg-red-950"
+                        title="Delete"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+          {sales.length === 0 && (
+            <tr>
+              <td colSpan={isOwner ? 9 : 7} className="px-6 py-12 text-center">
+                <p className="text-2xl mb-2">📋</p>
+                <p className="text-sm text-stone-400 dark:text-stone-500">No dispatches yet.</p>
+                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Create your first dispatch to start tracking broker lots.</p>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}

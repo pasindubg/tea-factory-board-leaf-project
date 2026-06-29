@@ -14,7 +14,7 @@ export function RemoveUserButton({ userId, userName }: { userId: string; userNam
       }}
     >
       <input type="hidden" name="user_id" value={userId} />
-      <SubmitButton pendingText="Removing…" className="text-sm text-red-700 hover:underline">
+      <SubmitButton pendingText="Removing…" className="text-sm text-red-700 dark:text-red-400 hover:underline">
         Remove
       </SubmitButton>
     </form>
