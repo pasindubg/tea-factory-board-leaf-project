@@ -3,23 +3,9 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
+import type { LotRow } from "./lot-row";
 
 const MIN_DISPATCH_NET_KG = 220;
-
-type LotRow = {
-  id: string;
-  invoice_no: string | null;
-  lot_no: string | null;
-  grade: string | null;
-  bags: number | null;
-  kg_per_bag: number | null;
-  net_wt: string | number | null;
-  state: string | null;
-  shutout_reason: string | null;
-  lot_source: string | null;
-  marks: { code: string; name: string } | null;
-  lot_invoices: { invoice_no: string }[] | null;
-};
 
 export function DispatchedLotsTable({
   rows,

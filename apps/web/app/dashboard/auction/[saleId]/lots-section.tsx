@@ -3,21 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { DispatchLotForm } from "./dispatch-lot-form";
 import { DispatchedLotsTable } from "./dispatched-lots-table";
-
-type LotRow = {
-  id: string;
-  invoice_no: string | null;
-  lot_no: string | null;
-  grade: string | null;
-  bags: number | null;
-  kg_per_bag: number | null;
-  net_wt: string | number | null;
-  state: string | null;
-  shutout_reason: string | null;
-  lot_source: string | null;
-  marks: { code: string; name: string } | null;
-  lot_invoices: { invoice_no: string }[] | null;
-};
+import type { LotRow } from "./lot-row";
 
 export function LotsSection({
   rows,

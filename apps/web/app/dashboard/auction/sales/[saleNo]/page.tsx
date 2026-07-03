@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireModuleAccess } from "@/lib/profile";
 import { stateBucket } from "../../state-buckets";
 import { saleNoMatches } from "../../sale-number";
+import { money } from "../../format";
 
 type DispatchRow = {
   id: string;
@@ -50,10 +51,6 @@ type MachineStep = {
   count: number;
   detail: string;
 };
-
-function money(n: number) {
-  return n.toLocaleString("en-LK", { minimumFractionDigits: 2 });
-}
 
 function plural(n: number, singular: string, pluralText = `${singular}s`) {
   return `${n} ${n === 1 ? singular : pluralText}`;

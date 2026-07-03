@@ -16,13 +16,13 @@ import {
   type ParsedValuation,
   type ParsedContract,
 } from "@tea/api";
-import { requireProfile } from "@/lib/profile";
-import { AUC, roles, back, extractPdf, stageImport, toISODate } from "./_shared";
+import { requireModuleAccess } from "@/lib/profile";
+import { AUC, back, extractPdf, stageImport, toISODate } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
 
 // ---------- Acknowledgement (① catalogue & reconcile) ----------
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
@@ -35,7 +35,7 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const { data: imp } = await supabase
     .from("doc_imports")
@@ -147,7 +147,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 }
 
 export async function rejectAcknowledgement(importId: string, saleId: string) {
-  const { supabase } = await requireProfile(roles());
+  const { supabase } = await requireModuleAccess("auction");
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
   revalidatePath(`${AUC}/${saleId}`);
   redirect(`${AUC}/${saleId}`);
@@ -155,7 +155,7 @@ export async function rejectAcknowledgement(importId: string, saleId: string) {
 
 // ---------- Valuation (② valuation ↔ realised) ----------
 export async function ingestValuation(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
@@ -168,7 +168,7 @@ export async function ingestValuation(saleId: string, formData: FormData) {
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
@@ -202,7 +202,7 @@ export async function confirmValuation(importId: string, saleId: string) {
 
 // ---------- Sellers Contract (sale lines, settlements, VAT — A3) ----------
 export async function ingestContract(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
@@ -215,7 +215,7 @@ export async function ingestContract(saleId: string, formData: FormData) {
 }
 
 export async function confirmContract(importId: string, saleId: string) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
@@ -388,7 +388,7 @@ export async function confirmContract(importId: string, saleId: string) {
 }
 
 export async function rejectImport(importId: string, saleId: string) {
-  const { supabase } = await requireProfile(roles());
+  const { supabase } = await requireModuleAccess("auction");
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
   revalidatePath(`${AUC}/${saleId}`);
   redirect(`${AUC}/${saleId}`);

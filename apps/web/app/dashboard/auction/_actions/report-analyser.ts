@@ -10,12 +10,12 @@ import {
   parseContract,
   isBankCsv,
 } from "@tea/api";
-import { requireProfile } from "@/lib/profile";
-import { AUC, REP, roles, back, extractPdf, stageImport, resolveSale, stageBankCsv } from "./_shared";
+import { requireModuleAccess } from "@/lib/profile";
+import { AUC, REP, back, extractPdf, stageImport, resolveSale, stageBankCsv } from "./_shared";
 
 // ─── Report Analyser: auto-detect the dispatch from the document, then stage ───
 export async function ingestAckAuto(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(REP, "Choose a valid Acknowledgement PDF.");
@@ -29,7 +29,7 @@ export async function ingestAckAuto(formData: FormData) {
 }
 
 export async function ingestValAuto(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (!text) return back(REP, "Choose a valid Valuation PDF.");
@@ -43,7 +43,7 @@ export async function ingestValAuto(formData: FormData) {
 }
 
 export async function ingestConAuto(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (!text) return back(REP, "Choose a valid Contract PDF.");
@@ -57,7 +57,7 @@ export async function ingestConAuto(formData: FormData) {
 }
 
 export async function ingestBankAuto(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return back(REP, "Choose a bank CSV.");
   const text = await file.text();

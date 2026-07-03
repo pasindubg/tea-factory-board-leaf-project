@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isBankCsv } from "@tea/api";
-import { requireProfile } from "@/lib/profile";
-import { AUC, roles, back, writeAudit, stageBankCsv, autoMatchBank } from "./_shared";
+import { requireModuleAccess } from "@/lib/profile";
+import { AUC, back, writeAudit, stageBankCsv, autoMatchBank } from "./_shared";
 
 // ────────── Bank CSV import & reconciliation (A4) ──────────
 export async function ingestBankCsv(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return back(detail, "Choose a bank-statement CSV to upload.");
@@ -21,7 +21,7 @@ export async function ingestBankCsv(saleId: string, formData: FormData) {
 }
 
 export async function confirmBankMatches(saleId: string, importId: string) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   const applied = await autoMatchBank(supabase, saleId, importId);
   if (applied > 0) await writeAudit(supabase, profile.factory_id, { saleId, action: "Bank auto-matched", detail: `${applied} credits matched`, actor: profile.name });
@@ -29,7 +29,12 @@ export async function confirmBankMatches(saleId: string, importId: string) {
 }
 
 export async function linkBankCredit(input: { saleId: string; importId: string; txnId: string; settlementId: string; contractNo: string; credit: number; confidence: number; reason?: string }) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
+  // The settlement id comes from the client — resolve it through the RLS-scoped
+  // session first so a credit can only ever be linked to this factory's settlement.
+  const { data: settlement } = await supabase
+    .from("settlements").select("id").eq("id", input.settlementId).eq("sale_id", input.saleId).maybeSingle();
+  if (!settlement) return;
   await supabase.from("bank_txns").update({ matched_settlement_id: input.settlementId, match_status: "matched" }).eq("id", input.txnId);
   await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, action: "Bank linked", detail: `Credit ${input.credit.toFixed(2)} → ${input.contractNo}`, actor: profile.name, confidenceShown: input.confidence });
   revalidatePath(`${AUC}/${input.saleId}/bank/${input.importId}`);

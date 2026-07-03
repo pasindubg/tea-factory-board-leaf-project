@@ -2,12 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireProfile } from "@/lib/profile";
-import { AUC, roles, str, back } from "./_shared";
+import { requireModuleAccess, requireProfile } from "@/lib/profile";
+import { AUC, str, back } from "./_shared";
 
 // ---------- Registry: brokers & marks ----------
 export async function createBroker(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const reg = `${AUC}/registry`;
   const name = str(formData.get("name"));
   if (!name) back(reg, "Broker name is required.");
@@ -23,7 +23,7 @@ export async function createBroker(formData: FormData) {
 }
 
 export async function createMark(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const reg = `${AUC}/registry`;
   const code = str(formData.get("code"));
   const name = str(formData.get("name"));
@@ -49,6 +49,11 @@ export async function createBrokerRate(formData: FormData) {
   const effectiveFrom = str(formData.get("effective_from"));
   if (!brokerId) back(reg, "Pick a broker for the rate card.");
   if (!effectiveFrom) back(reg, "Effective-from date is required.");
+  // The broker id comes from the client — confirm it's one of this factory's
+  // brokers before attaching a rate card to it.
+  const { data: broker } = await supabase
+    .from("brokers").select("id").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle();
+  if (!broker) back(reg, "Unknown broker.");
   // Parse a numeric field, defaulting to `d` when blank/invalid.
   const rate = (key: string, d = 0): string => {
     const v = Number(str(formData.get(key)));

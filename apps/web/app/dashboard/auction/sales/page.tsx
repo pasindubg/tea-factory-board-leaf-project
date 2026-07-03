@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { saleNoKey } from "../sale-number";
+import { money } from "../format";
 
 type LineRow = {
   id: string;
@@ -42,10 +43,6 @@ type SaleSummary = {
   vat: number;
   guaranteeLots: number;
 };
-
-function money(n: number) {
-  return n.toLocaleString("en-LK", { minimumFractionDigits: 2 });
-}
 
 function saleKey(sale: LineRow["auction_sales"]) {
   return sale?.target_sale_no || sale?.sale_no || "Unassigned";

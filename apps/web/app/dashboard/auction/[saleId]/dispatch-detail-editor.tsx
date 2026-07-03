@@ -8,6 +8,7 @@ import { confirmDispatchDraft, ingestAcknowledgement, ingestBankCsv, ingestContr
 import { stateBucket } from "../state-buckets";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
 import { LotsSection } from "./lots-section";
+import type { LotRow } from "./lot-row";
 
 type SaleDetail = {
   id: string;
@@ -17,21 +18,6 @@ type SaleDetail = {
   sale_date: string | null;
   prompt_date: string | null;
   status: string | null;
-};
-
-type LotRow = {
-  id: string;
-  invoice_no: string | null;
-  lot_no: string | null;
-  grade: string | null;
-  bags: number | null;
-  kg_per_bag: number | null;
-  net_wt: string | number | null;
-  state: string | null;
-  shutout_reason: string | null;
-  lot_source: string | null;
-  marks: { code: string; name: string } | null;
-  lot_invoices: { invoice_no: string }[] | null;
 };
 
 type MarkOption = { id: string; code: string; name: string };

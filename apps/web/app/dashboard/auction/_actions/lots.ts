@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireProfile } from "@/lib/profile";
-import { AUC, roles, str, num, back, findSaleId } from "./_shared";
+import { requireModuleAccess } from "@/lib/profile";
+import { AUC, str, num, back, findSaleId, type Supa } from "./_shared";
 
 async function ensureDispatchEditable(
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  supabase: Supa,
   saleId: string,
   role: string,
   detailPath: string,
@@ -32,7 +32,7 @@ function invoiceNumbers(formData: FormData) {
 }
 
 async function ensureInvoiceNumbersUnused(
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  supabase: Supa,
   factoryId: string,
   invoices: string[],
   detailPath: string,
@@ -51,7 +51,7 @@ async function ensureInvoiceNumbersUnused(
 }
 
 export async function updateLot(id: string, saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   await ensureDispatchEditable(supabase, saleId, profile.role, detail);
   const updates: Record<string, string | number | null> = {};
@@ -104,7 +104,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
 }
 
 export async function markReprint(lotId: string, saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   await ensureDispatchEditable(supabase, saleId, profile.role, detail);
   const targetSaleNo = str(formData.get("target_sale_no"));
@@ -144,7 +144,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
 }
 
 export async function addDispatchedLot(saleId: string, formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
   await ensureDispatchEditable(supabase, saleId, profile.role, detail);
   const invoiceList = invoiceNumbers(formData);
@@ -176,7 +176,7 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).
 export async function deleteLot(id: string, saleId: string) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   await ensureDispatchEditable(supabase, saleId, profile.role, `${AUC}/${saleId}`);
   await supabase.from("auction_lots").delete().eq("id", id).in("state", ["invoiced", "pending"]);
   revalidatePath(`${AUC}/${saleId}`);

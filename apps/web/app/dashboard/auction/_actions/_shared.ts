@@ -7,14 +7,12 @@ import { redirect } from "next/navigation";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
-import { getDefaultRoles } from "@/lib/roles";
 import { saleNoKey } from "../sale-number";
 
 export const AUC = "/dashboard/auction";
 export const REP = "/dashboard/auction/reports";
 export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
-export const roles = () => getDefaultRoles("auction");
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
 export type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];

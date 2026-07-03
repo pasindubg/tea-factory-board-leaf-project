@@ -2,12 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireProfile } from "@/lib/profile";
-import { AUC, roles, str, back, nextDispatchNo } from "./_shared";
+import { requireModuleAccess, requireProfile } from "@/lib/profile";
+import { AUC, str, back, nextDispatchNo } from "./_shared";
 
 // ---------- Sales (dispatches) ----------
 export async function createSale(formData: FormData) {
-  const { supabase, profile } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   const np = `${AUC}/new`;
   const brokerId = str(formData.get("broker_id"));
   const saleNo = await nextDispatchNo(supabase);
@@ -37,7 +37,12 @@ export async function createSale(formData: FormData) {
 export { createSale as createDispatch };
 
 export async function deleteSale(id: string) {
-  const { supabase } = await requireProfile(["owner"]);
+  const { supabase, profile } = await requireProfile(["owner"]);
+  // Guard: the sale must belong to this factory (RLS enforces it too — this
+  // makes the cross-tenant case a clean no-op instead of a partial cascade).
+  const { data: sale } = await supabase
+    .from("auction_sales").select("id").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
+  if (!sale) return;
   // Cascade: remove all dependent records before the sale.
   const { data: lotIds } = await supabase.from("auction_lots").select("id").eq("sale_id", id);
   const ids = (lotIds ?? []).map((l) => l.id as string);
@@ -63,32 +68,39 @@ export async function deleteSale(id: string) {
   revalidatePath(AUC);
 }
 
+// The dispatch lifecycle statuses (mirrors the auction_sales schema enum) —
+// updateSale must not write anything outside this list.
+const SALE_STATUSES = ["dispatched", "draft", "grn", "catalogued", "valued", "sold", "settled", "broker_statement"] as const;
+
 export async function updateSale(id: string, formData: FormData) {
-  const { supabase } = await requireProfile(["owner"]);
+  const { supabase, profile } = await requireProfile(["owner"]);
   const updates: Record<string, string | null> = {};
   const status = str(formData.get("status"));
   const target = str(formData.get("target_sale_no"));
   const saleDate = str(formData.get("sale_date"));
   const dispatchDate = str(formData.get("dispatch_date"));
   const promptDate = str(formData.get("prompt_date"));
-  if (status) updates.status = status;
+  // Whitelist the status — the client sends free text, the state machine only
+  // has these values. An unknown status is dropped, not written.
+  if (status && (SALE_STATUSES as readonly string[]).includes(status)) updates.status = status;
   if (formData.has("target_sale_no")) updates.target_sale_no = target || null;
   if (formData.has("sale_date")) updates.sale_date = saleDate || null;
   if (dispatchDate) updates.dispatch_date = dispatchDate;
   if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
   if (Object.keys(updates).length > 0) {
-    await supabase.from("auction_sales").update(updates).eq("id", id);
+    await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
   }
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
 }
 
 export async function confirmDispatchDraft(id: string) {
-  const { supabase } = await requireProfile(roles());
+  const { supabase, profile } = await requireModuleAccess("auction");
   await supabase
     .from("auction_sales")
     .update({ status: "grn" })
     .eq("id", id)
+    .eq("factory_id", profile.factory_id)
     .in("status", ["draft", "dispatched"]);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
