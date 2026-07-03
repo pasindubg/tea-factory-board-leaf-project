@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import type { ParsedValuation } from "@tea/api";
@@ -21,9 +22,9 @@ export default async function ValuationReviewPage({
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <a href={detail} className="text-green-700 dark:text-green-400 hover:underline">
+        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
-        </a>
+        </Link>
       </div>
     );
   }
@@ -39,12 +40,12 @@ export default async function ValuationReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <a href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {sale?.sale_no ?? ""}
-        </a>
+        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
+          ← Dispatch {sale?.sale_no ?? ""}
+        </Link>
         <h2 className="mt-1 text-xl font-semibold">Valuation review</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "valuation.pdf"} · {parsed.lots.length} lots · {matched} match a catalogued lot
+          {imp.source_filename ?? "valuation.pdf"} · {parsed.lots.length} lots · {matched} match an acknowledged lot
         </p>
       </div>
 

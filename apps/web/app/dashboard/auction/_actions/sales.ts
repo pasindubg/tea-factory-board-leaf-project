@@ -3,24 +3,29 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
-import { AUC, roles, str, back } from "./_shared";
+import { AUC, roles, str, back, nextDispatchNo } from "./_shared";
 
 // ---------- Sales (dispatches) ----------
 export async function createSale(formData: FormData) {
   const { supabase, profile } = await requireProfile(roles());
   const np = `${AUC}/new`;
   const brokerId = str(formData.get("broker_id"));
-  const saleNo = str(formData.get("sale_no"));
+  const saleNo = await nextDispatchNo(supabase);
+  const targetSaleNo = str(formData.get("target_sale_no"));
+  const saleDate = str(formData.get("sale_date"));
   if (!brokerId) back(np, "Pick a broker.");
-  if (!saleNo) back(np, "Dispatch number is required.");
+  if (!targetSaleNo) back(np, "Sale number is required.");
+  if (!saleDate) back(np, "Sale date is required.");
   const { data, error } = await supabase
     .from("auction_sales")
     .insert({
       factory_id: profile.factory_id,
       broker_id: brokerId,
       sale_no: saleNo,
-      sale_date: str(formData.get("sale_date")) || null,
-      target_sale_no: str(formData.get("target_sale_no")) || null,
+      sale_date: saleDate,
+      target_sale_no: targetSaleNo,
+      dispatch_date: str(formData.get("dispatch_date")) || new Date().toISOString().slice(0, 10),
+      status: "draft",
     })
     .select("id")
     .single();
@@ -56,7 +61,6 @@ export async function deleteSale(id: string) {
   await supabase.from("auction_lots").delete().eq("sale_id", id);
   await supabase.from("auction_sales").delete().eq("id", id);
   revalidatePath(AUC);
-  redirect(AUC);
 }
 
 export async function updateSale(id: string, formData: FormData) {
@@ -64,16 +68,28 @@ export async function updateSale(id: string, formData: FormData) {
   const updates: Record<string, string | null> = {};
   const status = str(formData.get("status"));
   const target = str(formData.get("target_sale_no"));
-  const saleNo = str(formData.get("sale_no"));
   const saleDate = str(formData.get("sale_date"));
   const dispatchDate = str(formData.get("dispatch_date"));
+  const promptDate = str(formData.get("prompt_date"));
   if (status) updates.status = status;
-  if (target) updates.target_sale_no = target || null;
-  if (saleNo) updates.sale_no = saleNo;
-  if (saleDate) updates.sale_date = saleDate;
+  if (formData.has("target_sale_no")) updates.target_sale_no = target || null;
+  if (formData.has("sale_date")) updates.sale_date = saleDate || null;
   if (dispatchDate) updates.dispatch_date = dispatchDate;
+  if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
   if (Object.keys(updates).length > 0) {
     await supabase.from("auction_sales").update(updates).eq("id", id);
   }
   revalidatePath(AUC);
+  revalidatePath(`${AUC}/${id}`);
+}
+
+export async function confirmDispatchDraft(id: string) {
+  const { supabase } = await requireProfile(roles());
+  await supabase
+    .from("auction_sales")
+    .update({ status: "grn" })
+    .eq("id", id)
+    .in("status", ["draft", "dispatched"]);
+  revalidatePath(AUC);
+  revalidatePath(`${AUC}/${id}`);
 }

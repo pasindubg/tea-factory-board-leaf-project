@@ -28,14 +28,20 @@ export const auctionLots = pgTable(
     netWt: numeric("net_wt", { precision: 10, scale: 2 }).notNull(),
     store: text("store"),
     category: text("category"),
-    // Dispatch-first lifecycle: dispatched → catalogued | pending | shutout →
-    // valued → sold | re-print | withdrawn → settled. `pending` = dispatched but
-    // absent from the current (partial) acknowledgement, may roll to a later sale.
+    // Where this row originated. `factory` = entered from factory invoice data;
+    // `acknowledgement` = broker acknowledgement contained a lot that was not
+    // in the factory-entered dispatch.
+    lotSource: text("lot_source", { enum: ["factory", "acknowledgement"] })
+      .default("factory")
+      .notNull(),
+    // Lifecycle: invoiced → acknowledged | pending | shutout → valued → sold |
+    // re-print | withdrawn → settled. `pending` = invoiced but absent from the
+    // current (partial) acknowledgement, may roll to a later sale.
     // `re-print` = unsold, re-sampled, rolled to the next sale.
     state: text("state", {
       enum: [
-        "dispatched",
-        "catalogued",
+        "invoiced",
+        "acknowledged",
         "pending",
         "missing", // explicit human decision: expected & overdue, no catalogue counterpart
         "shutout",
@@ -46,7 +52,7 @@ export const auctionLots = pgTable(
         "settled",
       ],
     })
-      .default("dispatched")
+      .default("invoiced")
       .notNull(),
     shutoutReason: text("shutout_reason"),
     reprintSourceLotId: uuid("reprint_source_lot_id"),

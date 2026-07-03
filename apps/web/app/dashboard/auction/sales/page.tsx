@@ -1,122 +1,207 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
+import { saleNoKey } from "../sale-number";
+
+type LineRow = {
+  id: string;
+  proceeds: number | string | null;
+  net_wt: number | string | null;
+  vat_amount: number | string | null;
+  on_guarantee: boolean | null;
+  auction_sales: {
+    id: string;
+    sale_no: string;
+    target_sale_no: string | null;
+    dispatch_date: string | null;
+    sale_date: string | null;
+    prompt_date: string | null;
+    brokers: { name: string } | null;
+  } | null;
+};
+
+type DispatchRow = {
+  id: string;
+  sale_no: string;
+  target_sale_no: string | null;
+  dispatch_date: string | null;
+  sale_date: string | null;
+  prompt_date: string | null;
+  status: string;
+  brokers: { name: string } | null;
+};
+
+type SaleSummary = {
+  saleNo: string;
+  saleDate: string | null;
+  promptDate: string | null;
+  broker: string;
+  dispatches: Map<string, string>;
+  lotsSold: number;
+  netKg: number;
+  proceeds: number;
+  vat: number;
+  guaranteeLots: number;
+};
+
+function money(n: number) {
+  return n.toLocaleString("en-LK", { minimumFractionDigits: 2 });
+}
+
+function saleKey(sale: LineRow["auction_sales"]) {
+  return sale?.target_sale_no || sale?.sale_no || "Unassigned";
+}
+
+function dispatchKey(dispatch: DispatchRow) {
+  return dispatch.target_sale_no || dispatch.sale_no;
+}
+
+function saleHref(saleNo: string) {
+  const key = saleNoKey(saleNo);
+  return `/dashboard/auction/sales/${encodeURIComponent(key || saleNo)}`;
+}
 
 export default async function SalesPage() {
   const { supabase } = await requireModuleAccess("auction");
 
-  const { data: lines } = await supabase
-    .from("sale_lines")
-    .select(
-      "id, lot_id, proceeds, price_per_kg, net_wt, vat_amount, on_guarantee, created_at, " +
-        "auction_lots(invoice_no, lot_no, grade, bags, kg_per_bag), " +
-        "auction_sales(sale_no), " +
-        "buyers(name, vat_no)",
-    )
-    .order("created_at", { ascending: false });
+  const [{ data: dispatches }, { data: lines }] = await Promise.all([
+    supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+      .not("target_sale_no", "is", null)
+      .order("dispatch_date", { ascending: false }),
+    supabase
+      .from("sale_lines")
+      .select(
+        "id, proceeds, net_wt, vat_amount, on_guarantee, " +
+          "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name))",
+      )
+      .order("created_at", { ascending: false }),
+  ]);
 
-  const rows = (lines ?? []) as unknown as Array<{
-    id: string;
-    proceeds: number;
-    price_per_kg: number;
-    net_wt: number;
-    vat_amount: number;
-    on_guarantee: boolean;
-    created_at: string;
-    auction_lots: { invoice_no: string; lot_no: string; grade: string; bags: number; kg_per_bag: number } | null;
-    auction_sales: { sale_no: string } | null;
-    buyers: { name: string; vat_no: string } | null;
-  }>;
-  const totalProceeds = rows.reduce((s, l) => s + Number(l.proceeds ?? 0), 0);
-  const totalVat = rows.reduce((s, l) => s + Number(l.vat_amount ?? 0), 0);
-  const totalNetKg = rows.reduce((s, l) => s + Number(l.net_wt ?? 0), 0);
-  const guaranteeCount = rows.filter((l) => l.on_guarantee).length;
+  const rows = (lines ?? []) as unknown as LineRow[];
+  const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
+  const summaries = new Map<string, SaleSummary>();
+
+  for (const dispatch of dispatchRows) {
+    const key = dispatchKey(dispatch);
+    const current = summaries.get(key) ?? {
+      saleNo: key,
+      saleDate: dispatch.sale_date,
+      promptDate: dispatch.prompt_date,
+      broker: dispatch.brokers?.name ?? "—",
+      dispatches: new Map<string, string>(),
+      lotsSold: 0,
+      netKg: 0,
+      proceeds: 0,
+      vat: 0,
+      guaranteeLots: 0,
+    };
+
+    current.dispatches.set(dispatch.id, dispatch.sale_no);
+    current.saleDate ??= dispatch.sale_date;
+    current.promptDate ??= dispatch.prompt_date;
+    if (current.broker === "—" && dispatch.brokers?.name) current.broker = dispatch.brokers.name;
+    summaries.set(key, current);
+  }
+
+  for (const line of rows) {
+    const sale = line.auction_sales;
+    const key = saleKey(sale);
+    const current = summaries.get(key) ?? {
+      saleNo: key,
+      saleDate: sale?.sale_date ?? null,
+      promptDate: sale?.prompt_date ?? null,
+      broker: sale?.brokers?.name ?? "—",
+      dispatches: new Map<string, string>(),
+      lotsSold: 0,
+      netKg: 0,
+      proceeds: 0,
+      vat: 0,
+      guaranteeLots: 0,
+    };
+
+    if (sale?.id) current.dispatches.set(sale.id, sale.sale_no);
+    current.saleDate ??= sale?.sale_date ?? null;
+    current.promptDate ??= sale?.prompt_date ?? null;
+    if (current.broker === "—" && sale?.brokers?.name) current.broker = sale.brokers.name;
+    current.lotsSold += 1;
+    current.netKg += Number(line.net_wt ?? 0);
+    current.proceeds += Number(line.proceeds ?? 0);
+    current.vat += Number(line.vat_amount ?? 0);
+    if (line.on_guarantee) current.guaranteeLots += 1;
+    summaries.set(key, current);
+  }
+
+  const saleRows = [...summaries.values()].sort((a, b) => b.saleNo.localeCompare(a.saleNo));
+  const totalProceeds = saleRows.reduce((s, r) => s + r.proceeds, 0);
+  const totalVat = saleRows.reduce((s, r) => s + r.vat, 0);
+  const totalNetKg = saleRows.reduce((s, r) => s + r.netKg, 0);
+  const totalLots = saleRows.reduce((s, r) => s + r.lotsSold, 0);
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-          <p className="text-xs text-stone-500 dark:text-stone-400">Total sales</p>
-          <p className="mt-1 text-2xl font-semibold text-green-800 dark:text-green-400">
-            {rows.length}
-          </p>
-          <p className="text-xs text-stone-400 dark:text-stone-500">lots sold</p>
+          <p className="text-xs text-stone-500 dark:text-stone-400">Auction sales</p>
+          <p className="mt-1 text-2xl font-semibold text-green-800 dark:text-green-400">{saleRows.length}</p>
+          <p className="text-xs text-stone-400 dark:text-stone-500">{totalLots} lots sold</p>
         </div>
         <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
           <p className="text-xs text-stone-500 dark:text-stone-400">Total proceeds</p>
-          <p className="mt-1 text-2xl font-semibold text-stone-800 dark:text-stone-200">
-            LKR {totalProceeds.toLocaleString("en-LK", { minimumFractionDigits: 2 })}
-          </p>
+          <p className="mt-1 text-2xl font-semibold text-stone-800 dark:text-stone-200">LKR {money(totalProceeds)}</p>
         </div>
         <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
           <p className="text-xs text-stone-500 dark:text-stone-400">Total VAT</p>
-          <p className="mt-1 text-2xl font-semibold text-blue-800 dark:text-blue-400">
-            LKR {totalVat.toLocaleString("en-LK", { minimumFractionDigits: 2 })}
-          </p>
-          <p className="text-xs text-stone-400 dark:text-stone-500">{guaranteeCount} on bank guarantee</p>
+          <p className="mt-1 text-2xl font-semibold text-blue-800 dark:text-blue-400">LKR {money(totalVat)}</p>
         </div>
         <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
           <p className="text-xs text-stone-500 dark:text-stone-400">Net kg sold</p>
-          <p className="mt-1 text-2xl font-semibold text-stone-800 dark:text-stone-200">
-            {totalNetKg.toLocaleString("en-LK", { minimumFractionDigits: 2 })}
-          </p>
+          <p className="mt-1 text-2xl font-semibold text-stone-800 dark:text-stone-200">{money(totalNetKg)}</p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 overflow-x-auto">
+      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
               <th className="px-4 py-3">Sale no.</th>
-              <th className="px-4 py-3">Lot no.</th>
-              <th className="px-4 py-3">Invoice</th>
-              <th className="px-4 py-3">Grade</th>
-              <th className="px-4 py-3">Buyer</th>
-              <th className="px-4 py-3 text-right">Bags</th>
-              <th className="px-4 py-3 text-right">kg/bag</th>
+              <th className="px-4 py-3">Dispatches</th>
+              <th className="px-4 py-3">Broker</th>
+              <th className="px-4 py-3">Sale date</th>
+              <th className="px-4 py-3 text-right">Lots sold</th>
               <th className="px-4 py-3 text-right">Net kg</th>
-              <th className="px-4 py-3 text-right">Price/kg</th>
               <th className="px-4 py-3 text-right">Proceeds</th>
               <th className="px-4 py-3 text-right">VAT</th>
-              <th className="px-4 py-3">Guarantee</th>
+              <th className="px-4 py-3 text-right">Guarantee</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((l) => {
-              const lot = (l.auction_lots as unknown as { invoice_no: string; lot_no: string; grade: string; bags: number; kg_per_bag: number } | null);
-              const sale = (l.auction_sales as unknown as { sale_no: string } | null);
-              const buyer = (l.buyers as unknown as { name: string; vat_no: string } | null);
-              return (
-                <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                  <td className="px-4 py-2">
-                    <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-                      {sale?.sale_no ?? "—"}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">{lot?.lot_no ?? "—"}</td>
-                  <td className="px-4 py-2 font-medium">{lot?.invoice_no ?? "—"}</td>
-                  <td className="px-4 py-2">{lot?.grade ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    {buyer?.name ?? "—"}
-                    {buyer?.vat_no && <span className="ml-1 text-xs text-stone-400 dark:text-stone-500">{buyer.vat_no}</span>}
-                  </td>
-                  <td className="px-4 py-2 text-right">{lot?.bags ?? "—"}</td>
-                  <td className="px-4 py-2 text-right">{lot?.kg_per_bag != null ? Number(lot.kg_per_bag).toFixed(2) : "—"}</td>
-                  <td className="px-4 py-2 text-right">{Number(l.net_wt ?? 0).toFixed(2)}</td>
-                  <td className="px-4 py-2 text-right">{Number(l.price_per_kg ?? 0).toFixed(2)}</td>
-                  <td className="px-4 py-2 text-right font-medium">{Number(l.proceeds ?? 0).toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right">{Number(l.vat_amount ?? 0).toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${l.on_guarantee ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-400" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
-                      {l.on_guarantee ? "Guarantee" : "Cash"}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-            {rows.length === 0 && (
+            {saleRows.map((sale) => (
+              <tr key={sale.saleNo} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
+                <td className="px-4 py-2 font-medium">
+                  <Link
+                    href={saleHref(sale.saleNo)}
+                    className="text-green-700 hover:underline dark:text-green-400"
+                  >
+                    {sale.saleNo}
+                  </Link>
+                </td>
+                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">
+                  {[...sale.dispatches.values()].join(", ") || "—"}
+                </td>
+                <td className="px-4 py-2">{sale.broker}</td>
+                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{sale.saleDate ?? "—"}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{sale.lotsSold}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{money(sale.netKg)}</td>
+                <td className="px-4 py-2 text-right tabular-nums font-medium">{money(sale.proceeds)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{money(sale.vat)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{sale.guaranteeLots}</td>
+              </tr>
+            ))}
+            {saleRows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No sales yet — confirm a sellers contract to record sales.
+                <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
+                  No sales yet. Confirm a sellers contract to record auction sales.
                 </td>
               </tr>
             )}

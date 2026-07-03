@@ -22,12 +22,12 @@ const tabs = [
   },
   {
     href: "/dashboard/auction/sales",
-    label: "Sales",
+    label: "Sales Handling",
     match: (p: string) => p.startsWith("/dashboard/auction/sales"),
   },
   {
     href: "/dashboard/auction/reports",
-    label: "Reports",
+    label: "Report Reconciliations",
     match: (p: string) => p.startsWith("/dashboard/auction/reports"),
   },
   {
@@ -39,7 +39,9 @@ const tabs = [
 
 export function AuctionNav() {
   const router = useRouter();
-  const pathname = usePathname();
+  // usePathname() can be null during some SSR/loading boundaries; the tab
+  // matchers call .startsWith on it, so fall back to an empty string.
+  const pathname = usePathname() ?? "";
   const [isPending, startTransition] = useTransition();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 

@@ -9,16 +9,21 @@ const SOLD = "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400"
 const ISSUE = "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400";
 
 export const STATE_BUCKET: Record<string, StateBucket> = {
-  invoiced:   { label: "Pending", style: PENDING },
+  invoiced:   { label: "Invoiced", style: PENDING },
   dispatched: { label: "Pending", style: PENDING },
   pending:    { label: "Pending", style: PENDING },
-  catalogued: { label: "Active",  style: ACTIVE },
+  draft:      { label: "Draft", style: PENDING },
+  grn:        { label: "GRN", style: ACTIVE },
+  acknowledged: { label: "Acknowledged", style: ACTIVE },
+  catalogued: { label: "Catalogued",  style: ACTIVE },
   valued:     { label: "Active",  style: ACTIVE },
   sold:       { label: "Sold",    style: SOLD },
   settled:    { label: "Sold",    style: SOLD },
-  shutout:    { label: "Issue",   style: ISSUE },
-  withdrawn:  { label: "Issue",   style: ISSUE },
-  "re-print": { label: "Issue",   style: ISSUE },
+  broker_statement: { label: "Broker statement", style: SOLD },
+  shutout:    { label: "Shutout",   style: ISSUE },
+  withdrawn:  { label: "Withdrawn",   style: ISSUE },
+  "re-print": { label: "Re-print",   style: ISSUE },
+  missing:    { label: "Missing",   style: ISSUE },
 };
 
 // Fallback for an unrecognised state — shows the raw value in the neutral style.

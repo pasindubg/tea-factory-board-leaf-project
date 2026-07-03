@@ -12,9 +12,11 @@ const KG = (n: number) => n.toLocaleString("en-LK", { maximumFractionDigits: 2 }
 
 // Lifecycle states in display order, with the swatch used in the by-state bar.
 const STATE_ORDER: { key: string; label: string; bar: string; chip: string }[] = [
-  { key: "dispatched", label: "Dispatched", bar: "bg-stone-400 dark:bg-stone-500", chip: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300" },
+  { key: "invoiced", label: "Invoiced", bar: "bg-stone-400 dark:bg-stone-500", chip: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300" },
+  { key: "dispatched", label: "Invoiced", bar: "bg-stone-400 dark:bg-stone-500", chip: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300" },
   { key: "pending", label: "Pending", bar: "bg-sky-500", chip: "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300" },
-  { key: "catalogued", label: "Catalogued", bar: "bg-blue-500", chip: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300" },
+  { key: "acknowledged", label: "Acknowledged", bar: "bg-blue-500", chip: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300" },
+  { key: "catalogued", label: "Acknowledged", bar: "bg-blue-500", chip: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300" },
   { key: "valued", label: "Valued", bar: "bg-amber-500", chip: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-300" },
   { key: "sold", label: "Sold", bar: "bg-green-600", chip: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300" },
   { key: "re-print", label: "Re-print", bar: "bg-orange-500", chip: "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-300" },
@@ -29,7 +31,7 @@ export default async function AuctionDashboardPage() {
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([
       supabase.from("auction_lots").select("id, sale_id, state, net_wt, grade"),
-      supabase.from("auction_sales").select("id, sale_no, status, sale_date, prompt_date, brokers(name)").order("sale_date", { ascending: false }),
+      supabase.from("auction_sales").select("id, sale_no, target_sale_no, status, sale_date, prompt_date, brokers(name)").order("sale_date", { ascending: false }),
       supabase.from("sale_lines").select("sale_id, lot_id, proceeds, vat_amount, on_guarantee, net_wt"),
       supabase.from("valuations").select("lot_id, projected_proceeds"),
       supabase.from("settlements").select("sale_id, total_net_proceeds, prompt_date"),
@@ -175,6 +177,7 @@ export default async function AuctionDashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                    <th className="px-3 py-3">Dispatch</th>
                     <th className="px-3 py-3">Sale</th>
                     <th className="px-3 py-3">Broker</th>
                     <th className="px-3 py-3">Status</th>
@@ -195,6 +198,9 @@ export default async function AuctionDashboardPage() {
                           <Link href={`/dashboard/auction/${s.id}`} className="text-green-700 dark:text-green-400 hover:underline">
                             {s.sale_no}
                           </Link>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-stone-600 dark:text-stone-400">
+                          {(s as { target_sale_no?: string | null }).target_sale_no || "—"}
                         </td>
                         <td className="px-3 py-2">{broker}</td>
                         <td className="px-3 py-2">

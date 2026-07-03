@@ -21,8 +21,8 @@ export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts
 
 // Sidebar sections. Overview has no group (it sits above the sections); every
 // other module belongs to one. Sections render in this order.
-export type ModuleGroup = "Leaf Handling" | "Sales Handling";
-export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling"];
+export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling";
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling"];
 
 export type ModuleDef = {
   key: string;
@@ -110,7 +110,15 @@ export const MODULES: readonly ModuleDef[] = [
   {
     key: "auction-sales",
     href: "/dashboard/auction/sales",
-    label: "Sales",
+    label: "Sales Overview",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
+    key: "auction-sale-detail",
+    href: "/dashboard/auction/sales",
+    label: "Sales Detail",
     roles: ["owner", "manager", "accountant"],
     entitlement: "auction",
     group: "Sales Handling",
@@ -118,7 +126,7 @@ export const MODULES: readonly ModuleDef[] = [
   {
     key: "auction-reports",
     href: "/dashboard/auction/reports",
-    label: "Report Analyser",
+    label: "Report Reconciliations",
     roles: ["owner", "manager", "accountant"],
     entitlement: "auction",
     group: "Sales Handling",
@@ -137,8 +145,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Dispatches Overview",
     roles: ["owner", "manager", "accountant"],
     entitlement: "auction",
-    group: "Sales Handling",
-    subGroup: "Dispatch Handling",
+    group: "Dispatch Handling",
   },
   {
     key: "auction-dispatch-detail",
@@ -146,8 +153,7 @@ export const MODULES: readonly ModuleDef[] = [
     label: "Dispatch Detail",
     roles: ["owner", "manager", "accountant"],
     entitlement: "auction",
-    group: "Sales Handling",
-    subGroup: "Dispatch Handling",
+    group: "Dispatch Handling",
   },
 ];
 

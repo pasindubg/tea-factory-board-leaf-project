@@ -18,6 +18,7 @@ import {
 } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { AUC, roles, back, extractPdf, stageImport, toISODate } from "./_shared";
+import { buildInvoicedLots } from "../recon-helpers";
 
 // ---------- Acknowledgement (① catalogue & reconcile) ----------
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
@@ -28,7 +29,7 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
   if (!isAcknowledgement(text)) return back(detail, "That doesn't look like an Acknowledgement document.");
   const parsed = parseAcknowledgement(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
   redirect(`${detail}/ack/${importId}`);
 }
@@ -46,14 +47,9 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt")
+    .select("id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
     .eq("sale_id", saleId);
-  const invoiced = (lotRows ?? []).map((l) => ({
-    id: l.id as string,
-    invoiceNo: l.invoice_no as string,
-    grade: l.grade as string,
-    netWt: Number(l.net_wt),
-  }));
+  const invoiced = buildInvoicedLots((lotRows ?? []) as unknown as Parameters<typeof buildInvoicedLots>[0]);
   const recon = reconcileAcknowledgement(invoiced, parsed);
 
   // Resolve marks by code, auto-creating any the ack references but the factory
@@ -74,7 +70,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     for (const m of created ?? []) markByCode.set(m.code as string, m.id as string);
   }
 
-  // Apply cataloguing to every matched invoiced lot (in parallel — each touches a
+  // Apply acknowledgement to every matched invoiced lot (in parallel — each touches a
   // distinct lot, then the sweep below moves whatever's left).
   await Promise.all(
     recon.rows
@@ -85,7 +81,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
           .update({
             lot_no: row.ack?.lotNo ?? null,
             mark_id: row.ack ? markByCode.get(row.ack.markCode) ?? null : null,
-            state: row.status,
+            state: row.status === "catalogued" ? "acknowledged" : "shutout",
             shutout_reason:
               row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
           })
@@ -93,17 +89,60 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       ),
   );
 
-  // Remaining dispatched lots not in this ack → pending (may be in a later ack).
+  const unexpectedAckRows = recon.rows
+    .filter((row) => row.status === "unexpected" && row.ack)
+    .map((row) => {
+      const ackLot = parsed.lots.find((lot) => lot.invoiceNo === row.invoiceNo && lot.lotNo === row.ack?.lotNo);
+      if (!ackLot) return null;
+      return {
+        factory_id: profile.factory_id,
+        sale_id: saleId,
+        mark_id: markByCode.get(ackLot.markCode) ?? null,
+        invoice_no: ackLot.invoiceNo,
+        lot_no: ackLot.lotNo,
+        grade: ackLot.grade,
+        bags: ackLot.bags,
+        kg_per_bag: ackLot.kgPerBag,
+        net_wt: ackLot.netWt,
+        lot_source: "acknowledgement",
+        state: ackLot.section === "catalogued" ? "acknowledged" : "shutout",
+        shutout_reason:
+          ackLot.section === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  let createdAcknowledgedLots = 0;
+  if (unexpectedAckRows.length > 0) {
+    const { data: createdLots } = await supabase
+      .from("auction_lots")
+      .insert(unexpectedAckRows)
+      .select("id, invoice_no");
+    createdAcknowledgedLots = unexpectedAckRows.filter((row) => row.state === "acknowledged").length;
+    if (createdLots && createdLots.length > 0) {
+      await supabase.from("lot_invoices").insert(
+        createdLots.map((lot) => ({
+          factory_id: profile.factory_id,
+          lot_id: lot.id,
+          invoice_no: lot.invoice_no,
+        })),
+      );
+    }
+  }
+
+  // Remaining invoiced lots not in this ack → pending (may be in a later ack).
   await supabase.from("auction_lots").update({ state: "pending" }).eq("sale_id", saleId).eq("state", "invoiced");
 
   await supabase
     .from("doc_imports")
     .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
     .eq("id", importId);
-  await supabase.from("auction_sales").update({ status: "catalogued" }).eq("id", saleId);
+  if (recon.summary.catalogued + createdAcknowledgedLots > 0) {
+    await supabase.from("auction_sales").update({ status: "catalogued" }).eq("id", saleId);
+  }
   revalidatePath(detail);
   redirect(
-    `${detail}?notice=${encodeURIComponent(`Catalogued ${recon.summary.catalogued} lot(s); ${recon.summary.shutout} shutout.`)}`,
+    `${detail}?notice=${encodeURIComponent(`Acknowledged ${recon.summary.catalogued} lot(s); ${recon.summary.shutout} shutout.`)}`,
   );
 }
 
@@ -123,7 +162,7 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
   if (!isValuation(text)) return back(detail, "That doesn't look like a Valuation Report.");
   const parsed = parseValuation(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
   redirect(`${detail}/valuation/${importId}`);
 }
@@ -170,7 +209,7 @@ export async function ingestContract(saleId: string, formData: FormData) {
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
   if (!isContract(text)) return back(detail, "That doesn't look like a Sellers Contract & Account Sales document.");
   const parsed = parseContract(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
   redirect(`${detail}/contract/${importId}`);
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { ingestAckAuto, ingestValAuto, ingestConAuto, ingestBankAuto } from "../actions";
+import { ReportsTabs } from "./reports-tabs";
 
 export default async function ReportsPage() {
   const { supabase } = await requireModuleAccess("auction");
@@ -14,7 +15,7 @@ export default async function ReportsPage() {
   ] = await Promise.all([
     supabase
       .from("settlements")
-      .select("id, sale_id, contract_no, proceeds_total, total_deductions, net_proceeds, output_vat, total_net_proceeds, prompt_date, auction_sales(sale_no, brokers(name))")
+      .select("id, sale_id, contract_no, proceeds_total, total_deductions, net_proceeds, output_vat, total_net_proceeds, prompt_date, auction_sales(sale_no, target_sale_no, brokers(name))")
       .order("prompt_date", { ascending: false }),
     supabase
       .from("bank_txns")
@@ -44,14 +45,15 @@ export default async function ReportsPage() {
   }
 
   const rows = (settlements ?? []).map((st) => {
-    const sale = (st.auction_sales as unknown as { sale_no: string; brokers: { name: string } } | null);
+    const sale = (st.auction_sales as unknown as { sale_no: string; target_sale_no: string | null; brokers: { name: string } } | null);
     const credited = creditedBySettlement.get(st.id as string) ?? 0;
     const total = Number(st.total_net_proceeds ?? 0);
     const remaining = total - credited;
     return {
       id: st.id as string,
       contractNo: st.contract_no as string,
-      saleNo: sale?.sale_no ?? "—",
+      dispatchNo: sale?.sale_no ?? "—",
+      saleNo: sale?.target_sale_no || "—",
       broker: sale?.brokers?.name ?? "—",
       proceeds: Number(st.proceeds_total ?? 0),
       deductions: Number(st.total_deductions ?? 0),
@@ -71,7 +73,7 @@ export default async function ReportsPage() {
   const conImports = allImports.filter((i) => i.doc_type === "contract");
   const bankImports = allImports.filter((i) => i.doc_type === "bank_csv");
 
-  return (
+  const overview = (
     <div className="space-y-8">
       {/* Settlement summary */}
       <section>
@@ -100,6 +102,7 @@ export default async function ReportsPage() {
             <thead>
               <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                 <th className="px-4 py-3">Contract</th>
+                <th className="px-4 py-3">Dispatch</th>
                 <th className="px-4 py-3">Sale</th>
                 <th className="px-4 py-3">Broker</th>
                 <th className="px-4 py-3 text-right">Proceeds</th>
@@ -116,6 +119,7 @@ export default async function ReportsPage() {
               {rows.map((r) => (
                 <tr key={r.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                   <td className="px-4 py-2 font-medium">{r.contractNo}</td>
+                  <td className="px-4 py-2">{r.dispatchNo}</td>
                   <td className="px-4 py-2">{r.saleNo}</td>
                   <td className="px-4 py-2">{r.broker}</td>
                   <td className="px-4 py-2 text-right">{r.proceeds.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
@@ -136,8 +140,8 @@ export default async function ReportsPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                    No settlements yet — upload a sellers contract above.
+                  <td colSpan={12} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
+                    No settlements yet — upload a sellers contract from the “Upload &amp; review documents” tab.
                   </td>
                 </tr>
               )}
@@ -145,7 +149,11 @@ export default async function ReportsPage() {
           </table>
         </div>
       </section>
+    </div>
+  );
 
+  const upload = (
+    <div className="space-y-8">
       {/* Upload blocks */}
       <section>
         <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Upload &amp; auto-detect</h3>
@@ -181,6 +189,15 @@ export default async function ReportsPage() {
         reviewBase={`/dashboard/auction`}
         accept=".csv,text/csv"
       />
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold text-stone-800 dark:text-stone-100">Report Reconciliations</h2>
+      </div>
+      <ReportsTabs overview={overview} upload={upload} />
     </div>
   );
 }

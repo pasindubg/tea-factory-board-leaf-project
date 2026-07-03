@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { createDispatch } from "../actions";
+import { nextDispatchNo } from "../_actions/_shared";
 
 export default async function NewDispatchPage({
   searchParams,
@@ -11,13 +12,15 @@ export default async function NewDispatchPage({
   const { supabase } = await requireModuleAccess("auction");
   const { error } = await searchParams;
   const { data: brokers } = await supabase.from("brokers").select("id, name").order("name");
+  const dispatchNo = await nextDispatchNo(supabase);
 
   return (
     <div className="max-w-lg">
       <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New dispatch</h2>
       <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-        Pick the broker and enter your dispatch number. You&apos;ll add the lots
-        (invoice no., grade, bags) on the next screen.
+        Pick the broker and sale details. The dispatch number is assigned by the
+        system, and you&apos;ll add the lots (invoice no., grade, bags) on the
+        next screen.
       </p>
       {error && (
         <p className="mt-3 rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>
@@ -49,20 +52,24 @@ export default async function NewDispatchPage({
           </div>
           <div>
             <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Dispatch number</label>
-            <input
-              name="sale_no"
-              required
-              placeholder="DSP-001"
-              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
-            />
+            <div className="mt-1 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">System generated</p>
+                  <p className="font-mono text-sm font-medium tabular-nums text-stone-800 dark:text-stone-200">{dispatchNo}</p>
+                </div>
+                <span className="rounded-full border border-stone-200 dark:border-stone-700 bg-white/80 dark:bg-stone-900 px-2 py-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                  Locked
+                </span>
+              </div>
+            </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
-              Target sale number <span className="text-xs text-stone-400 dark:text-stone-500">(the auction sale, e.g. 2026-023)</span>
-            </label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Sale number</label>
             <input
               name="target_sale_no"
-              placeholder="2026-023"
+              required
+              placeholder="023"
               className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>
@@ -80,11 +87,12 @@ export default async function NewDispatchPage({
           </div>
           <div>
             <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
-              Sale date <span className="text-xs text-stone-400 dark:text-stone-500">(optional — ~3 weeks after dispatch)</span>
+              Sale date <span className="text-red-500">*</span>
             </label>
             <input
               type="date"
               name="sale_date"
+              required
               className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>

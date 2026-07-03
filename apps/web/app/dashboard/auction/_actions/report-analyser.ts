@@ -23,7 +23,7 @@ export async function ingestAckAuto(formData: FormData) {
   const parsed = parseAcknowledgement(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!importId) return back(REP, "Could not stage.");
   redirect(`${AUC}/${saleId}/ack/${importId}`);
 }
@@ -37,7 +37,7 @@ export async function ingestValAuto(formData: FormData) {
   const parsed = parseValuation(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!importId) return back(REP, "Could not stage.");
   redirect(`${AUC}/${saleId}/valuation/${importId}`);
 }
@@ -51,7 +51,7 @@ export async function ingestConAuto(formData: FormData) {
   const parsed = parseContract(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No dispatch found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", (file as File).name, text, parsed);
+  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!importId) return back(REP, "Could not stage.");
   redirect(`${AUC}/${saleId}/contract/${importId}`);
 }

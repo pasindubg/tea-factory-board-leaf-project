@@ -173,7 +173,7 @@ export default async function BankReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {sale?.sale_no ?? ""}
+          ← Dispatch {sale?.sale_no ?? ""}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ④ — settlement ↔ bank</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">

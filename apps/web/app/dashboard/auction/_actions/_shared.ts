@@ -8,6 +8,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { getDefaultRoles } from "@/lib/roles";
+import { saleNoKey } from "../sale-number";
 
 export const AUC = "/dashboard/auction";
 export const REP = "/dashboard/auction/reports";
@@ -38,16 +39,21 @@ export const toISODate = (d: string | null): string | null => {
 
 // Parse → stage into doc_imports (idempotent on factory_id + content hash).
 // Returns the import id. The single staging path for every document type.
+// The hash is computed from the RAW file bytes, not the extracted text —
+// PDF text extraction can vary across runs (whitespace, line breaks), so
+// hashing bytes is the reliable dedupe key for re-uploads of the same file.
 export async function stageImport(
   supabase: Supa,
   factoryId: string,
   saleId: string,
   docType: DocType,
-  filename: string,
-  text: string,
+  file: File,
   parsed: unknown,
 ): Promise<string | null> {
-  const contentHash = createHash("sha256").update(text).digest("hex");
+  const filename = file.name;
+  const contentHash = createHash("sha256")
+    .update(Buffer.from(await file.arrayBuffer()))
+    .digest("hex");
   const { data: existing } = await supabase
     .from("doc_imports")
     .select("id")
@@ -89,7 +95,41 @@ export async function writeAudit(supabase: Supa, factoryId: string, row: {
   });
 }
 
+// Find an existing dispatch whose sale_no OR target_sale_no matches saleNo (by
+// normalized key). Optionally scoped to a broker. Returns null if none match.
+export async function findSaleId(
+  supabase: Supa,
+  factoryId: string,
+  saleNo: string | null,
+  brokerId?: string,
+): Promise<string | null> {
+  const key = saleNoKey(saleNo);
+  if (!key) return null;
+  let q = supabase
+    .from("auction_sales")
+    .select("id, sale_no, target_sale_no")
+    .eq("factory_id", factoryId);
+  if (brokerId) q = q.eq("broker_id", brokerId);
+  const { data } = await q;
+  const match = (data ?? []).find(
+    (c) => saleNoKey(c.sale_no as string) === key || saleNoKey(c.target_sale_no as string) === key,
+  );
+  return (match?.id as string) ?? null;
+}
+
+export async function nextDispatchNo(supabase: Supa): Promise<string> {
+  const { data } = await supabase.from("auction_sales").select("sale_no");
+  const maxNo = (data ?? []).reduce((max, row) => {
+    const match = (row.sale_no as string | null)?.match(/\d+$/);
+    return match ? Math.max(max, Number(match[0])) : max;
+  }, 0);
+  return String(maxNo + 1).padStart(3, "0");
+}
+
 // Resolve (or create) a dispatch by sale number for the report-analyser auto flow.
+// Matches an existing dispatch on either the dispatch number or the auction sale
+// number (normalized) before creating, so re-uploading documents for a sale that
+// already has a dispatch attaches to it instead of spawning a duplicate.
 export async function resolveSale(
   supabase: Supa,
   factoryId: string,
@@ -97,18 +137,14 @@ export async function resolveSale(
 ): Promise<string | null> {
   const sn = saleNo?.trim();
   if (!sn) return null;
-  const { data: existing } = await supabase
-    .from("auction_sales")
-    .select("id")
-    .eq("sale_no", sn)
-    .eq("factory_id", factoryId)
-    .maybeSingle();
-  if (existing?.id) return existing.id as string;
+  const existingId = await findSaleId(supabase, factoryId, sn);
+  if (existingId) return existingId;
   const { data: br } = await supabase.from("brokers").select("id").eq("factory_id", factoryId).limit(1).single();
   if (!br?.id) return null;
+  const dispatchNo = await nextDispatchNo(supabase);
   const { data: created } = await supabase
     .from("auction_sales")
-    .insert({ factory_id: factoryId, broker_id: br.id, sale_no: sn, status: "dispatched" })
+    .insert({ factory_id: factoryId, broker_id: br.id, sale_no: dispatchNo, target_sale_no: sn, status: "draft" })
     .select("id")
     .single();
   return (created?.id as string) ?? null;
@@ -127,7 +163,7 @@ export async function stageBankCsv(
   autoMatch: boolean,
 ): Promise<{ importId: string; count: number } | { error: string }> {
   const parsed = parseBankCsv(text);
-  const importId = await stageImport(supabase, factoryId, saleId, "bank_csv", file.name, text, parsed);
+  const importId = await stageImport(supabase, factoryId, saleId, "bank_csv", file, parsed);
   if (!importId) return { error: "Could not stage the CSV." };
 
   await supabase.from("bank_txns").delete().eq("import_batch_id", importId);

@@ -13,7 +13,7 @@ export async function linkOrphanLot(input: {
   const { supabase, profile } = await requireProfile(roles());
   const markId = input.candidateMarkCode ? (await supabase.from("marks").select("id").eq("code", input.candidateMarkCode).maybeSingle()).data?.id as string ?? null : null;
   const weightDelta = Number((input.candidateNetWt - input.orphanNetWt).toFixed(2));
-  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "catalogued", shutout_reason: null }).eq("id", input.lotId).eq("sale_id", input.saleId);
+  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "acknowledged", shutout_reason: null }).eq("id", input.lotId).eq("sale_id", input.saleId);
   await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Linked", detail: `Invoice ${input.invoiceNo} → lot ${input.candidateLotNo ?? "—"}`, reason: input.reason, actor: profile.name, confidenceShown: input.confidence, weightDelta: weightDelta !== 0 ? weightDelta : null });
   revalidatePath(`${AUC}/${input.saleId}`);
 }

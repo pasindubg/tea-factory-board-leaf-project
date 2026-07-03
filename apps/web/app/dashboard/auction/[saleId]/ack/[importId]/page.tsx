@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import {
@@ -35,9 +36,9 @@ export default async function AckReviewPage({
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <a href={detail} className="text-green-700 dark:text-green-400 hover:underline">
+        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
-        </a>
+        </Link>
       </div>
     );
   }
@@ -60,17 +61,22 @@ export default async function AckReviewPage({
   const order: Record<ReconStatus, number> = { pending: 0, unexpected: 1, shutout: 2, catalogued: 3 };
 
   // ── Orphan-resolver inputs (#19) ──
-  // Orphans = pending invoiced lots still factory-side (drop ones already resolved
+  // Orphans = pending/invoiced lots still factory-side (drop ones already resolved
   // by a manual link/mark). Candidates = "unexpected" ack lots not yet consumed
-  // (their lot_no isn't already on a catalogued lot in the DB).
+  // (their lot_no isn't already on an acknowledged lot in the DB).
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
   const cataloguedLotNos = new Set(
-    (lotRows ?? []).filter((l) => l.state === "catalogued" && l.lot_no).map((l) => l.lot_no as string),
+    (lotRows ?? [])
+      .filter((l) => ["acknowledged", "catalogued"].includes(l.state as string) && l.lot_no)
+      .map((l) => l.lot_no as string),
   );
   const markOf = (id: string) => (lotById.get(id)?.marks as unknown as { code: string } | null)?.code ?? null;
   const orphans: Orphan[] = recon.rows
     .filter((r) => r.status === "pending" && r.invoiced)
-    .filter((r) => ["dispatched", "pending"].includes(lotById.get(r.invoiced!.id)?.state as string))
+    // Any not-yet-acknowledged invoiced lot is resolvable. Newly added
+    // invoiced lots after ack confirmation count too; excluding them silently
+    // hid the resolver for genuine orphans.
+    .filter((r) => ["invoiced", "dispatched", "pending"].includes(lotById.get(r.invoiced!.id)?.state as string))
     .map((r) => ({
       lotId: r.invoiced!.id,
       invoiceNo: r.invoiceNo,
@@ -101,7 +107,7 @@ export default async function AckReviewPage({
   const confirmed = imp.status === "confirmed";
   const s = recon.summary;
   const chips: [string, number, string][] = [
-    ["Catalogued", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
+    ["Acknowledged", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
     ["Shutout", s.shutout, "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"],
     ["Pending", s.pending, "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300"],
     ["Unexpected", s.unexpected, "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400"],
@@ -111,9 +117,9 @@ export default async function AckReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <a href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {sale?.sale_no ?? ""}
-        </a>
+        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
+          ← Dispatch {sale?.sale_no ?? ""}
+        </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ① — invoice ↔ acknowledgement</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
           {imp.source_filename ?? "acknowledgement.pdf"} · sale {parsed.saleNo ?? "—"} · sale date{" "}
@@ -151,13 +157,13 @@ export default async function AckReviewPage({
         )}
         {s.pending > 0 && (
           <span className="rounded-full bg-sky-50 dark:bg-sky-950 px-3 py-1 text-sm text-sky-700 dark:text-sky-300">
-            {s.pendingKg.toFixed(2)} kg dispatched, not yet catalogued
+            {s.pendingKg.toFixed(2)} kg invoiced, not yet acknowledged
           </span>
         )}
       </div>
 
       {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
-      <ComparePanel saleId={saleId} importId={importId} orphans={orphans} candidates={candidates} audit={audit} />
+      <ComparePanel saleId={saleId} orphans={orphans} candidates={candidates} audit={audit} />
 
       <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
         <table className="w-full text-sm">
@@ -192,7 +198,7 @@ export default async function AckReviewPage({
                     : `${r.weightDelta > 0 ? "+" : ""}${r.weightDelta.toFixed(2)}`}
                 </td>
                 <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
-                  {r.status === "pending" && "Dispatched, not in this ack — may roll to a later sale"}
+                  {r.status === "pending" && "Invoiced, not in this ack — may roll to a later sale"}
                   {r.status === "unexpected" && "In the acknowledgement but never invoiced"}
                   {r.gradeMismatch && <span className="text-amber-700 dark:text-amber-400"> grade differs</span>}
                   {r.weightDelta != null && Math.abs(r.weightDelta) > 0.01 && (
@@ -209,10 +215,10 @@ export default async function AckReviewPage({
         <div className="flex gap-3">
           <form action={confirmAcknowledgement.bind(null, importId, saleId)}>
             <SubmitButton
-              pendingText="Cataloguing…"
+              pendingText="Acknowledging..."
               className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
-              Confirm — catalogue {s.catalogued} lot(s)
+              Confirm — acknowledge {s.catalogued} lot(s)
             </SubmitButton>
           </form>
           <form action={rejectAcknowledgement.bind(null, importId, saleId)}>

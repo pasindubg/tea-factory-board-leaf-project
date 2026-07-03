@@ -1,25 +1,24 @@
-import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { DispatchesTable } from "./dispatches-table";
+import { NewDispatchForm } from "./new-dispatch-form";
+import { nextDispatchNo } from "./_actions/_shared";
 
 export default async function AuctionSalesPage() {
   const { supabase, profile } = await requireModuleAccess("auction");
   const isOwner = profile.role === "owner";
-  const { data: sales } = await supabase
-    .from("auction_sales")
-    .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
-    .order("created_at", { ascending: false });
+  const [{ data: sales }, { data: brokers }] = await Promise.all([
+    supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+      .order("created_at", { ascending: false }),
+    supabase.from("brokers").select("id, name").order("name"),
+  ]);
 
   return (
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Dispatches Overview</h2>
-        <Link
-          href="/dashboard/auction/new"
-          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-        >
-          New dispatch
-        </Link>
+        <NewDispatchForm brokers={brokers ?? []} nextDispatchNo={await nextDispatchNo(supabase)} />
       </div>
 
       <div className="mt-4">

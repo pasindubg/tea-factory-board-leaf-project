@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import {
@@ -34,9 +35,9 @@ export default async function ContractReviewPage({
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <a href={detail} className="text-green-700 dark:text-green-400 hover:underline">
+        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
-        </a>
+        </Link>
       </div>
     );
   }
@@ -84,16 +85,28 @@ export default async function ContractReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <a href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {sale?.sale_no ?? ""}
-        </a>
+        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
+          ← Dispatch {sale?.sale_no ?? ""}
+        </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
           {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} sale lines · prompt {parsed.promptDate ?? "—"}
         </p>
       </div>
 
-      {confirmed && <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">Sale lines confirmed and applied.</p>}
+      {confirmed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">
+          <span>Sale lines confirmed and applied.</span>
+          <form action={confirmContract.bind(null, importId, saleId)}>
+            <SubmitButton
+              pendingText="Re-running…"
+              className="rounded-md border border-green-600 dark:border-green-500 px-3 py-1 text-xs font-medium text-green-800 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900"
+            >
+              Re-run settlement
+            </SubmitButton>
+          </form>
+        </div>
+      )}
       {!hasValuations && (
         <p className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
           No valuations recorded yet — upload the Valuation Report first to compare against it. You can still

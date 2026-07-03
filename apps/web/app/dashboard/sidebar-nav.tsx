@@ -11,6 +11,12 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   const itemMatches = useCallback((item: ModuleDef): boolean => {
+    if (item.key === "auction-sale-detail") {
+      return pathname.startsWith("/dashboard/auction/sales/");
+    }
+    if (item.key === "auction-sales") {
+      return pathname === "/dashboard/auction/sales";
+    }
     if (item.key === "auction-dispatch-detail") {
       return pathname.startsWith("/dashboard/auction/") &&
         !pathname.startsWith("/dashboard/auction/dashboard") &&
@@ -85,9 +91,8 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
   function renderItem(item: ModuleDef, activeOverride?: boolean) {
     const isActive = activeOverride ?? itemMatches(item);
     const isLoading = isPending && pendingHref === item.href;
-    // "Dispatch Detail" is an indicator only — navigate to detail page is done
-    // from the overview list. Only make it clickable when already on a detail page.
-    const nonNavigable = item.key === "auction-dispatch-detail" && !isActive;
+    // Detail entries are indicators only — navigation happens from overview lists.
+    const nonNavigable = (item.key === "auction-dispatch-detail" || item.key === "auction-sale-detail") && !isActive;
     return (
       <button
         key={item.key}

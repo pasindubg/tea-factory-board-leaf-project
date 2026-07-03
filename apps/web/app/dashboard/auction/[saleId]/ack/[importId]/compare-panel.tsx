@@ -13,7 +13,7 @@ import {
 
 // Orphan-resolver "Compare" panel (#19). Re-themed from the previous chat's
 // OrphanResolver (dark neutral/emerald → the app's light+dark stone/green) and fed
-// REAL reconciliation data: pending invoiced lots (orphans) vs "unexpected" ack
+// REAL reconciliation data: pending/invoiced lots (orphans) vs "unexpected" ack
 // lots (candidates). Ranking + per-dimension transparency come from @tea/api's
 // match-orphans scoring core — nothing auto-links; every decision is the user's
 // and is written to auction_audit.
@@ -51,7 +51,6 @@ export function ComparePanel({
   audit,
 }: {
   saleId: string;
-  importId: string;
   orphans: Orphan[];
   candidates: Candidate[];
   audit: AuditRow[];
@@ -81,9 +80,12 @@ export function ComparePanel({
     [ranked, rejected, minConfidence],
   );
 
-  if (orphans.length === 0 || candidates.length === 0) {
-    return null; // nothing ambiguous to compare
+  if (orphans.length === 0) {
+    return null; // nothing factory-side left to resolve
   }
+  // Note: we still render with zero candidates — there may be no "unexpected" ack
+  // lot to link to, but the user must still be able to record an outcome
+  // (shut out / missing / leave unresolved) for each unacknowledged invoiced lot.
 
   const run = (fn: () => Promise<void>) => startTransition(() => { void fn().then(() => router.refresh()); });
 
@@ -141,7 +143,7 @@ export function ComparePanel({
       {open && orphan && (
         <div className={`space-y-4 border-t border-stone-200 dark:border-stone-700 p-4 ${isPending ? "opacity-60" : ""}`}>
           <p className="text-xs text-stone-500 dark:text-stone-400">
-            Pick the catalogued lot an invoiced-but-uncatalogued lot really is, or record that it has no match. Nothing
+            Pick the acknowledged lot an invoiced-but-unacknowledged lot really is, or record that it has no match. Nothing
             is auto-linked — every decision is yours and is logged.
           </p>
 
@@ -171,7 +173,7 @@ export function ComparePanel({
                 <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
                   Invoice {orphan.invoiceNo}
                   <span className="rounded-full bg-amber-200/70 dark:bg-amber-900 px-2 py-0.5 text-amber-800 dark:text-amber-300">
-                    uncatalogued
+                    unacknowledged
                   </span>
                 </div>
                 <div className="text-base font-semibold text-stone-800 dark:text-stone-100">
@@ -189,7 +191,7 @@ export function ComparePanel({
           <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
             Min confidence
             <input
-              type="range" min="0" max="0.9" step="0.05" value={minConfidence}
+              type="range" min="0" max="1" step="0.05" value={minConfidence}
               onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
               className="accent-green-600"
             />

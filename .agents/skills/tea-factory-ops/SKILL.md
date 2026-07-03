@@ -43,9 +43,11 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
 - **[docs/AUCTION.md](../../../docs/AUCTION.md)** — full spec for the Auction &
   Settlement track: state machine, data model, PDF ingestion,
   contract math, the four reconciliations. **Read before building any A-track work.**
+- **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational detail
+  pages. Follow it when creating or changing detail pages and in-record workflows.
 
-This skill is the *operational* layer (how to work here); those two are the
-*what/why*. Keep all three consistent when you change scope.
+This skill is the *operational* layer (how to work here); the linked docs are the
+*what/why/UI*. Keep them consistent when you change scope or interaction patterns.
 
 ## Status & what to build next
 

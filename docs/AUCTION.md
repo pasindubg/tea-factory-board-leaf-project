@@ -80,7 +80,9 @@ reconciliation.
 ```mermaid
 stateDiagram-v2
     [*] --> Dispatched: factory invoices & dispatches lot to the store
-    Dispatched --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
+    Dispatched --> GRN: store sends good-receive notice (PDF automation later)
+    GRN --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
+    Dispatched --> Catalogued: Acknowledgement confirmed before GRN is recorded
     Dispatched --> Pending: dispatched but absent from this (partial) ack  [Recon ①]
     Dispatched --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
     Pending --> Catalogued: catalogued by a later ack
@@ -90,21 +92,24 @@ stateDiagram-v2
     Valued --> Reprint: unsold — re-sampled, rolls to the next sale
     Valued --> Withdrawn: catalogued & valued but absent from the contract
     Sold --> Settled: Total Net Proceeds matched to a bank credit  [Recon ④]
+    Settled --> BrokerStatement: broker statement received after settlement
     Reprint --> [*]: a fresh dispatched lot is created under the next sale
     Shutout --> [*]: rolls to next sale (re-dispatched)
     Withdrawn --> [*]
-    Settled --> [*]
+    BrokerStatement --> [*]
 ```
 
 | From | To | Trigger (document) | Guard / assertion | Recon | Notes |
 |---|---|---|---|---|---|
-| — | `invoiced` | Factory action | invoice_no, grade, bags, kg/bag recorded | — | Lot dispatched to warehouse |
+| — | `invoiced` | Factory action | invoice_no, grade, bags, kg/bag recorded | — | Lot dispatched to warehouse; surface entry-time warnings such as below-minimum net kg |
+| `draft` | `grn` | Store GRN | Good-receive notice received | — | Dispatch-level stage; PDF parsing and automatic transition land later |
 | `invoiced` | `catalogued` | Acknowledgement | invoice_no found in catalogue; `net_wt` matches invoice | ① | `lot_no` assigned |
 | `invoiced` | `shutout` | Acknowledgement | invoice_no found in shutout/violation section | ① | Records `shutout_reason`, net wt; un-realized stock |
 | `catalogued` | `valued` | Valuation | lot_no found; `price_min ≤ price_max`; projected proceeds present | — | Tasting note stored |
 | `valued` | `sold` | Sellers Contract | lot_no found; buyer resolved; `proceeds == round(net_wt × price_per_kg, 2)` | ②, ③ | Creates `sale_line` + VAT ledger entry |
 | `valued` | `withdrawn` | Sellers Contract (absence) | lot catalogued/valued but no contract line | — | Unsold / withdrawn at auction |
 | `sold` | `settled` | Bank CSV | contract's Total Net Proceeds matched to a credit (full or ex-guarantee) | ④ | Guarantee-VAT may settle later |
+| `settled` | `broker_statement` | Broker statement | Final broker statement received | — | Dispatch-level post-settlement stage |
 
 **Invariant:** a lot is in exactly one state. Allowed transitions are only those
 above; anything else is a bug. Re-ingesting a document is idempotent (§6) and must
