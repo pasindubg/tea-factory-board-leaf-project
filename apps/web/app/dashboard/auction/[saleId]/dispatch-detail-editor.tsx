@@ -21,6 +21,7 @@ type SaleDetail = {
 };
 
 type MarkOption = { id: string; code: string; name: string };
+type GradeOption = { code: string; name: string };
 type DispatchStats = {
   totalLots: number;
   issueLots: number;
@@ -102,6 +103,7 @@ export function DispatchDetailEditor({
   broker,
   rows,
   marks,
+  grades,
   isOwner,
   addAction,
   soldLotIds,
@@ -110,6 +112,7 @@ export function DispatchDetailEditor({
   broker: string;
   rows: LotRow[];
   marks: MarkOption[];
+  grades: GradeOption[];
   isOwner: boolean;
   addAction: (formData: FormData) => Promise<string | null>;
   soldLotIds: string[];
@@ -131,6 +134,7 @@ export function DispatchDetailEditor({
   const issueLots = rows.filter((row) => ["pending", "missing", "shutout", "withdrawn"].includes(row.state ?? "")).length;
   const reprintLots = rows.filter((row) => row.state === "re-print").length;
   const valuedLots = rows.filter((row) => ["valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
+  const appliedThresholdGrades = new Set(rows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
   const dispatchStats: DispatchStats = {
     totalLots: rows.length,
     issueLots,
@@ -213,6 +217,7 @@ export function DispatchDetailEditor({
             saleId={sale.id}
             isOwner={isOwner}
             marks={marks}
+            grades={grades}
             addAction={addAction}
             canEdit={isEditing}
             canAdd={canAddLots}
@@ -264,7 +269,7 @@ export function DispatchDetailEditor({
               <CompactField label="Prompt" name="prompt_date" type="date" defaultValue={sale.prompt_date ?? ""} disabled={!isEditing} />
               <DetailRow label="Issues" value={`${issueLots} lots`} />
               <DetailRow label="Re-print" value={`${reprintLots} lots`} />
-              <DetailRow label="Min kg rule" value="Default 220 kg" />
+              <DetailRow label="Min kg rules" value={appliedThresholdGrades.size > 0 ? `${appliedThresholdGrades.size} applied` : "Not applied"} />
             </div>
 
             {canConfirmDraft && (

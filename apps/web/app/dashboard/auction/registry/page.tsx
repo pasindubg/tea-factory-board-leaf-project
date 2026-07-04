@@ -1,6 +1,9 @@
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { createBroker, createMark, createBrokerRate } from "../actions";
+import { BrokersTable, type BrokerRow } from "./brokers-table";
+import { RatesTable, type RateRow } from "./rates-table";
+import { MarksTable, type MarkRow } from "./marks-table";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
@@ -37,6 +40,17 @@ export default async function RegistryPage({
     .select("id, effective_from, brokerage_pct, insurance_per_kg, handling_per_kg, eplatform_per_kg, public_sale_ex_per_lot, documentation_per_lot, govt_relief_loan, charges_vat_pct, proceeds_vat_pct, brokers(name)")
     .order("effective_from", { ascending: false });
 
+  const brokerRows: BrokerRow[] = (brokers ?? []).map((b) => ({ id: b.id, name: b.name, vat_no: b.vat_no }));
+  const markRows: MarkRow[] = (marks ?? []).map((m) => ({ id: m.id, code: m.code, name: m.name }));
+  const rateRows: RateRow[] = (rates ?? []).map((r) => ({
+    id: r.id as string,
+    broker: (r.brokers as unknown as { name: string } | null)?.name ?? "—",
+    effectiveFrom: r.effective_from as string,
+    brokeragePct: Number(r.brokerage_pct),
+    insurancePerKg: Number(r.insurance_per_kg),
+    chargesVatPct: Number(r.charges_vat_pct),
+  }));
+
   return (
     <div className="space-y-10">
       {error && <p className="rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>}
@@ -45,31 +59,7 @@ export default async function RegistryPage({
         <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Brokers</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">The auction houses that catalogue, value and settle your teas.</p>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
-          <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">VAT no.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(brokers ?? []).map((b) => (
-                  <tr key={b.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                    <td className="px-4 py-3 font-medium">{b.name}</td>
-                    <td className="px-4 py-3">{b.vat_no ?? "—"}</td>
-                  </tr>
-                ))}
-                {(brokers ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={2} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">
-                      No brokers yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <BrokersTable rows={brokerRows} />
           <form action={createBroker} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
             <div>
               <label className={label}>Name</label>
@@ -97,37 +87,7 @@ export default async function RegistryPage({
           the most recent card (by effective date) is applied when you confirm a sellers contract.
         </p>
         <div className="mt-4 grid gap-6 lg:grid-cols-2">
-          <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                  <th className="px-3 py-3">Broker</th>
-                  <th className="px-3 py-3">Effective</th>
-                  <th className="px-3 py-3 text-right">Brokerage</th>
-                  <th className="px-3 py-3 text-right">Ins./kg</th>
-                  <th className="px-3 py-3 text-right">Charges VAT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(rates ?? []).map((r) => (
-                  <tr key={r.id as string} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                    <td className="px-3 py-3 font-medium">{(r.brokers as unknown as { name: string } | null)?.name ?? "—"}</td>
-                    <td className="px-3 py-3">{r.effective_from as string}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{Number(r.brokerage_pct).toFixed(3)}%</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{Number(r.insurance_per_kg).toFixed(4)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{Number(r.charges_vat_pct).toFixed(0)}%</td>
-                  </tr>
-                ))}
-                {(rates ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">
-                      No rate cards yet — add one so settlements can be computed.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <RatesTable rows={rateRows} />
           {isOwner ? (
             <form action={createBrokerRate} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
               <div className="grid grid-cols-2 gap-3">
@@ -177,31 +137,7 @@ export default async function RegistryPage({
         <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Estate marks</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">The selling identities you trade under (e.g. MF1530 KUMUDU).</p>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
-          <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                  <th className="px-4 py-3">Code</th>
-                  <th className="px-4 py-3">Name</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(marks ?? []).map((m) => (
-                  <tr key={m.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                    <td className="px-4 py-3 font-medium">{m.code}</td>
-                    <td className="px-4 py-3">{m.name}</td>
-                  </tr>
-                ))}
-                {(marks ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={2} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">
-                      No marks yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <MarksTable rows={markRows} />
           <form action={createMark} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
             <div>
               <label className={label}>Mark code</label>

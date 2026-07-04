@@ -14,4 +14,4 @@ Detail pages are operational work surfaces. Keep the user anchored on the record
 - Tables on detail pages should show explicit user-facing statuses. Do not collapse meaningful states such as `sold`, `shutout`, `invoiced`, `re-print`, or `missing` into vague labels when the exact state matters operationally.
 - Detail tables should surface preventable operational issues at entry time, not only after document reconciliation. For dispatch lots, show immediate warning chips for likely broker/store problems such as below-minimum net weight.
 - Draft detail pages should expose one direct confirmation action to the users allowed to enter the draft. After confirmation, only owners should be able to edit or correct the confirmed record.
-- If a validation chip uses a temporary system default, show the active default near the record details and in the chip tooltip until a proper settings page exists.
+- Do not hardcode operational validation thresholds. Broker/grade min-kg shutout rules live in Auction setup, and should only auto-shutout lots when the rule's apply toggle is enabled.

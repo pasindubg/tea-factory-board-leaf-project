@@ -77,3 +77,53 @@ export async function createBrokerRate(formData: FormData) {
   revalidatePath(reg);
   redirect(reg);
 }
+
+export async function createAuctionGrade(formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const settings = `${AUC}/settings`;
+  const code = str(formData.get("code")).toUpperCase();
+  const name = str(formData.get("name")) || code;
+  const sortOrder = Number(str(formData.get("sort_order")) || "0");
+  if (!code) back(settings, "Grade code is required.");
+  const { error } = await supabase.from("auction_grades").insert({
+    factory_id: profile.factory_id,
+    code,
+    name,
+    sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+    active: true,
+  });
+  if (error) back(settings, error.message);
+  revalidatePath(settings);
+  redirect(settings);
+}
+
+export async function saveBrokerGradeThreshold(formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const settings = `${AUC}/settings`;
+  const brokerId = str(formData.get("broker_id"));
+  const gradeId = str(formData.get("grade_id"));
+  const minNetKg = Number(str(formData.get("min_net_kg")));
+  const applies = formData.get("applies") === "on";
+  if (!brokerId || !gradeId) back(settings, "Broker and grade are required.");
+  if (!Number.isFinite(minNetKg) || minNetKg < 0) back(settings, "Minimum kg must be zero or greater.");
+
+  const [{ data: broker }, { data: grade }] = await Promise.all([
+    supabase.from("brokers").select("id").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle(),
+    supabase.from("auction_grades").select("id").eq("id", gradeId).eq("factory_id", profile.factory_id).maybeSingle(),
+  ]);
+  if (!broker || !grade) back(settings, "Unknown broker or grade.");
+
+  const { error } = await supabase.from("broker_grade_thresholds").upsert(
+    {
+      factory_id: profile.factory_id,
+      broker_id: brokerId,
+      grade_id: gradeId,
+      min_net_kg: minNetKg.toFixed(2),
+      applies,
+    },
+    { onConflict: "factory_id,broker_id,grade_id" },
+  );
+  if (error) back(settings, error.message);
+  revalidatePath(settings);
+  redirect(settings);
+}

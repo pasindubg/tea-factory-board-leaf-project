@@ -23,6 +23,7 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
         !pathname.startsWith("/dashboard/auction/sales") &&
         !pathname.startsWith("/dashboard/auction/reports") &&
         !pathname.startsWith("/dashboard/auction/registry") &&
+        !pathname.startsWith("/dashboard/auction/settings") &&
         !pathname.startsWith("/dashboard/auction/new") &&
         pathname !== "/dashboard/auction";
     }

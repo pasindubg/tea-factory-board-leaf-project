@@ -4,8 +4,19 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
+import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
 
-const MIN_DISPATCH_NET_KG = 220;
+const LOT_STATES = ["invoiced","acknowledged","pending","missing","shutout","valued","withdrawn","re-print","sold","settled"];
+
+const COLUMNS: ColumnDef<LotRow>[] = [
+  { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
+  { key: "lot_no", label: "Lot no.", accessor: (r) => r.lot_no ?? null, sortable: true, filter: "text" },
+  { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
+  { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true },
+  { key: "kg_per_bag", label: "kg/bag", accessor: (r) => r.kg_per_bag ?? null, sortable: true },
+  { key: "net_wt", label: "Net kg", accessor: (r) => Number(r.net_wt ?? 0), sortable: true },
+  { key: "state", label: "State", accessor: (r) => r.state ?? null, sortable: true, filter: "select", filterOptions: LOT_STATES.map((s) => ({ value: s, label: s })) },
+];
 
 export function DispatchedLotsTable({
   rows,
@@ -25,6 +36,8 @@ export function DispatchedLotsTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reprintId, setReprintId] = useState<string | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const controls = useListControls(rows, COLUMNS);
+  const visibleRows = controls.rows;
 
   useEffect(() => {
     setEditingId(null);
@@ -37,26 +50,35 @@ export function DispatchedLotsTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            <th className="px-3 py-3">Invoice(s)</th>
-            <th className="px-3 py-3">Lot no.</th>
-            <th className="px-3 py-3">Grade</th>
-            <th className="px-3 py-3 text-right">Bags</th>
-            <th className="px-3 py-3 text-right">kg/bag</th>
-            <th className="px-3 py-3 text-right">Net kg</th>
-            <th className="px-3 py-3">State</th>
+            {COLUMNS.map((col) => (
+              <th key={col.key} className={`px-3 py-3 ${["bags", "kg_per_bag", "net_wt"].includes(col.key) ? "text-right" : ""}`}>
+                {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
+              </th>
+            ))}
             <th className="px-3 py-3"></th>
           </tr>
+          {controls.hasFilters && (
+            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
+              {COLUMNS.map((col) => (
+                <th key={col.key} className="px-3 py-1.5 font-normal">
+                  <FilterCell col={col} controls={controls} />
+                </th>
+              ))}
+              <th className="px-3 py-1.5"></th>
+            </tr>
+          )}
         </thead>
         <tbody>
-          {rows.map((l) => {
+          {visibleRows.map((l) => {
             const isEditing = editingId === l.id;
             const invoices = (l.lot_invoices ?? []).map((i) => i.invoice_no);
             const invoiceLabel = invoices.length ? invoices.join(", ") : l.invoice_no ?? "";
             const displayState = soldLotIds.includes(l.id) ? "sold" : l.state;
             const bucket = stateBucket(displayState);
             const netWeight = Number(l.net_wt ?? 0);
-            const hasMinimumWeightIssue = netWeight > 0 && netWeight < MIN_DISPATCH_NET_KG;
-            const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the temporary ${MIN_DISPATCH_NET_KG} kg dispatch check. Grade-specific minimums are not configured yet.`;
+            const minNetKg = l.threshold_min_net_kg ?? 0;
+            const hasMinimumWeightIssue = l.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
+            const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`;
             const removable = l.state === "invoiced" || l.state === "pending";
             const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
 
@@ -202,6 +224,16 @@ export function DispatchedLotsTable({
               </tr>
             );
           })}
+          {visibleRows.length === 0 && rows.length > 0 && (
+            <tr>
+              <td colSpan={8} className="px-6 py-12 text-center">
+                <p className="text-sm text-stone-400 dark:text-stone-500">No lots match these filters.</p>
+                <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
+                  Clear filters
+                </button>
+              </td>
+            </tr>
+          )}
           {rows.length === 0 && (
             <tr>
               <td colSpan={8} className="px-6 py-12 text-center">

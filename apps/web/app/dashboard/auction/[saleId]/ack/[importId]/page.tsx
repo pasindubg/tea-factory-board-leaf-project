@@ -9,13 +9,7 @@ import {
 import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
 import { buildInvoicedLots } from "../../../recon-helpers";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
-
-const STATUS_STYLE: Record<ReconStatus, string> = {
-  catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
-  shutout: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
-  pending: "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300",
-  unexpected: "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400",
-};
+import { ReconTable } from "./recon-table";
 
 export default async function AckReviewPage({
   params,
@@ -165,51 +159,7 @@ export default async function AckReviewPage({
       {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
       <ComparePanel saleId={saleId} orphans={orphans} candidates={candidates} audit={audit} />
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-3 py-3">Invoice</th>
-              <th className="px-3 py-3">Result</th>
-              <th className="px-3 py-3">Invoiced</th>
-              <th className="px-3 py-3">Lot no.</th>
-              <th className="px-3 py-3">Catalogued (ack)</th>
-              <th className="px-3 py-3 text-right">Δ net kg</th>
-              <th className="px-3 py-3">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                <td className="px-3 py-2 font-medium">{r.invoiceNo}</td>
-                <td className="px-3 py-2">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[r.status]}`}>{r.status}</span>
-                </td>
-                <td className="px-3 py-2">
-                  {r.invoiced ? `${r.invoiced.grade} · ${r.invoiced.netWt.toFixed(2)} kg` : "—"}
-                </td>
-                <td className="px-3 py-2">{r.ack?.lotNo ?? "—"}</td>
-                <td className="px-3 py-2">
-                  {r.ack ? `${r.ack.grade} · ${r.ack.netWt.toFixed(2)} kg` : "—"}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {r.weightDelta == null
-                    ? "—"
-                    : `${r.weightDelta > 0 ? "+" : ""}${r.weightDelta.toFixed(2)}`}
-                </td>
-                <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
-                  {r.status === "pending" && "Invoiced, not in this ack — may roll to a later sale"}
-                  {r.status === "unexpected" && "In the acknowledgement but never invoiced"}
-                  {r.gradeMismatch && <span className="text-amber-700 dark:text-amber-400"> grade differs</span>}
-                  {r.weightDelta != null && Math.abs(r.weightDelta) > 0.01 && (
-                    <span className="text-amber-700 dark:text-amber-400"> weight differs</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ReconTable rows={rows} />
 
       {!confirmed && (
         <div className="flex gap-3">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { collectorForUser, requireModuleAccess } from "@/lib/profile";
 import { dayRange } from "@/lib/dates";
 import { WeighingsFilter } from "./weighings-filter";
+import { WeighingsTable, type WeighingRow } from "./weighings-table";
 
 export default async function WeighingsPage({
   searchParams,
@@ -33,6 +34,15 @@ export default async function WeighingsPage({
   ]);
 
   const totalKg = (weighings ?? []).reduce((sum, w) => sum + Number(w.weight_kg), 0);
+
+  const rows: WeighingRow[] = (weighings ?? []).map((w) => ({
+    id: w.id,
+    collectedAt: w.collected_at,
+    supplierName: (w.suppliers as unknown as { name: string } | null)?.name ?? "—",
+    collectorName: (w.collectors as unknown as { name: string } | null)?.name ?? "—",
+    weightKg: Number(w.weight_kg),
+    notes: w.notes,
+  }));
 
   return (
     <div>
@@ -67,40 +77,8 @@ export default async function WeighingsPage({
         </span>
       </div>
 
-      <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-4 py-3">Time</th>
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3">Collector</th>
-              <th className="px-4 py-3 text-right">Weight (kg)</th>
-              <th className="px-4 py-3">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(weighings ?? []).map((w) => (
-              <tr key={w.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                <td className="px-4 py-3">
-                  {new Date(w.collected_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </td>
-                <td className="px-4 py-3 font-medium">
-                  {(w.suppliers as unknown as { name: string } | null)?.name ?? "—"}
-                </td>
-                <td className="px-4 py-3">{(w.collectors as unknown as { name: string } | null)?.name ?? "—"}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{Number(w.weight_kg).toFixed(2)}</td>
-                <td className="px-4 py-3 text-stone-500 dark:text-stone-400">{w.notes ?? ""}</td>
-              </tr>
-            ))}
-            {(weighings ?? []).length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No weighings found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div className="mt-2">
+        <WeighingsTable rows={rows} />
       </div>
     </div>
   );

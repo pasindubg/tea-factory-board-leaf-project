@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { deleteSale, updateSale } from "./actions";
+import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
 
 type SaleRow = {
   id: string;
@@ -29,6 +30,16 @@ const STATE_PILL: Record<string, string> = {
 
 const ALL_STATES = ["draft","catalogued","valued","sold","settled"];
 
+const COLUMNS: ColumnDef<SaleRow>[] = [
+  { key: "sale_no", label: "Dispatch no.", accessor: (r) => r.sale_no, sortable: true, filter: "text" },
+  { key: "broker", label: "Broker", accessor: (r) => r.brokers?.name ?? null, sortable: true, filter: "select" },
+  { key: "target_sale_no", label: "Target sale", accessor: (r) => r.target_sale_no ?? null, sortable: true, filter: "text" },
+  { key: "dispatch_date", label: "Dispatched", accessor: (r) => r.dispatch_date ?? null, sortable: true },
+  { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true },
+  { key: "prompt_date", label: "Prompt", accessor: (r) => r.prompt_date ?? null, sortable: true },
+  { key: "status", label: "Status", accessor: (r) => r.status, sortable: true, filter: "select", filterOptions: ALL_STATES.map((s) => ({ value: s, label: s })) },
+];
+
 export function DispatchesTable({
   sales,
   isOwner,
@@ -41,6 +52,8 @@ export function DispatchesTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SaleDraft | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const controls = useListControls(rows, COLUMNS);
+  const visibleRows = controls.rows;
 
   useEffect(() => {
     setRows(sales);
@@ -50,7 +63,7 @@ export function DispatchesTable({
     setPendingIds(new Set());
   }, [sales]);
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const allSelected = visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.id));
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -63,7 +76,7 @@ export function DispatchesTable({
 
   function toggleAll() {
     if (allSelected) setSelected(new Set());
-    else setSelected(new Set(rows.map((s) => s.id)));
+    else setSelected(new Set(visibleRows.map((s) => s.id)));
   }
 
   async function deleteSelected() {
@@ -175,18 +188,26 @@ export function DispatchesTable({
                 <input type="checkbox" checked={allSelected} onChange={toggleAll} className="rounded" />
               </th>
             )}
-            <th className="px-4 py-3">Dispatch no.</th>
-            <th className="px-4 py-3">Broker</th>
-            <th className="px-4 py-3">Target sale</th>
-            <th className="px-4 py-3">Dispatched</th>
-            <th className="px-4 py-3">Sale date</th>
-            <th className="px-4 py-3">Prompt</th>
-            <th className="px-4 py-3">Status</th>
+            {COLUMNS.map((col) => (
+              <th key={col.key} className="px-4 py-3">
+                {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
+              </th>
+            ))}
             {isOwner && <th className="w-16 px-4 py-3"></th>}
           </tr>
+          {controls.hasFilters && (
+            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
+              {COLUMNS.map((col) => (
+                <th key={col.key} className="px-4 py-1.5 font-normal">
+                  <FilterCell col={col} controls={controls} />
+                </th>
+              ))}
+              {isOwner && <th className="px-4 py-1.5"></th>}
+            </tr>
+          )}
         </thead>
         <tbody>
-          {rows.map((s) => {
+          {visibleRows.map((s) => {
             const broker = s.brokers?.name ?? "—";
             const isEditing = editingId === s.id;
             const rowBusy = pendingIds.has(s.id);
@@ -295,6 +316,16 @@ export function DispatchesTable({
               </tr>
             );
           })}
+          {visibleRows.length === 0 && rows.length > 0 && (
+            <tr>
+              <td colSpan={isOwner ? 9 : 7} className="px-6 py-12 text-center">
+                <p className="text-sm text-stone-400 dark:text-stone-500">No dispatches match these filters.</p>
+                <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
+                  Clear filters
+                </button>
+              </td>
+            </tr>
+          )}
           {rows.length === 0 && (
             <tr>
               <td colSpan={isOwner ? 9 : 7} className="px-6 py-12 text-center">

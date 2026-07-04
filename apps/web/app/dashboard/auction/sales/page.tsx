@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { saleNoKey } from "../sale-number";
 import { money } from "../format";
+import { SalesOverviewTable, type SaleOverviewRow } from "./sales-overview-table";
 
 type LineRow = {
   id: string;
@@ -134,6 +134,18 @@ export default async function SalesPage() {
   const totalVat = saleRows.reduce((s, r) => s + r.vat, 0);
   const totalNetKg = saleRows.reduce((s, r) => s + r.netKg, 0);
   const totalLots = saleRows.reduce((s, r) => s + r.lotsSold, 0);
+  const tableRows: SaleOverviewRow[] = saleRows.map((s) => ({
+    saleNo: s.saleNo,
+    href: saleHref(s.saleNo),
+    dispatchNos: [...s.dispatches.values()],
+    saleDate: s.saleDate,
+    broker: s.broker,
+    lotsSold: s.lotsSold,
+    netKg: s.netKg,
+    proceeds: s.proceeds,
+    vat: s.vat,
+    guaranteeLots: s.guaranteeLots,
+  }));
 
   return (
     <div className="space-y-6">
@@ -157,54 +169,7 @@ export default async function SalesPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              <th className="px-4 py-3">Sale no.</th>
-              <th className="px-4 py-3">Dispatches</th>
-              <th className="px-4 py-3">Broker</th>
-              <th className="px-4 py-3">Sale date</th>
-              <th className="px-4 py-3 text-right">Lots sold</th>
-              <th className="px-4 py-3 text-right">Net kg</th>
-              <th className="px-4 py-3 text-right">Proceeds</th>
-              <th className="px-4 py-3 text-right">VAT</th>
-              <th className="px-4 py-3 text-right">Guarantee</th>
-            </tr>
-          </thead>
-          <tbody>
-            {saleRows.map((sale) => (
-              <tr key={sale.saleNo} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
-                <td className="px-4 py-2 font-medium">
-                  <Link
-                    href={saleHref(sale.saleNo)}
-                    className="text-green-700 hover:underline dark:text-green-400"
-                  >
-                    {sale.saleNo}
-                  </Link>
-                </td>
-                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">
-                  {[...sale.dispatches.values()].join(", ") || "—"}
-                </td>
-                <td className="px-4 py-2">{sale.broker}</td>
-                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{sale.saleDate ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{sale.lotsSold}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(sale.netKg)}</td>
-                <td className="px-4 py-2 text-right tabular-nums font-medium">{money(sale.proceeds)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(sale.vat)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{sale.guaranteeLots}</td>
-              </tr>
-            ))}
-            {saleRows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No sales yet. Confirm a sellers contract to record auction sales.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <SalesOverviewTable rows={tableRows} />
     </div>
   );
 }

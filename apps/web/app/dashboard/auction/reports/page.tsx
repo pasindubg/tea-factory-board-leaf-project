@@ -3,6 +3,7 @@ import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { ingestAckAuto, ingestValAuto, ingestConAuto, ingestBankAuto } from "../actions";
 import { ReportsTabs } from "./reports-tabs";
+import { SettlementsTable, type SettlementRow } from "./settlements-table";
 
 export default async function ReportsPage() {
   const { supabase } = await requireModuleAccess("auction");
@@ -67,6 +68,8 @@ export default async function ReportsPage() {
     };
   });
 
+  const settlementRows: SettlementRow[] = rows;
+
   const allImports = (imports ?? []) as unknown as { id: string; doc_type: string; source_filename: string | null; status: string; parsed_at: string | null; sale_id: string | null }[];
   const ackImports = allImports.filter((i) => i.doc_type === "acknowledgement");
   const valImports = allImports.filter((i) => i.doc_type === "valuation");
@@ -97,57 +100,7 @@ export default async function ReportsPage() {
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                <th className="px-4 py-3">Contract</th>
-                <th className="px-4 py-3">Dispatch</th>
-                <th className="px-4 py-3">Sale</th>
-                <th className="px-4 py-3">Broker</th>
-                <th className="px-4 py-3 text-right">Proceeds</th>
-                <th className="px-4 py-3 text-right">Deductions</th>
-                <th className="px-4 py-3 text-right">Net proceeds</th>
-                <th className="px-4 py-3 text-right">Output VAT</th>
-                <th className="px-4 py-3 text-right">Total net</th>
-                <th className="px-4 py-3 text-right">Credited</th>
-                <th className="px-4 py-3 text-right">Remaining</th>
-                <th className="px-4 py-3">Settled</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                  <td className="px-4 py-2 font-medium">{r.contractNo}</td>
-                  <td className="px-4 py-2">{r.dispatchNo}</td>
-                  <td className="px-4 py-2">{r.saleNo}</td>
-                  <td className="px-4 py-2">{r.broker}</td>
-                  <td className="px-4 py-2 text-right">{r.proceeds.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right">{r.deductions.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right">{r.netProceeds.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right">{r.outputVat.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right">{r.totalNet.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2 text-right text-green-700 dark:text-green-400">{r.credited.toLocaleString("en-LK", { minimumFractionDigits: 2 })}</td>
-                  <td className={`px-4 py-2 text-right ${r.settled ? "text-stone-400 dark:text-stone-500" : "text-amber-700 dark:text-amber-400 font-medium"}`}>
-                    {r.remaining.toLocaleString("en-LK", { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${r.settled ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-400" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-400"}`}>
-                      {r.settled ? "Settled" : "Pending"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                    No settlements yet — upload a sellers contract from the “Upload &amp; review documents” tab.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <SettlementsTable rows={settlementRows} />
       </section>
     </div>
   );

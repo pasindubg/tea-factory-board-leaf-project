@@ -19,7 +19,7 @@ export default async function SaleDetailPage({
 
   const { data: sale } = await supabase
     .from("auction_sales")
-    .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
     .eq("id", saleId)
     .single();
 
@@ -35,8 +35,9 @@ export default async function SaleDetailPage({
   }
 
   const broker = (sale.brokers as unknown as { name: string } | null)?.name ?? "—";
-  const [{ data: marks }, { data: lots }, { data: saleLines }] = await Promise.all([
+  const [{ data: marks }, { data: grades }, { data: lots }, { data: saleLines }, { data: thresholds }] = await Promise.all([
     supabase.from("marks").select("id, code, name").order("code"),
+    supabase.from("auction_grades").select("id, code, name").eq("active", true).order("sort_order").order("code"),
     supabase
       .from("auction_lots")
       .select(
@@ -45,10 +46,28 @@ export default async function SaleDetailPage({
       .eq("sale_id", saleId)
       .order("invoice_no"),
     supabase.from("sale_lines").select("lot_id").eq("sale_id", saleId),
+    supabase
+      .from("broker_grade_thresholds")
+      .select("min_net_kg, applies, auction_grades(code)")
+      .eq("broker_id", sale.broker_id as string),
   ]);
 
   const rows = lots ?? [];
   const soldLotIds = (saleLines ?? []).map((line) => line.lot_id as string).filter(Boolean);
+  const thresholdByGrade = new Map<string, { minNetKg: number; applies: boolean }>();
+  for (const threshold of (thresholds ?? []) as unknown as {
+    min_net_kg: string | number;
+    applies: boolean;
+    auction_grades: { code: string }[] | { code: string } | null;
+  }[]) {
+    const gradeRef = Array.isArray(threshold.auction_grades) ? threshold.auction_grades[0] : threshold.auction_grades;
+    if (gradeRef?.code) {
+      thresholdByGrade.set(gradeRef.code, {
+        minNetKg: Number(threshold.min_net_kg),
+        applies: threshold.applies,
+      });
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -67,6 +86,13 @@ export default async function SaleDetailPage({
         }}
         broker={broker}
         rows={rows.map(l => ({
+          ...(() => {
+            const threshold = thresholdByGrade.get((l.grade as string | null) ?? "");
+            return {
+              threshold_min_net_kg: threshold ? threshold.minNetKg : null,
+              threshold_applies: threshold?.applies ?? false,
+            };
+          })(),
           id: l.id as string,
           invoice_no: l.invoice_no as string | null,
           lot_no: l.lot_no as string | null,
@@ -82,6 +108,7 @@ export default async function SaleDetailPage({
         }))}
         isOwner={isOwner}
         marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string }))}
+        grades={(grades ?? []).map((grade) => ({ code: grade.code as string, name: grade.name as string }))}
         addAction={addDispatchedLot.bind(null, sale.id)}
         soldLotIds={soldLotIds}
       />

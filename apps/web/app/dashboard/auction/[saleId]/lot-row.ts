@@ -12,6 +12,8 @@ export type LotRow = {
   state: string | null;
   shutout_reason: string | null;
   lot_source: string | null;
+  threshold_min_net_kg: number | null;
+  threshold_applies: boolean;
   marks: { code: string; name: string } | null;
   lot_invoices: { invoice_no: string }[] | null;
 };

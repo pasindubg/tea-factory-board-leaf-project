@@ -4,19 +4,10 @@ import { SubmitButton } from "@/components/submit-button";
 import { reconcileBank } from "@tea/api";
 import { confirmBankMatches } from "../../../actions";
 import { BankResolver, type ResolverSettlement, type AuditRow } from "./bank-resolver";
+import { SettlementStatusTable, type SettlementStatus } from "./settlement-status-table";
 
 const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const GRACE_DAYS = 7;
-
-type SettlementStatus = "settled" | "cash-only" | "under-paid" | "over-paid" | "awaiting" | "unpaid";
-const STATUS_STYLE: Record<SettlementStatus, string> = {
-  settled: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300",
-  "cash-only": "bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300",
-  "under-paid": "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-300",
-  "over-paid": "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-300",
-  awaiting: "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300",
-  unpaid: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300",
-};
 
 const daysAfter = (a: string, b: string) =>
   (new Date(`${a}T00:00:00`).getTime() - new Date(`${b}T00:00:00`).getTime()) / 86_400_000;
@@ -203,39 +194,7 @@ export default async function BankReviewPage({
       </div>
 
       {/* Per-settlement status */}
-      <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-3 py-3">Contract</th>
-              <th className="px-3 py-3 text-right">Expected</th>
-              <th className="px-3 py-3 text-right">Cash-only</th>
-              <th className="px-3 py-3 text-right">Received</th>
-              <th className="px-3 py-3">Status</th>
-              <th className="px-3 py-3">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {computed.map((c) => (
-              <tr key={c.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                <td className="px-3 py-2 font-medium">{c.contractNo}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{LKR(c.expected)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{LKR(c.cashOnly)}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{c.received > 0 ? LKR(c.received) : "—"}</td>
-                <td className="px-3 py-2">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[c.status]}`}>{c.status}</span>
-                </td>
-                <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">{c.note}</td>
-              </tr>
-            ))}
-            {computed.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No settlements.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <SettlementStatusTable rows={computed} />
 
       {/* Apply suggested auto-matches */}
       {suggested.matches.length > 0 && (

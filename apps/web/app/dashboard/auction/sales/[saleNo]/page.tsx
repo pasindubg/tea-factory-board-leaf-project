@@ -4,6 +4,8 @@ import { requireModuleAccess } from "@/lib/profile";
 import { stateBucket } from "../../state-buckets";
 import { saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
+import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
+import { SaleLinesTable, type SaleLineRow } from "./sale-lines-table";
 
 type DispatchRow = {
   id: string;
@@ -188,6 +190,47 @@ export default async function SaleDetailPage({
     { label: "Missing", count: lotCount(lotRows, ["missing"]) },
   ].filter((item) => item.count > 0);
 
+  const dispatchTableRows: DispatchInSaleRow[] = dispatches.map((dispatch) => {
+    const state = stateBucket(dispatch.status);
+    const dispatchLots = lotsByDispatch.get(dispatch.id) ?? [];
+    return {
+      id: dispatch.id,
+      saleNo: dispatch.sale_no,
+      broker: (dispatch.brokers as { name: string } | null)?.name ?? "—",
+      dispatchDate: dispatch.dispatch_date,
+      saleDate: dispatch.sale_date,
+      lotsCount: dispatchLots.length,
+      statusChips: statusBreakdown(dispatchLots),
+      soldLots: lineRows.filter((line) => line.sale_id === dispatch.id).length,
+      reprintLots: dispatchLots.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length,
+      statusLabel: state.label,
+      statusStyle: state.style,
+    };
+  });
+
+  const saleLineTableRows: SaleLineRow[] = lineRows.map((line) => {
+    const lot = line.auction_lots;
+    const dispatch = dispatchById.get(line.sale_id);
+    return {
+      id: line.id,
+      dispatchId: dispatch?.id ?? null,
+      dispatchSaleNo: dispatch?.sale_no ?? null,
+      lotNo: lot?.lot_no ?? null,
+      invoiceNo: lot?.invoice_no ?? null,
+      grade: lot?.grade ?? null,
+      buyerName: line.buyers?.name ?? null,
+      buyerVatNo: line.buyers?.vat_no ?? null,
+      bags: lot?.bags ?? null,
+      kgPerBag: lot?.kg_per_bag != null ? Number(lot.kg_per_bag) : null,
+      netWt: Number(line.net_wt ?? 0),
+      pricePerKg: Number(line.price_per_kg ?? 0),
+      proceeds: Number(line.proceeds ?? 0),
+      vatAmount: Number(line.vat_amount ?? 0),
+      onGuarantee: Boolean(line.on_guarantee),
+      reprint: Boolean(lot?.reprint_source_lot_id),
+    };
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -242,127 +285,12 @@ export default async function SaleDetailPage({
 
       <section>
         <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Dispatches in this sale</h3>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-                <th className="px-4 py-3">Dispatch no.</th>
-                <th className="px-4 py-3">Broker</th>
-                <th className="px-4 py-3">Dispatched</th>
-                <th className="px-4 py-3">Sale date</th>
-                <th className="px-4 py-3 text-right">Lots</th>
-                <th className="px-4 py-3">Lot statuses</th>
-                <th className="px-4 py-3 text-right">Sold</th>
-                <th className="px-4 py-3 text-right">Re-print</th>
-                <th className="px-4 py-3">Dispatch status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dispatches.map((dispatch) => {
-                const state = stateBucket(dispatch.status);
-                const dispatchLots = lotsByDispatch.get(dispatch.id) ?? [];
-                const soldLots = lineRows.filter((line) => line.sale_id === dispatch.id).length;
-                const reprintLots = dispatchLots.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
-                return (
-                  <tr key={dispatch.id} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
-                    <td className="px-4 py-2 font-medium">
-                      <Link href={`/dashboard/auction/${dispatch.id}`} className="text-green-700 hover:underline dark:text-green-400">
-                        {dispatch.sale_no}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2">{(dispatch.brokers as { name: string } | null)?.name ?? "—"}</td>
-                    <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{dispatch.dispatch_date ?? "—"}</td>
-                    <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{dispatch.sale_date ?? "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{dispatchLots.length}</td>
-                    <td className="px-4 py-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {statusBreakdown(dispatchLots).map((item) => (
-                          <span key={item.label} className={`rounded-full px-2 py-0.5 text-xs ${item.style}`}>
-                            {item.label}: {item.count}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{soldLots}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{reprintLots}</td>
-                    <td className="px-4 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${state.style}`}>{state.label}</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DispatchesInSaleTable rows={dispatchTableRows} />
       </section>
 
       <section>
         <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Sales done on this sale</h3>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-                <th className="px-4 py-3">Dispatch no.</th>
-                <th className="px-4 py-3">Lot no.</th>
-                <th className="px-4 py-3">Invoice</th>
-                <th className="px-4 py-3">Grade</th>
-                <th className="px-4 py-3">Buyer</th>
-                <th className="px-4 py-3 text-right">Bags</th>
-                <th className="px-4 py-3 text-right">kg/bag</th>
-                <th className="px-4 py-3 text-right">Net kg</th>
-                <th className="px-4 py-3 text-right">Price/kg</th>
-                <th className="px-4 py-3 text-right">Proceeds</th>
-                <th className="px-4 py-3 text-right">VAT</th>
-                <th className="px-4 py-3">Guarantee</th>
-                <th className="px-4 py-3">Re-print</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineRows.map((line) => {
-                const lot = line.auction_lots;
-                const buyer = line.buyers;
-                const dispatch = dispatchById.get(line.sale_id);
-                return (
-                  <tr key={line.id} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
-                    <td className="px-4 py-2">
-                      {dispatch ? (
-                        <Link href={`/dashboard/auction/${dispatch.id}`} className="text-green-700 hover:underline dark:text-green-400">
-                          {dispatch.sale_no}
-                        </Link>
-                      ) : "—"}
-                    </td>
-                    <td className="px-4 py-2">{lot?.lot_no ?? "—"}</td>
-                    <td className="px-4 py-2 font-medium">{lot?.invoice_no ?? "—"}</td>
-                    <td className="px-4 py-2">{lot?.grade ?? "—"}</td>
-                    <td className="px-4 py-2">
-                      {buyer?.name ?? "—"}
-                      {buyer?.vat_no && <span className="ml-1 text-xs text-stone-400 dark:text-stone-500">{buyer.vat_no}</span>}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{lot?.bags ?? "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{lot?.kg_per_bag != null ? Number(lot.kg_per_bag).toFixed(2) : "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{Number(line.net_wt ?? 0).toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{Number(line.price_per_kg ?? 0).toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-medium">{money(Number(line.proceeds ?? 0))}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{money(Number(line.vat_amount ?? 0))}</td>
-                    <td className="px-4 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${line.on_guarantee ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-400" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
-                        {line.on_guarantee ? "Guarantee" : "Cash"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2">{lot?.reprint_source_lot_id ? "Yes" : "No"}</td>
-                  </tr>
-                );
-              })}
-              {lineRows.length === 0 && (
-                <tr>
-                  <td colSpan={13} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                    No sold lots have been confirmed for this sale yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <SaleLinesTable rows={saleLineTableRows} />
       </section>
     </div>
   );

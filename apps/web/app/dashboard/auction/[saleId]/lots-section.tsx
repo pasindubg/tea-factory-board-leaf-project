@@ -10,6 +10,7 @@ export function LotsSection({
   saleId,
   isOwner,
   marks,
+  grades,
   addAction,
   canEdit,
   canAdd,
@@ -19,6 +20,7 @@ export function LotsSection({
   saleId: string;
   isOwner: boolean;
   marks: { id: string; code: string; name: string }[];
+  grades: { code: string; name: string }[];
   addAction: (formData: FormData) => Promise<string | null>;
   canEdit: boolean;
   canAdd: boolean;
@@ -51,6 +53,8 @@ export function LotsSection({
       state: "invoiced",
       shutout_reason: null,
       lot_source: "factory",
+      threshold_min_net_kg: null,
+      threshold_applies: false,
       marks: mark ? { code: mark.code, name: mark.name } : null,
       lot_invoices: null,
     };
@@ -77,7 +81,7 @@ export function LotsSection({
             {currentRows.length} lot{currentRows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
           </p>
         </div>
-        {canAdd && <DispatchLotForm action={handleAdd} marks={marks} />}
+        {canAdd && <DispatchLotForm action={handleAdd} marks={marks} grades={grades} />}
       </div>
 
       <div className="mt-4">

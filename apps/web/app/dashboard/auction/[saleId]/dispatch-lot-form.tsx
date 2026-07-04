@@ -3,16 +3,17 @@
 import { useState, useRef, useEffect } from "react";
 import { SubmitButton } from "@/components/submit-button";
 
-const GRADES = ["OP", "OP1", "OPA", "PEK", "PEK1", "BOP", "BOPF", "FBOP", "DUST", "BM"];
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export function DispatchLotForm({
   action,
   marks,
+  grades,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   marks: { id: string; code: string; name: string }[];
+  grades: { code: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(1);
@@ -81,9 +82,9 @@ export function DispatchLotForm({
             <option value="" disabled>
               Choose grade
             </option>
-            {GRADES.map((g) => (
-              <option key={g} value={g}>
-                {g}
+            {grades.map((grade) => (
+              <option key={grade.code} value={grade.code}>
+                {grade.code}
               </option>
             ))}
           </select>

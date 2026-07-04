@@ -6,16 +6,9 @@ import {
   type ParsedContract,
   type ValuationInput,
   type SaleInput,
-  type ValClass,
 } from "@tea/api";
 import { confirmContract, rejectImport } from "../../../actions";
-
-const CLASS_STYLE: Record<ValClass, string> = {
-  above: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
-  within: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
-  below: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400",
-  "no-valuation": "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400",
-};
+import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
 export default async function ContractReviewPage({
   params,
@@ -82,6 +75,23 @@ export default async function ContractReviewPage({
   const s = recon.summary;
   const hasValuations = valInputs.length > 0;
 
+  const contractLineRows: ContractLineRow[] = parsed.lines.map((l) => {
+    const lotId = invoiceToLotId.get(l.invoiceNo);
+    const r = lotId ? reconByLot.get(lotId) : undefined;
+    return {
+      invoiceNo: l.invoiceNo,
+      buyerName: l.buyerName,
+      pricePerKg: l.pricePerKg,
+      priceMin: r?.priceMin ?? null,
+      priceMax: r?.priceMax ?? null,
+      classification: r?.classification ?? "no-valuation",
+      proceeds: l.proceeds,
+      variance: r?.variance ?? null,
+      vatAmount: l.vatAmount,
+      onGuarantee: l.onGuarantee,
+    };
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -139,54 +149,7 @@ export default async function ContractReviewPage({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-3 py-3">Invoice</th>
-              <th className="px-3 py-3">Buyer</th>
-              <th className="px-3 py-3 text-right">Price/kg</th>
-              <th className="px-3 py-3">Valuation /kg</th>
-              <th className="px-3 py-3">vs range</th>
-              <th className="px-3 py-3 text-right">Proceeds</th>
-              <th className="px-3 py-3 text-right">Δ vs projected</th>
-              <th className="px-3 py-3">VAT</th>
-            </tr>
-          </thead>
-          <tbody>
-            {parsed.lines.map((l) => {
-              const lotId = invoiceToLotId.get(l.invoiceNo);
-              const r = lotId ? reconByLot.get(lotId) : undefined;
-              const cls = r?.classification ?? "no-valuation";
-              return (
-                <tr key={l.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                  <td className="px-3 py-2 font-medium">{l.invoiceNo}</td>
-                  <td className="px-3 py-2 text-xs">{l.buyerName}</td>
-                  <td className="px-3 py-2 text-right">{l.pricePerKg.toLocaleString()}</td>
-                  <td className="px-3 py-2">
-                    {r && r.priceMin != null
-                      ? r.priceMin === r.priceMax
-                        ? r.priceMin.toFixed(0)
-                        : `${r.priceMin}–${r.priceMax}`
-                      : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${CLASS_STYLE[cls]}`}>{cls}</span>
-                  </td>
-                  <td className="px-3 py-2 text-right">{l.proceeds.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">
-                    {r?.variance == null ? "—" : `${r.variance > 0 ? "+" : ""}${r.variance.toLocaleString()}`}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {l.vatAmount.toLocaleString()}
-                    {l.onGuarantee && <span className="ml-1 rounded bg-amber-100 dark:bg-amber-900 px-1 text-amber-800 dark:text-amber-400">guar.</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <ContractLinesTable rows={contractLineRows} />
 
       {!confirmed && (
         <div className="flex gap-3">

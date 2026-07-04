@@ -1,9 +1,10 @@
 import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
-import { lkr, MONTHS } from "@/lib/money";
+import { MONTHS } from "@/lib/money";
 import { SubmitButton } from "@/components/submit-button";
-import { generatePayments, setPaymentStatus } from "./actions";
+import { generatePayments } from "./actions";
 import { PaymentsFilter } from "./payments-filter";
+import { PaymentsTable, type PaymentTableRow } from "./payments-table";
 
 type PaymentRow = {
   id: string;
@@ -45,6 +46,17 @@ export default async function PaymentsPage({
     }),
     { kg: 0, gross: 0, deduction: 0, net: 0 },
   );
+
+  const tableRows: PaymentTableRow[] = rows.map((r) => ({
+    id: r.id,
+    supplierName: r.suppliers?.name ?? "—",
+    totalKg: Number(r.total_kg),
+    grossAmount: Number(r.gross_amount),
+    deductionAmount: Number(r.deduction_amount),
+    totalAmount: Number(r.total_amount),
+    status: r.status,
+  }));
+
   return (
     <div>
       {params.error && (
@@ -78,78 +90,8 @@ export default async function PaymentsPage({
         left untouched.
       </p>
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3 text-right">Kg</th>
-              <th className="px-4 py-3 text-right">Gross</th>
-              <th className="px-4 py-3 text-right">Deductions</th>
-              <th className="px-4 py-3 text-right">Net payable</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const paid = r.status === "paid";
-              return (
-                <tr key={r.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                  <td className="px-4 py-3 font-medium">{r.suppliers?.name ?? "—"}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{Number(r.total_kg).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{lkr(r.gross_amount)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-stone-500 dark:text-stone-400">{lkr(r.deduction_amount)}</td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums">{lkr(r.total_amount)}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        paid ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"
-                      }`}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-4">
-                      <a href={`/dashboard/payments/${r.id}`} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-                        Statement
-                      </a>
-                      <form action={setPaymentStatus}>
-                        <input type="hidden" name="payment_id" value={r.id} />
-                        <input type="hidden" name="paid" value={paid ? "false" : "true"} />
-                        <input type="hidden" name="return_to" value={`/dashboard/payments?year=${year}&month=${month}`} />
-                        <SubmitButton pendingText="…" className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
-                          {paid ? "Mark pending" : "Mark paid"}
-                        </SubmitButton>
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No statements for {MONTHS[month - 1]} {year}. Click Generate to create them from this month&apos;s
-                  weighings.
-                </td>
-              </tr>
-            )}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t border-stone-200 dark:border-stone-700 font-medium">
-                <td className="px-4 py-3">Total ({rows.length})</td>
-                <td className="px-4 py-3 text-right tabular-nums">{totals.kg.toFixed(2)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.gross)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.deduction)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.net)}</td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
+      <div className="mt-4">
+        <PaymentsTable rows={tableRows} totals={totals} year={year} month={month} />
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
+import { BySaleTable, type BySaleRow } from "./by-sale-table";
 
 // Cross-sale auction dashboard — highlights + details across ALL lots and sales.
 // Reads the committed domain tables (lots, sale_lines, valuations, settlements,
@@ -119,6 +120,22 @@ export default async function AuctionDashboardPage() {
 
   const maxStateCount = Math.max(1, ...STATE_ORDER.map((s) => byState.get(s.key)?.count ?? 0));
 
+  const bySaleRows: BySaleRow[] = allSales.map((s) => {
+    const lc = lotsBySale.get(s.id) ?? { count: 0, kg: 0 };
+    return {
+      id: s.id,
+      saleNo: s.sale_no,
+      targetSaleNo: (s as { target_sale_no?: string | null }).target_sale_no ?? null,
+      broker: (s.brokers as unknown as { name: string } | null)?.name ?? "—",
+      status: s.status,
+      statusChip: STATE_ORDER.find((x) => x.key === s.status)?.chip ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300",
+      lotsCount: lc.count,
+      netKg: lc.kg,
+      proceeds: proceedsBySale.has(s.id) ? proceedsBySale.get(s.id)! : null,
+      settlement: settlementBySale.has(s.id) ? settlementBySale.get(s.id)! : null,
+    };
+  });
+
   return (
     <div className="space-y-8">
       <div>
@@ -173,49 +190,7 @@ export default async function AuctionDashboardPage() {
           {/* Per-sale detail */}
           <section>
             <h3 className="mb-3 text-lg font-medium text-stone-700 dark:text-stone-300">By sale</h3>
-            <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                    <th className="px-3 py-3">Dispatch</th>
-                    <th className="px-3 py-3">Sale</th>
-                    <th className="px-3 py-3">Broker</th>
-                    <th className="px-3 py-3">Status</th>
-                    <th className="px-3 py-3 text-right">Lots</th>
-                    <th className="px-3 py-3 text-right">Net kg</th>
-                    <th className="px-3 py-3 text-right">Proceeds</th>
-                    <th className="px-3 py-3 text-right">Settlement</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allSales.map((s) => {
-                    const broker = (s.brokers as unknown as { name: string } | null)?.name ?? "—";
-                    const lc = lotsBySale.get(s.id) ?? { count: 0, kg: 0 };
-                    const stateChip = STATE_ORDER.find((x) => x.key === s.status)?.chip ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300";
-                    return (
-                      <tr key={s.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0 hover:bg-stone-50 dark:hover:bg-stone-800/50">
-                        <td className="px-3 py-2 font-medium">
-                          <Link href={`/dashboard/auction/${s.id}`} className="text-green-700 dark:text-green-400 hover:underline">
-                            {s.sale_no}
-                          </Link>
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-stone-600 dark:text-stone-400">
-                          {(s as { target_sale_no?: string | null }).target_sale_no || "—"}
-                        </td>
-                        <td className="px-3 py-2">{broker}</td>
-                        <td className="px-3 py-2">
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${stateChip}`}>{s.status}</span>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{lc.count}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{lc.kg.toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{proceedsBySale.has(s.id) ? LKR(proceedsBySale.get(s.id)!) : "—"}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{settlementBySale.has(s.id) ? LKR(settlementBySale.get(s.id)!) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <BySaleTable rows={bySaleRows} />
           </section>
         </>
       )}

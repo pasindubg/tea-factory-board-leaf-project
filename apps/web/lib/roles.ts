@@ -140,6 +140,14 @@ export const MODULES: readonly ModuleDef[] = [
     group: "Sales Handling",
   },
   {
+    key: "auction-settings",
+    href: "/dashboard/auction/settings",
+    label: "Auction setup",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Sales Handling",
+  },
+  {
     key: "auction",
     href: "/dashboard/auction",
     label: "Dispatches Overview",

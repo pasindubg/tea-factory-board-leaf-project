@@ -1,6 +1,5 @@
 import { requireModuleAccess } from "@/lib/profile";
-import { SubmitButton } from "@/components/submit-button";
-import { setCollectorActive } from "./actions";
+import { CollectorsTable, type CollectorRow } from "./collectors-table";
 
 export default async function CollectorsPage() {
   const { supabase } = await requireModuleAccess("collectors");
@@ -9,6 +8,15 @@ export default async function CollectorsPage() {
     .select("id, name, phone, nic_number, area, active")
     .order("active", { ascending: false })
     .order("name");
+
+  const rows: CollectorRow[] = (collectors ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    area: c.area,
+    phone: c.phone,
+    nicNumber: c.nic_number,
+    active: Boolean(c.active),
+  }));
 
   return (
     <div>
@@ -22,55 +30,8 @@ export default async function CollectorsPage() {
         </a>
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Area</th>
-              <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">NIC</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {(collectors ?? []).map((c) => (
-              <tr key={c.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-                <td className="px-4 py-3 font-medium">{c.name}</td>
-                <td className="px-4 py-3">{c.area ?? "—"}</td>
-                <td className="px-4 py-3">{c.phone ?? "—"}</td>
-                <td className="px-4 py-3">{c.nic_number ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {c.active ? (
-                    <span className="rounded-full bg-green-100 dark:bg-green-900 px-2 py-0.5 text-xs text-green-800 dark:text-green-400">active</span>
-                  ) : (
-                    <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-500 dark:text-stone-400">inactive</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex justify-end gap-2">
-                    <a href={`/dashboard/collectors/${c.id}/edit`} className="text-green-700 dark:text-green-400 hover:underline">
-                      Edit
-                    </a>
-                    <form action={setCollectorActive.bind(null, c.id, !c.active)}>
-                      <SubmitButton pendingText="…" className="text-stone-500 dark:text-stone-400 hover:underline">
-                        {c.active ? "Deactivate" : "Reactivate"}
-                      </SubmitButton>
-                    </form>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {(collectors ?? []).length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No collectors yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div className="mt-6">
+        <CollectorsTable rows={rows} />
       </div>
     </div>
   );

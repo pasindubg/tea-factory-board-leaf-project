@@ -50,6 +50,39 @@ async function ensureInvoiceNumbersUnused(
   }
 }
 
+async function appliedThresholdForLot(
+  supabase: Supa,
+  factoryId: string,
+  saleId: string,
+  grade: string,
+) {
+  const { data: sale } = await supabase
+    .from("auction_sales")
+    .select("broker_id")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .single();
+  const brokerId = sale?.broker_id as string | null | undefined;
+  if (!brokerId) return null;
+  const { data: gradeRow } = await supabase
+    .from("auction_grades")
+    .select("id")
+    .eq("factory_id", factoryId)
+    .eq("code", grade)
+    .eq("active", true)
+    .maybeSingle();
+  if (!gradeRow?.id) return null;
+  const { data: threshold } = await supabase
+    .from("broker_grade_thresholds")
+    .select("min_net_kg, applies")
+    .eq("factory_id", factoryId)
+    .eq("broker_id", brokerId)
+    .eq("grade_id", gradeRow.id)
+    .maybeSingle();
+  if (!threshold?.applies) return null;
+  return Number(threshold.min_net_kg ?? 0);
+}
+
 export async function updateLot(id: string, saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${saleId}`;
@@ -77,6 +110,14 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
     updates.state = newState;
     if (newState === "shutout") updates.shutout_reason = str(formData.get("shutout_reason")) || "Manual override";
     else updates.shutout_reason = null;
+  }
+  if (!(newState && isOwner) && grade && bags > 0 && kgPerBag > 0) {
+    const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+    const netWt = Number((bags * kgPerBag).toFixed(2));
+    if (threshold != null && threshold > 0 && netWt < threshold) {
+      updates.state = "shutout";
+      updates.shutout_reason = `Below broker minimum ${threshold.toFixed(2)} kg for ${grade}`;
+    }
   }
 
   if (Object.keys(updates).length === 0) return;
@@ -135,7 +176,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
         await supabase.from("auction_lots").insert({
           factory_id: profile.factory_id, sale_id: nsId, mark_id: lot.mark_id,
           invoice_no: lot.invoice_no, grade: lot.grade, bags: lot.bags,
-          kg_per_bag: lot.kg_per_bag, net_wt: newNet, state: "invoiced", reprint_source_lot_id: lot.id,
+          kg_per_bag: lot.kg_per_bag, net_wt: newNet, state: "invoiced", lot_source: "factory", reprint_source_lot_id: lot.id,
         });
       }
     }
@@ -157,10 +198,18 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
   if (!grade) back(detail, "Grade is required.");
   if (!(bags > 0) || !(kgPerBag > 0)) back(detail, "Bags and kg/bag must be positive.");
   const netWt = Number((bags * kgPerBag).toFixed(2));
+  const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+  const isBelowAppliedThreshold = threshold != null && threshold > 0 && netWt < threshold;
   const { data: createdLot, error } = await supabase.from("auction_lots").insert({
     factory_id: profile.factory_id, sale_id: saleId, mark_id: str(formData.get("mark_id")) || null,
     invoice_no: invoiceNo, lot_no: str(formData.get("lot_no")) || null,
-    grade, bags, kg_per_bag: kgPerBag, net_wt: netWt, state: "invoiced", lot_source: "factory",
+    grade,
+    bags,
+    kg_per_bag: kgPerBag,
+    net_wt: netWt,
+    state: isBelowAppliedThreshold ? "shutout" : "invoiced",
+    shutout_reason: isBelowAppliedThreshold ? `Below broker minimum ${threshold.toFixed(2)} kg for ${grade}` : null,
+    lot_source: "factory",
   }).select("id").single();
   if (error) back(detail, error.message);
   if (createdLot?.id) {

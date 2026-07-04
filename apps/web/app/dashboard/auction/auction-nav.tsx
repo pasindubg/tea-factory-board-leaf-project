@@ -18,7 +18,8 @@ const tabs = [
         !p.startsWith("/dashboard/auction/dashboard") &&
         !p.startsWith("/dashboard/auction/sales") &&
         !p.startsWith("/dashboard/auction/reports") &&
-        !p.startsWith("/dashboard/auction/registry")),
+        !p.startsWith("/dashboard/auction/registry") &&
+        !p.startsWith("/dashboard/auction/settings")),
   },
   {
     href: "/dashboard/auction/sales",
@@ -34,6 +35,11 @@ const tabs = [
     href: "/dashboard/auction/registry",
     label: "Brokers & marks",
     match: (p: string) => p.startsWith("/dashboard/auction/registry"),
+  },
+  {
+    href: "/dashboard/auction/settings",
+    label: "Auction setup",
+    match: (p: string) => p.startsWith("/dashboard/auction/settings"),
   },
 ];
 
