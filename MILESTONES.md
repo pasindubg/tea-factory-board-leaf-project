@@ -344,6 +344,47 @@ purchased modules, and `db:verify-rls` proves the new tenant is isolated.
 
 ---
 
+# Phase 1.5 — AI Insights track (AI1–AI4, entitlement `insights`)
+
+Money-denominated, evidence-backed suggestions computed from the ERP's own
+data. Full spec: [docs/AI_INSIGHTS.md](docs/AI_INSIGHTS.md); implementation
+playbook: `.claude/skills/ai-insights`. Design principle: deterministic
+analyzers + rules first (zero LLM tokens); the LLM only narrates curated
+evidence packs and synthesizes the weekly digest, under a per-factory budget.
+
+## AI1 — Deterministic insight engine (no LLM)
+Insights/insight_runs/metric_snapshots/insight_feedback tables (+RLS), analyzer
+& rule registries in `packages/api/src/insights`, event hooks after the confirm
+actions, 8 launch rules (settlement aging, min-kg/shutout risk, weight
+shrinkage, valuation premium by grade, deduction leakage, supply drop, water
+penalty repeat, advance overexposure), insights inbox page, row flags + AI note
+on Suppliers and Dispatches Overview.
+
+**Verify:** each rule fires on its fixture and stays silent on clean data;
+impact LKR matches hand-computed values; ack/dismiss persists; `db:verify-rls`
+covers the new tables.
+
+## AI2 — LLM notes + weekly owner digest
+Haiku notes for flagged entities; Sonnet weekly digest + cash-flow-week-ahead;
+evidence-hash caching; per-factory token budget (cap degrades to rules-only).
+
+**Verify:** digest cites only numbers present in evidence packs; re-run with
+unchanged data spends 0 tokens; budget cap halts L3 but never L1/L2.
+
+## AI3 — Agentic drill-down & feedback
+Analyzer registry exposed as Claude tools; guarded read-only SQL tool
+(SELECT-only role, allowlist, timeouts, caps, full audit); "Analyze now" and
+"Ask the analyst"; usefulness feedback + dismiss-rate tuning report.
+
+**Verify:** agent answers scripted owner questions on fixtures with correct
+figures; SQL tool refuses writes/oversized/other-tenant queries in tests.
+
+## AI4 — Forecasts & benchmarks (post-M7/M8; Phase-2 synergy)
+Grade-price and intake forecasts; leaf→auction quality thread with out-turn
+data; consent-gated anonymized cross-factory benchmarks (premium tier).
+
+---
+
 # Phase 2 — Leaf Marketplace & field apps
 
 **Vision:** an Uber-like two-sided marketplace where leaf suppliers / estate
