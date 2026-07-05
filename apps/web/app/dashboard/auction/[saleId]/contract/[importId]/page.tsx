@@ -8,6 +8,7 @@ import {
   type SaleInput,
 } from "@tea/api";
 import { confirmContract, rejectImport } from "../../../actions";
+import { saleGroupIds } from "../../../_actions/_shared";
 import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
 export default async function ContractReviewPage({
@@ -15,7 +16,7 @@ export default async function ContractReviewPage({
 }: {
   params: Promise<{ saleId: string; importId: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   const { saleId, importId } = await params;
   const detail = `/dashboard/auction/${saleId}`;
 
@@ -36,10 +37,13 @@ export default async function ContractReviewPage({
   }
 
   const { data: sale } = await supabase.from("auction_sales").select("sale_no").eq("id", saleId).single();
+  // The contract covers the broker's whole sale — match against lots on every
+  // dispatch in this sale's group.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
   const { data: lotRows } = await supabase
     .from("auction_lots")
     .select("id, invoice_no, grade, net_wt")
-    .eq("sale_id", saleId);
+    .in("sale_id", groupIds);
   const lotIds = (lotRows ?? []).map((l) => l.id as string);
   const { data: valRows } = await supabase
     .from("valuations")

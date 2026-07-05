@@ -115,6 +115,33 @@ export async function findSaleId(
   return (match?.id as string) ?? null;
 }
 
+// All dispatches that belong to the same auction sale + broker as the given
+// dispatch. A broker sends ONE acknowledgement/valuation/contract per sale, but
+// the factory may have split that sale across several dispatches — document
+// reconciliation must see the whole group, or lots living on a sibling dispatch
+// get misread as "unexpected" and duplicated onto the dispatch being reviewed.
+// Sale identity follows the sales pages' convention: target_sale_no || sale_no,
+// compared by normalized key. Always contains the given saleId itself.
+export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: string): Promise<string[]> {
+  const { data: current } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_no, target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  if (!current) return [saleId];
+  const key = (current.target_sale_no as string | null) || (current.sale_no as string);
+  const { data: siblings } = await supabase
+    .from("auction_sales")
+    .select("id, sale_no, target_sale_no")
+    .eq("factory_id", factoryId)
+    .eq("broker_id", current.broker_id as string);
+  const ids = (siblings ?? [])
+    .filter((s) => saleNoKey(((s.target_sale_no as string | null) || (s.sale_no as string))) === saleNoKey(key))
+    .map((s) => s.id as string);
+  return ids.includes(saleId) ? ids : [saleId, ...ids];
+}
+
 export async function nextDispatchNo(supabase: Supa): Promise<string> {
   const { data } = await supabase.from("auction_sales").select("sale_no");
   const maxNo = (data ?? []).reduce((max, row) => {

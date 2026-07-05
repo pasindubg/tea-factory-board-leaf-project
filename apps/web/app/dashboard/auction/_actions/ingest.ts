@@ -17,7 +17,7 @@ import {
   type ParsedContract,
 } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
-import { AUC, back, extractPdf, stageImport, toISODate } from "./_shared";
+import { AUC, back, extractPdf, stageImport, toISODate, saleGroupIds } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
 import { formatFourDigitNo } from "../sale-number";
 
@@ -54,19 +54,26 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     })),
   };
 
+  // The ack covers the whole sale for this broker — the factory may have split
+  // that sale across several dispatches, so reconcile against ALL of them.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
-    .eq("sale_id", saleId);
+    .select("id, sale_id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
+    .in("sale_id", groupIds);
   const invoiced = buildInvoicedLots((lotRows ?? []) as unknown as Parameters<typeof buildInvoicedLots>[0]);
   const recon = reconcileAcknowledgement(invoiced, parsed);
 
-  // Resolve marks by code, auto-creating any the ack references but the factory
-  // hasn't registered yet (its own marks — safe).
+  // Resolve marks by code OR name (Asia Siyaka acks print only the mark name),
+  // auto-creating any the ack references but the factory hasn't registered yet.
   const markCodes = [...new Set(parsed.lots.map((l) => l.markCode))];
-  const { data: existingMarks } = await supabase.from("marks").select("id, code").in("code", markCodes);
-  const markByCode = new Map<string, string>((existingMarks ?? []).map((m) => [m.code as string, m.id as string]));
-  const newCodes = markCodes.filter((code) => !markByCode.has(code));
+  const { data: existingMarks } = await supabase.from("marks").select("id, code, name");
+  const markByCode = new Map<string, string>();
+  for (const m of existingMarks ?? []) {
+    markByCode.set((m.code as string).toUpperCase(), m.id as string);
+    if (m.name) markByCode.set((m.name as string).toUpperCase(), m.id as string);
+  }
+  const newCodes = markCodes.filter((code) => !markByCode.has(code.toUpperCase()));
   if (newCodes.length > 0) {
     const { data: created } = await supabase
       .from("marks")
@@ -76,7 +83,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         name: parsed.lots.find((l) => l.markCode === code)?.markName ?? code,
       })))
       .select("id, code");
-    for (const m of created ?? []) markByCode.set(m.code as string, m.id as string);
+    for (const m of created ?? []) markByCode.set((m.code as string).toUpperCase(), m.id as string);
   }
 
   // Apply acknowledgement to every matched invoiced lot (in parallel — each touches a
@@ -89,7 +96,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
           .from("auction_lots")
           .update({
             lot_no: row.ack?.lotNo ?? null,
-            mark_id: row.ack ? markByCode.get(row.ack.markCode) ?? null : null,
+            mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
             state: row.status === "catalogued" ? "acknowledged" : "shutout",
             shutout_reason:
               row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
@@ -106,7 +113,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       return {
         factory_id: profile.factory_id,
         sale_id: saleId,
-        mark_id: markByCode.get(ackLot.markCode) ?? null,
+        mark_id: markByCode.get(ackLot.markCode.toUpperCase()) ?? null,
         invoice_no: formatFourDigitNo(ackLot.invoiceNo),
         lot_no: formatFourDigitNo(ackLot.lotNo) || null,
         grade: ackLot.grade,
@@ -140,14 +147,30 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   }
 
   // Remaining invoiced lots not in this ack → pending (may be in a later ack).
-  await supabase.from("auction_lots").update({ state: "pending" }).eq("sale_id", saleId).eq("state", "invoiced");
+  // Group-wide: the ack is the broker's full statement for this sale.
+  await supabase.from("auction_lots").update({ state: "pending" }).in("sale_id", groupIds).eq("state", "invoiced");
 
   await supabase
     .from("doc_imports")
     .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
     .eq("id", importId);
-  if (recon.summary.catalogued + createdAcknowledgedLots > 0) {
-    await supabase.from("auction_sales").update({ status: "catalogued" }).eq("id", saleId);
+  // Flip every dispatch in the group that had lots acknowledged — but never
+  // regress one that has already moved past cataloguing.
+  const saleIdByLot = new Map((lotRows ?? []).map((l) => [l.id as string, l.sale_id as string]));
+  const affectedSales = new Set<string>();
+  for (const row of recon.rows) {
+    if (row.invoiced && row.status === "catalogued") {
+      const sid = saleIdByLot.get(row.invoiced.id);
+      if (sid) affectedSales.add(sid);
+    }
+  }
+  if (createdAcknowledgedLots > 0) affectedSales.add(saleId);
+  if (affectedSales.size > 0) {
+    await supabase
+      .from("auction_sales")
+      .update({ status: "catalogued" })
+      .in("id", [...affectedSales])
+      .in("status", ["draft", "dispatched", "grn"]);
   }
   revalidatePath(detail);
   redirect(
@@ -191,8 +214,12 @@ export async function confirmValuation(importId: string, saleId: string) {
     })),
   };
 
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
+  // The valuation covers the broker's whole sale — match lots across all
+  // dispatches in the sale group, not just the one it was uploaded to.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no").in("sale_id", groupIds);
   const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [formatFourDigitNo(l.invoice_no as string), l.id as string]));
+  const saleIdByLot = new Map((lotRows ?? []).map((l) => [l.id as string, l.sale_id as string]));
 
   // One valuation per lot (last line wins, as the sequential upsert did); flip
   // matched lots to "valued" in a single statement.
@@ -212,7 +239,15 @@ export async function confirmValuation(importId: string, saleId: string) {
     await supabase.from("auction_lots").update({ state: "valued" }).in("id", [...valuationByLot.keys()]).neq("state", "shutout");
   }
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
-  await supabase.from("auction_sales").update({ status: "valued" }).eq("id", saleId);
+  // Advance every dispatch in the group that had lots valued (never regress a later status).
+  const valuedSales = new Set<string>([...valuationByLot.keys()].map((id) => saleIdByLot.get(id) ?? saleId));
+  if (valuedSales.size > 0) {
+    await supabase
+      .from("auction_sales")
+      .update({ status: "valued" })
+      .in("id", [...valuedSales])
+      .in("status", ["draft", "dispatched", "grn", "catalogued"]);
+  }
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(`Recorded valuations for ${applied} lot(s).`)}`);
 }
@@ -246,9 +281,15 @@ export async function confirmContract(importId: string, saleId: string) {
     })),
   };
 
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no, net_wt").eq("sale_id", saleId);
-  const lotByInv = new Map<string, { id: string; netWt: number }>(
-    (lotRows ?? []).map((l) => [formatFourDigitNo(l.invoice_no as string), { id: l.id as string, netWt: Number(l.net_wt) }]),
+  // The sellers contract covers the broker's whole sale — match lots across all
+  // dispatches in the sale group, and file each sale line under its lot's own dispatch.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no, net_wt").in("sale_id", groupIds);
+  const lotByInv = new Map<string, { id: string; saleId: string; netWt: number }>(
+    (lotRows ?? []).map((l) => [
+      formatFourDigitNo(l.invoice_no as string),
+      { id: l.id as string, saleId: l.sale_id as string, netWt: Number(l.net_wt) },
+    ]),
   );
 
   // Resolve buyers (upsert by name).
@@ -271,7 +312,7 @@ export async function confirmContract(importId: string, saleId: string) {
   for (const line of matchedLines) {
     const lot = lotByInv.get(line.invoiceNo)!;
     saleLineByLot.set(lot.id, {
-      factory_id: profile.factory_id, sale_id: saleId, lot_id: lot.id,
+      factory_id: profile.factory_id, sale_id: lot.saleId, lot_id: lot.id,
       buyer_id: buyerByName.get(line.buyerName) ?? null,
       gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
       net_wt: line.netWt, price_per_kg: line.pricePerKg,
@@ -302,7 +343,7 @@ export async function confirmContract(importId: string, saleId: string) {
     const { data: saleLines } = await supabase
       .from("sale_lines")
       .select("id, lot_id, invoice_no, proceeds, vat_amount, on_guarantee")
-      .eq("sale_id", saleId);
+      .in("sale_id", groupIds);
 
     if (rateCard) {
       const rates = {
@@ -398,10 +439,18 @@ export async function confirmContract(importId: string, saleId: string) {
     }
   }
 
+  // The contract settles the whole broker/sale group: stamp the prompt date and
+  // advance status on every dispatch that had lots sold by this contract (plus
+  // the one it was uploaded to).
+  const settledSales = new Set<string>([saleId]);
+  for (const line of matchedLines) {
+    const lot = lotByInv.get(line.invoiceNo);
+    if (lot) settledSales.add(lot.saleId);
+  }
   await supabase
     .from("auction_sales")
     .update({ status: "settled", prompt_date: toISODate(parsed.promptDate) })
-    .eq("id", saleId);
+    .in("id", [...settledSales]);
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
   revalidatePath(detail);
   const settlementNote = settlementCount

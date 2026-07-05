@@ -18,7 +18,9 @@ import {
 // match-orphans scoring core — nothing auto-links; every decision is the user's
 // and is written to auction_audit.
 
-export type Orphan = { lotId: string; invoiceNo: string; grade: string; netWt: number; markCode: string | null };
+// dispatchId = the orphan lot's OWN dispatch (may be a sibling dispatch in the
+// same sale group, not the one whose ack page is open).
+export type Orphan = { lotId: string; dispatchId?: string; invoiceNo: string; grade: string; netWt: number; markCode: string | null };
 export type Candidate = { key: string; lotNo: string | null; grade: string; netWt: number; markCode: string | null };
 export type AuditRow = {
   action: string;
@@ -94,7 +96,7 @@ export function ComparePanel({
     const c = linking.candidate;
     run(() =>
       linkOrphanLot({
-        saleId,
+        saleId: orphan.dispatchId ?? saleId,
         lotId: orphan.lotId,
         invoiceNo: orphan.invoiceNo,
         orphanNetWt: orphan.netWt,
@@ -114,12 +116,12 @@ export function ComparePanel({
   const doReject = (c: Candidate) => {
     if (!orphan) return;
     setRejected((s) => new Set(s).add(c.key));
-    run(() => rejectCandidate({ saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, candidateLotNo: c.lotNo }));
+    run(() => rejectCandidate({ saleId: orphan.dispatchId ?? saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, candidateLotNo: c.lotNo }));
   };
 
   const outcome = (fn: typeof markShutout, label: string) => {
     if (!orphan) return;
-    run(() => fn({ saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, orphanGrade: orphan.grade, orphanNetWt: orphan.netWt }));
+    run(() => fn({ saleId: orphan.dispatchId ?? saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, orphanGrade: orphan.grade, orphanNetWt: orphan.netWt }));
     setIdx(0);
   };
 

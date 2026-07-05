@@ -8,6 +8,7 @@ import {
 } from "@tea/api";
 import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
 import { buildInvoicedLots } from "../../../recon-helpers";
+import { saleGroupIds } from "../../../_actions/_shared";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
 import { ReconTable } from "./recon-table";
 
@@ -16,7 +17,7 @@ export default async function AckReviewPage({
 }: {
   params: Promise<{ saleId: string; importId: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   const { saleId, importId } = await params;
   const detail = `/dashboard/auction/${saleId}`;
 
@@ -38,14 +39,17 @@ export default async function AckReviewPage({
   }
 
   const { data: sale } = await supabase.from("auction_sales").select("sale_no").eq("id", saleId).single();
+  // The ack is the broker's statement for the WHOLE sale — reconcile against
+  // every dispatch in this sale's group, not just the one being reviewed.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt, state, lot_no, marks(code), lot_invoices(invoice_no)")
-    .eq("sale_id", saleId);
+    .select("id, sale_id, invoice_no, grade, net_wt, state, lot_no, marks(code), lot_invoices(invoice_no)")
+    .in("sale_id", groupIds);
   const { data: auditRows } = await supabase
     .from("auction_audit")
     .select("action, detail, reason, actor, confidence_shown, created_at")
-    .eq("sale_id", saleId)
+    .in("sale_id", groupIds)
     .order("created_at", { ascending: false })
     .limit(50);
 
@@ -73,6 +77,9 @@ export default async function AckReviewPage({
     .filter((r) => ["invoiced", "dispatched", "pending"].includes(lotById.get(r.invoiced!.id)?.state as string))
     .map((r) => ({
       lotId: r.invoiced!.id,
+      // The orphan's own dispatch — may be a sibling in the sale group, so
+      // resolver actions must guard against it, not the page's saleId.
+      dispatchId: (lotById.get(r.invoiced!.id)?.sale_id as string) ?? saleId,
       invoiceNo: r.invoiceNo,
       grade: r.invoiced!.grade,
       netWt: r.invoiced!.netWt,
