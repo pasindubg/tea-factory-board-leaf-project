@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
+import { ListSearchPanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
 import { confirmDispatchDraft, ingestAcknowledgement, ingestBankCsv, ingestContract, ingestValuation, updateSale } from "../actions";
 import { stateBucket } from "../state-buckets";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
@@ -22,6 +24,15 @@ type SaleDetail = {
 
 type MarkOption = { id: string; code: string; name: string };
 type GradeOption = { code: string; name: string };
+type DispatchListItem = {
+  id: string;
+  sale_no: string | null;
+  target_sale_no: string | null;
+  broker: string;
+  dispatch_date: string | null;
+  sale_date: string | null;
+  status: string | null;
+};
 type DispatchStats = {
   totalLots: number;
   issueLots: number;
@@ -77,6 +88,15 @@ const RECON_UPLOADS = [
   },
 ] as const;
 
+const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
+  { key: "sale_no", label: "Dispatch", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
+  { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
+  { key: "dispatch_date", label: "Dispatched", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
+  { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
+  { key: "status", label: "Status", accessor: (row) => stateBucket(row.status).label, sortable: true, filter: "select" },
+];
+
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
   const index = DISPATCH_STEPS.findIndex((step) => step.key === normalizedStatus);
@@ -100,6 +120,7 @@ function statusStepClass(index: number, currentIndex: number, editing: boolean, 
 
 export function DispatchDetailEditor({
   sale,
+  dispatches,
   broker,
   rows,
   marks,
@@ -109,6 +130,7 @@ export function DispatchDetailEditor({
   soldLotIds,
 }: {
   sale: SaleDetail;
+  dispatches: DispatchListItem[];
   broker: string;
   rows: LotRow[];
   marks: MarkOption[];
@@ -162,7 +184,9 @@ export function DispatchDetailEditor({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="grid gap-6 xl:grid-cols-[17rem_minmax(0,1fr)]">
+      <DispatchSideList rows={dispatches} currentId={sale.id} />
+      <div className="min-w-0 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
@@ -263,7 +287,7 @@ export function DispatchDetailEditor({
             <div className="mt-4 space-y-2 text-sm">
               <DetailRow label="Broker" value={broker} />
               <DetailRow label="Dispatch" value={sale.sale_no ?? "—"} />
-              <CompactField label="Sale no." name="target_sale_no" defaultValue={sale.target_sale_no ?? ""} disabled={!isEditing} />
+              <CompactField label="Sale no." name="target_sale_no" defaultValue={sale.target_sale_no ?? ""} format="sale-no" disabled={!isEditing} />
               <CompactField label="Dispatch date" name="dispatch_date" type="date" defaultValue={sale.dispatch_date ?? ""} disabled={!isEditing} />
               <CompactField label="Sale date" name="sale_date" type="date" defaultValue={sale.sale_date ?? ""} disabled={!isEditing} />
               <CompactField label="Prompt" name="prompt_date" type="date" defaultValue={sale.prompt_date ?? ""} disabled={!isEditing} />
@@ -361,7 +385,53 @@ export function DispatchDetailEditor({
           </aside>
         </div>
       )}
+      </div>
     </div>
+  );
+}
+
+function DispatchSideList({ rows, currentId }: { rows: DispatchListItem[]; currentId: string }) {
+  const controls = useListControls(rows, DISPATCH_LIST_COLUMNS);
+  return (
+    <aside className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)]">
+      <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Dispatches</h3>
+          <SortButton col={DISPATCH_LIST_COLUMNS[0]} controls={controls} />
+        </div>
+      </div>
+      <ListSearchPanel columns={DISPATCH_LIST_COLUMNS} controls={controls} label="Search" />
+      <div className="max-h-[28rem] overflow-y-auto xl:max-h-[calc(100vh-12rem)]">
+        {controls.rows.map((dispatch) => {
+          const active = dispatch.id === currentId;
+          const bucket = stateBucket(dispatch.status);
+          return (
+            <Link
+              key={dispatch.id}
+              href={`/dashboard/auction/${dispatch.id}`}
+              className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
+                active
+                  ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
+                  : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
+                {active && <span className="text-stone-400">‹</span>}
+              </div>
+              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.broker}</p>
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {dispatch.target_sale_no ?? "—"}</span>
+                <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
+              </div>
+            </Link>
+          );
+        })}
+        {controls.rows.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">No dispatches match.</p>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -414,12 +484,14 @@ function CompactField({
   name,
   defaultValue,
   type = "text",
+  format,
   disabled = false,
 }: {
   label: string;
   name: string;
   defaultValue: string;
   type?: string;
+  format?: "four-digit" | "sale-no";
   disabled?: boolean;
 }) {
   if (disabled) return <DetailRow label={label} value={defaultValue || "—"} />;
@@ -430,6 +502,10 @@ function CompactField({
         name={name}
         type={type}
         defaultValue={defaultValue}
+        onBlur={(event) => {
+          if (format === "four-digit") event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          if (format === "sale-no") event.currentTarget.value = formatSaleNo(event.currentTarget.value);
+        }}
         className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
       />
     </div>

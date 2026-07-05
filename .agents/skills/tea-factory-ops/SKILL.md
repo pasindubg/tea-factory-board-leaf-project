@@ -44,7 +44,11 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
   Settlement track: state machine, data model, PDF ingestion,
   contract math, the four reconciliations. **Read before building any A-track work.**
 - **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational detail
-  pages. Follow it when creating or changing detail pages and in-record workflows.
+  pages, list search, and auction number formatting. Follow it when creating or
+  changing list/detail pages and in-record workflows.
+- **[docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md)** — install,
+  dependency, and migration change log. **Update whenever a task changes packages,
+  scripts, environment assumptions, or database migrations.**
 
 This skill is the *operational* layer (how to work here); the linked docs are the
 *what/why/UI*. Keep them consistent when you change scope or interaction patterns.
@@ -163,6 +167,19 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - **Client-generated UUIDs** for anything that can be created offline/on mobile
   (weighings already do this; it's the idempotency key for future offline sync).
 - After any schema/policy change, the RLS and auth gates must still pass (below).
+- Auction number formatting:
+  - dispatch numbers are 4 digits (`0004`);
+  - invoice and lot numbers are 4 digits when numeric (`0951`);
+  - auction sale / target sale numbers are 3 digits (`019`);
+  - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
+    invoice, and lot numbers.
+
+**UI conventions:**
+- Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
+  inline filter rows under table headers.
+- Search panels expose all meaningful columns and keep advanced search available.
+- Sale overviews grouped by `target_sale_no` must show all brokers participating
+  in that auction sale, because multiple brokers can sell tea in the same sale.
 
 ## Domain cheat-sheet
 

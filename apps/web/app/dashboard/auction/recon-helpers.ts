@@ -1,6 +1,7 @@
 // Shared (non-action) helpers for the auction reconciliation screens. Kept out of
 // actions.ts because a "use server" module may only export async server actions.
 import type { InvoicedLot } from "@tea/api";
+import { formatFourDigitNo } from "./sale-number";
 
 type LotRow = {
   id: string;
@@ -18,6 +19,6 @@ export function buildInvoicedLots(rows: LotRow[]): InvoicedLot[] {
   return rows.flatMap((l) => {
     const invs = (l.lot_invoices ?? []).map((i) => i.invoice_no);
     const list = invs.length ? invs : [l.invoice_no];
-    return list.map((invoiceNo) => ({ id: l.id, invoiceNo, grade: l.grade, netWt: Number(l.net_wt) }));
+    return list.map((invoiceNo) => ({ id: l.id, invoiceNo: formatFourDigitNo(invoiceNo), grade: l.grade, netWt: Number(l.net_wt) }));
   });
 }

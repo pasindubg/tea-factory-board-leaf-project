@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { AUC, str, back, nextDispatchNo } from "./_shared";
+import { formatSaleNo } from "../sale-number";
 
 // ---------- Sales (dispatches) ----------
 export async function createSale(formData: FormData) {
@@ -11,7 +12,7 @@ export async function createSale(formData: FormData) {
   const np = `${AUC}/new`;
   const brokerId = str(formData.get("broker_id"));
   const saleNo = await nextDispatchNo(supabase);
-  const targetSaleNo = str(formData.get("target_sale_no"));
+  const targetSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
   if (!brokerId) back(np, "Pick a broker.");
   if (!targetSaleNo) back(np, "Sale number is required.");
@@ -76,7 +77,7 @@ export async function updateSale(id: string, formData: FormData) {
   const { supabase, profile } = await requireProfile(["owner"]);
   const updates: Record<string, string | null> = {};
   const status = str(formData.get("status"));
-  const target = str(formData.get("target_sale_no"));
+  const target = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
   const dispatchDate = str(formData.get("dispatch_date"));
   const promptDate = str(formData.get("prompt_date"));

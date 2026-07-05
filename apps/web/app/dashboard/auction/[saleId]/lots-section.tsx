@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { DispatchLotForm } from "./dispatch-lot-form";
 import { DispatchedLotsTable } from "./dispatched-lots-table";
 import type { LotRow } from "./lot-row";
+import { formatFourDigitNo } from "../sale-number";
 
 export function LotsSection({
   rows,
@@ -38,18 +39,20 @@ export function LotsSection({
   function handleAdd(formData: FormData) {
     const bags = Number(formData.get("bags") ?? 0);
     const kpb = Number(formData.get("kg_per_bag") ?? 0);
+    const sampleKg = Math.max(0, Number(formData.get("sample_allowance") ?? 0) || 0);
     const markId = formData.get("mark_id") as string;
     const mark = marks.find((m) => m.id === markId) ?? null;
     const tempId = `pending-${Date.now()}`;
 
     const optimisticRow: LotRow = {
       id: tempId,
-      invoice_no: formData.get("invoice_no") as string | null,
-      lot_no: (formData.get("lot_no") as string) || null,
+      invoice_no: formatFourDigitNo(formData.get("invoice_no") as string | null) || null,
+      lot_no: formatFourDigitNo(formData.get("lot_no") as string | null) || null,
       grade: formData.get("grade") as string | null,
       bags,
       kg_per_bag: kpb,
-      net_wt: bags * kpb,
+      sample_allowance: sampleKg,
+      net_wt: Math.max(0, bags * kpb - sampleKg),
       state: "invoiced",
       shutout_reason: null,
       lot_source: "factory",

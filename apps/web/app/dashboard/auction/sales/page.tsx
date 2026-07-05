@@ -1,5 +1,5 @@
 import { requireModuleAccess } from "@/lib/profile";
-import { saleNoKey } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { money } from "../format";
 import { SalesOverviewTable, type SaleOverviewRow } from "./sales-overview-table";
 
@@ -35,7 +35,7 @@ type SaleSummary = {
   saleNo: string;
   saleDate: string | null;
   promptDate: string | null;
-  broker: string;
+  brokers: Set<string>;
   dispatches: Map<string, string>;
   lotsSold: number;
   netKg: number;
@@ -45,11 +45,11 @@ type SaleSummary = {
 };
 
 function saleKey(sale: LineRow["auction_sales"]) {
-  return sale?.target_sale_no || sale?.sale_no || "Unassigned";
+  return formatSaleNo(sale?.target_sale_no || sale?.sale_no) || "Unassigned";
 }
 
 function dispatchKey(dispatch: DispatchRow) {
-  return dispatch.target_sale_no || dispatch.sale_no;
+  return formatSaleNo(dispatch.target_sale_no || dispatch.sale_no);
 }
 
 function saleHref(saleNo: string) {
@@ -85,7 +85,7 @@ export default async function SalesPage() {
       saleNo: key,
       saleDate: dispatch.sale_date,
       promptDate: dispatch.prompt_date,
-      broker: dispatch.brokers?.name ?? "—",
+      brokers: new Set<string>(),
       dispatches: new Map<string, string>(),
       lotsSold: 0,
       netKg: 0,
@@ -94,10 +94,10 @@ export default async function SalesPage() {
       guaranteeLots: 0,
     };
 
-    current.dispatches.set(dispatch.id, dispatch.sale_no);
+    current.dispatches.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
+    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
     current.saleDate ??= dispatch.sale_date;
     current.promptDate ??= dispatch.prompt_date;
-    if (current.broker === "—" && dispatch.brokers?.name) current.broker = dispatch.brokers.name;
     summaries.set(key, current);
   }
 
@@ -108,7 +108,7 @@ export default async function SalesPage() {
       saleNo: key,
       saleDate: sale?.sale_date ?? null,
       promptDate: sale?.prompt_date ?? null,
-      broker: sale?.brokers?.name ?? "—",
+      brokers: new Set<string>(),
       dispatches: new Map<string, string>(),
       lotsSold: 0,
       netKg: 0,
@@ -117,10 +117,10 @@ export default async function SalesPage() {
       guaranteeLots: 0,
     };
 
-    if (sale?.id) current.dispatches.set(sale.id, sale.sale_no);
+    if (sale?.id) current.dispatches.set(sale.id, formatFourDigitNo(sale.sale_no));
+    if (sale?.brokers?.name) current.brokers.add(sale.brokers.name);
     current.saleDate ??= sale?.sale_date ?? null;
     current.promptDate ??= sale?.prompt_date ?? null;
-    if (current.broker === "—" && sale?.brokers?.name) current.broker = sale.brokers.name;
     current.lotsSold += 1;
     current.netKg += Number(line.net_wt ?? 0);
     current.proceeds += Number(line.proceeds ?? 0);
@@ -139,7 +139,7 @@ export default async function SalesPage() {
     href: saleHref(s.saleNo),
     dispatchNos: [...s.dispatches.values()],
     saleDate: s.saleDate,
-    broker: s.broker,
+    brokers: [...s.brokers].sort((a, b) => a.localeCompare(b)),
     lotsSold: s.lotsSold,
     netKg: s.netKg,
     proceeds: s.proceeds,

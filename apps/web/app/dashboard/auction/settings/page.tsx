@@ -71,7 +71,7 @@ export default async function AuctionSettingsPage({
         </div>
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <GradesTable rows={gradeTableRows} />
+          <GradesTable rows={gradeTableRows} isOwner={isOwner} />
 
           {isOwner ? (
             <form action={createAuctionGrade} className="space-y-3 rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">

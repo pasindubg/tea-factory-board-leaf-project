@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { SubmitButton } from "@/components/submit-button";
+import { formatFourDigitNo } from "../sale-number";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
@@ -50,6 +51,9 @@ export function DispatchLotForm({
               name="invoice_no"
               required={i === 0}
               placeholder={i === 0 ? "0058" : "another invoice (rare)"}
+              onBlur={(event) => {
+                event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+              }}
               className={input}
             />
           ))}
@@ -64,7 +68,14 @@ export function DispatchLotForm({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className={label}>Lot no.</label>
-            <input name="lot_no" placeholder="optional" className={input} />
+            <input
+              name="lot_no"
+              placeholder="optional"
+              onBlur={(event) => {
+                event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+              }}
+              className={input}
+            />
           </div>
           <div>
             <label className={label}>Mark</label>
@@ -99,6 +110,10 @@ export function DispatchLotForm({
             <label className={label}>kg/bag</label>
             <input name="kg_per_bag" type="number" min="0" step="0.01" required placeholder="28" className={input} />
           </div>
+        </div>
+        <div>
+          <label className={label}>Sample kg</label>
+          <input name="sample_allowance" type="number" min="0" step="0.01" placeholder="0.00" className={input} />
         </div>
         <SubmitButton
           pendingText="Adding…"

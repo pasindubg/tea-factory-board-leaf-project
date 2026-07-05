@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { deleteSale, updateSale } from "./actions";
-import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
+import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { formatSaleNo } from "./sale-number";
 
 type SaleRow = {
   id: string;
@@ -34,9 +35,9 @@ const COLUMNS: ColumnDef<SaleRow>[] = [
   { key: "sale_no", label: "Dispatch no.", accessor: (r) => r.sale_no, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.brokers?.name ?? null, sortable: true, filter: "select" },
   { key: "target_sale_no", label: "Target sale", accessor: (r) => r.target_sale_no ?? null, sortable: true, filter: "text" },
-  { key: "dispatch_date", label: "Dispatched", accessor: (r) => r.dispatch_date ?? null, sortable: true },
-  { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true },
-  { key: "prompt_date", label: "Prompt", accessor: (r) => r.prompt_date ?? null, sortable: true },
+  { key: "dispatch_date", label: "Dispatched", accessor: (r) => r.dispatch_date ?? null, sortable: true, searchInput: "date" },
+  { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true, searchInput: "date" },
+  { key: "prompt_date", label: "Prompt", accessor: (r) => r.prompt_date ?? null, sortable: true, searchInput: "date" },
   { key: "status", label: "Status", accessor: (r) => r.status, sortable: true, filter: "select", filterOptions: ALL_STATES.map((s) => ({ value: s, label: s })) },
 ];
 
@@ -141,11 +142,11 @@ export function DispatchesTable({
     if (!draft) return;
     setPendingIds((prev) => new Set(prev).add(id));
     const form = new FormData();
-    form.set("target_sale_no", draft.target_sale_no ?? "");
+    form.set("target_sale_no", formatSaleNo(draft.target_sale_no));
     form.set("status", draft.status);
     try {
       await updateSale(id, form);
-      setRows((curr) => curr.map((row) => (row.id === id ? { ...row, ...draft } : row)));
+      setRows((curr) => curr.map((row) => (row.id === id ? { ...row, ...draft, target_sale_no: formatSaleNo(draft.target_sale_no) } : row)));
       setEditingId(null);
       setDraft(null);
     } finally {
@@ -159,6 +160,7 @@ export function DispatchesTable({
 
   return (
     <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
+      <ListSearchPanel columns={COLUMNS} controls={controls} />
       {isOwner && selected.size > 0 && (
         <div className="flex items-center gap-3 border-b border-stone-100 px-4 py-2.5 dark:border-stone-800">
           <span className="text-xs font-medium text-stone-600 dark:text-stone-400">{selected.size} selected</span>
@@ -195,16 +197,6 @@ export function DispatchesTable({
             ))}
             {isOwner && <th className="w-16 px-4 py-3"></th>}
           </tr>
-          {controls.hasFilters && (
-            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
-              {COLUMNS.map((col) => (
-                <th key={col.key} className="px-4 py-1.5 font-normal">
-                  <FilterCell col={col} controls={controls} />
-                </th>
-              ))}
-              {isOwner && <th className="px-4 py-1.5"></th>}
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.map((s) => {
@@ -238,6 +230,7 @@ export function DispatchesTable({
                     <input
                       value={draft?.target_sale_no ?? ""}
                       onChange={(e) => updateDraft("target_sale_no", e.target.value)}
+                      onBlur={(e) => updateDraft("target_sale_no", formatSaleNo(e.target.value))}
                       placeholder="—"
                       className="w-24 rounded border border-stone-300 px-2 py-1 text-xs outline-none ring-0 dark:border-stone-600 dark:bg-stone-800"
                     />

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { BySaleTable, type BySaleRow } from "./by-sale-table";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 // Cross-sale auction dashboard — highlights + details across ALL lots and sales.
 // Reads the committed domain tables (lots, sale_lines, valuations, settlements,
@@ -124,8 +125,8 @@ export default async function AuctionDashboardPage() {
     const lc = lotsBySale.get(s.id) ?? { count: 0, kg: 0 };
     return {
       id: s.id,
-      saleNo: s.sale_no,
-      targetSaleNo: (s as { target_sale_no?: string | null }).target_sale_no ?? null,
+      saleNo: formatFourDigitNo(s.sale_no as string | null),
+      targetSaleNo: formatSaleNo((s as { target_sale_no?: string | null }).target_sale_no),
       broker: (s.brokers as unknown as { name: string } | null)?.name ?? "—",
       status: s.status,
       statusChip: STATE_ORDER.find((x) => x.key === s.status)?.chip ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300",

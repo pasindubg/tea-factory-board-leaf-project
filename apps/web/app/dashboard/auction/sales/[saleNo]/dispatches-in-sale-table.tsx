@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
+import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 
 export type DispatchInSaleRow = {
   id: string;
@@ -37,6 +37,7 @@ export function DispatchesInSaleTable({ rows }: { rows: DispatchInSaleRow[] }) {
 
   return (
     <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
+      <ListSearchPanel columns={COLUMNS} controls={controls} />
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
@@ -46,15 +47,6 @@ export function DispatchesInSaleTable({ rows }: { rows: DispatchInSaleRow[] }) {
               </th>
             ))}
           </tr>
-          {controls.hasFilters && (
-            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
-              {COLUMNS.map((col) => (
-                <th key={col.key} className="px-4 py-1.5 font-normal">
-                  <FilterCell col={col} controls={controls} />
-                </th>
-              ))}
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.map((dispatch) => (

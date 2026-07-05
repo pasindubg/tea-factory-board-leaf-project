@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
-import { saleNoKey } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 
 export const AUC = "/dashboard/auction";
 export const REP = "/dashboard/auction/reports";
@@ -121,7 +121,7 @@ export async function nextDispatchNo(supabase: Supa): Promise<string> {
     const match = (row.sale_no as string | null)?.match(/\d+$/);
     return match ? Math.max(max, Number(match[0])) : max;
   }, 0);
-  return String(maxNo + 1).padStart(3, "0");
+  return formatFourDigitNo(maxNo + 1);
 }
 
 // Resolve (or create) a dispatch by sale number for the report-analyser auto flow.
@@ -133,7 +133,7 @@ export async function resolveSale(
   factoryId: string,
   saleNo: string | null,
 ): Promise<string | null> {
-  const sn = saleNo?.trim();
+  const sn = formatSaleNo(saleNo);
   if (!sn) return null;
   const existingId = await findSaleId(supabase, factoryId, sn);
   if (existingId) return existingId;

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireModuleAccess } from "@/lib/profile";
 import { stateBucket } from "../../state-buckets";
-import { saleNoMatches } from "../../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
 import { SaleLinesTable, type SaleLineRow } from "./sale-lines-table";
@@ -99,6 +99,7 @@ export default async function SaleDetailPage({
   const { supabase } = await requireModuleAccess("auction");
   const { saleNo: rawSaleNo } = await params;
   const saleNo = decodeURIComponent(rawSaleNo);
+  const displaySaleNo = formatSaleNo(saleNo);
 
   const { data: allDispatches, error: dispatchesError } = await supabase
     .from("auction_sales")
@@ -195,7 +196,7 @@ export default async function SaleDetailPage({
     const dispatchLots = lotsByDispatch.get(dispatch.id) ?? [];
     return {
       id: dispatch.id,
-      saleNo: dispatch.sale_no,
+      saleNo: formatFourDigitNo(dispatch.sale_no),
       broker: (dispatch.brokers as { name: string } | null)?.name ?? "—",
       dispatchDate: dispatch.dispatch_date,
       saleDate: dispatch.sale_date,
@@ -214,7 +215,7 @@ export default async function SaleDetailPage({
     return {
       id: line.id,
       dispatchId: dispatch?.id ?? null,
-      dispatchSaleNo: dispatch?.sale_no ?? null,
+      dispatchSaleNo: dispatch ? formatFourDigitNo(dispatch.sale_no) : null,
       lotNo: lot?.lot_no ?? null,
       invoiceNo: lot?.invoice_no ?? null,
       grade: lot?.grade ?? null,
@@ -239,7 +240,7 @@ export default async function SaleDetailPage({
         </Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-5">
           <div>
-            <h2 className="text-xl font-semibold">Sale {saleNo}</h2>
+            <h2 className="text-xl font-semibold">Sale {displaySaleNo}</h2>
             <p className="text-sm text-stone-500 dark:text-stone-400">
               {dispatches.length} dispatch{dispatches.length === 1 ? "" : "es"} · {lineRows.length} lots sold · {reprintCount} re-print
             </p>

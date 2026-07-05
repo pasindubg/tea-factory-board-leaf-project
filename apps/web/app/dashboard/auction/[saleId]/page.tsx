@@ -4,6 +4,7 @@ import {
   addDispatchedLot,
 } from "../actions";
 import { DispatchDetailEditor } from "./dispatch-detail-editor";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 export default async function SaleDetailPage({
   params,
@@ -35,13 +36,13 @@ export default async function SaleDetailPage({
   }
 
   const broker = (sale.brokers as unknown as { name: string } | null)?.name ?? "—";
-  const [{ data: marks }, { data: grades }, { data: lots }, { data: saleLines }, { data: thresholds }] = await Promise.all([
+  const [{ data: marks }, { data: grades }, { data: lots }, { data: saleLines }, { data: thresholds }, { data: dispatches }] = await Promise.all([
     supabase.from("marks").select("id, code, name").order("code"),
     supabase.from("auction_grades").select("id, code, name").eq("active", true).order("sort_order").order("code"),
     supabase
       .from("auction_lots")
       .select(
-        "id, invoice_no, lot_no, grade, bags, kg_per_bag, net_wt, state, shutout_reason, lot_source, marks(code), lot_invoices(invoice_no)",
+        "id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout_reason, lot_source, marks(code), lot_invoices(invoice_no)",
       )
       .eq("sale_id", saleId)
       .order("invoice_no"),
@@ -50,6 +51,10 @@ export default async function SaleDetailPage({
       .from("broker_grade_thresholds")
       .select("min_net_kg, applies, auction_grades(code)")
       .eq("broker_id", sale.broker_id as string),
+    supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name)")
+      .order("sale_no", { ascending: false }),
   ]);
 
   const rows = lots ?? [];
@@ -77,13 +82,22 @@ export default async function SaleDetailPage({
       <DispatchDetailEditor
         sale={{
           id: sale.id as string,
-          sale_no: sale.sale_no as string | null,
-          target_sale_no: (sale as { target_sale_no?: string | null }).target_sale_no ?? null,
+          sale_no: formatFourDigitNo(sale.sale_no as string | null),
+          target_sale_no: formatSaleNo((sale as { target_sale_no?: string | null }).target_sale_no),
           dispatch_date: sale.dispatch_date as string | null,
           sale_date: sale.sale_date as string | null,
           prompt_date: sale.prompt_date as string | null,
           status: sale.status as string | null,
         }}
+        dispatches={(dispatches ?? []).map((dispatch) => ({
+          id: dispatch.id as string,
+          sale_no: formatFourDigitNo(dispatch.sale_no as string | null),
+          target_sale_no: formatSaleNo((dispatch as { target_sale_no?: string | null }).target_sale_no),
+          broker: (dispatch.brokers as unknown as { name: string } | null)?.name ?? "—",
+          dispatch_date: dispatch.dispatch_date as string | null,
+          sale_date: dispatch.sale_date as string | null,
+          status: dispatch.status as string | null,
+        }))}
         broker={broker}
         rows={rows.map(l => ({
           ...(() => {
@@ -94,17 +108,20 @@ export default async function SaleDetailPage({
             };
           })(),
           id: l.id as string,
-          invoice_no: l.invoice_no as string | null,
-          lot_no: l.lot_no as string | null,
+          invoice_no: formatFourDigitNo(l.invoice_no as string | null),
+          lot_no: formatFourDigitNo(l.lot_no as string | null),
           grade: l.grade as string | null,
           bags: l.bags as number | null,
           kg_per_bag: l.kg_per_bag as number | null,
+          sample_allowance: l.sample_allowance as number | string | null,
           net_wt: l.net_wt as number | string | null,
           state: l.state as string | null,
           shutout_reason: l.shutout_reason as string | null,
           lot_source: (l as { lot_source?: string | null }).lot_source ?? "factory",
           marks: (l.marks as unknown as { code: string; name: string } | null) ?? null,
-          lot_invoices: (l.lot_invoices as unknown as { invoice_no: string }[] | null) ?? null,
+          lot_invoices: ((l.lot_invoices as unknown as { invoice_no: string }[] | null) ?? null)?.map((invoice) => ({
+            invoice_no: formatFourDigitNo(invoice.invoice_no),
+          })) ?? null,
         }))}
         isOwner={isOwner}
         marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string }))}

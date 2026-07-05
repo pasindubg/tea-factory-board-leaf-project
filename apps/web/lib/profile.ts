@@ -30,7 +30,7 @@ async function resolveProfile() {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNREFUSED")) {
-      throw new Error(`fetch failed: ${msg}`);
+      redirect("/login?error=session_refresh_failed");
     }
     throw new Error("Could not verify your session right now — please retry.");
   }

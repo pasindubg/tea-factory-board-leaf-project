@@ -19,6 +19,7 @@ import {
 import { requireModuleAccess } from "@/lib/profile";
 import { AUC, back, extractPdf, stageImport, toISODate } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
+import { formatFourDigitNo } from "../sale-number";
 
 // ---------- Acknowledgement (① catalogue & reconcile) ----------
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
@@ -43,7 +44,15 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     .eq("id", importId)
     .single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
-  const parsed = imp.parsed_json as ParsedAcknowledgement;
+  const rawParsed = imp.parsed_json as ParsedAcknowledgement;
+  const parsed: ParsedAcknowledgement = {
+    ...rawParsed,
+    lots: rawParsed.lots.map((lot) => ({
+      ...lot,
+      invoiceNo: formatFourDigitNo(lot.invoiceNo),
+      lotNo: formatFourDigitNo(lot.lotNo) || null,
+    })),
+  };
 
   const { data: lotRows } = await supabase
     .from("auction_lots")
@@ -98,8 +107,8 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         factory_id: profile.factory_id,
         sale_id: saleId,
         mark_id: markByCode.get(ackLot.markCode) ?? null,
-        invoice_no: ackLot.invoiceNo,
-        lot_no: ackLot.lotNo,
+        invoice_no: formatFourDigitNo(ackLot.invoiceNo),
+        lot_no: formatFourDigitNo(ackLot.lotNo) || null,
         grade: ackLot.grade,
         bags: ackLot.bags,
         kg_per_bag: ackLot.kgPerBag,
@@ -124,7 +133,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         createdLots.map((lot) => ({
           factory_id: profile.factory_id,
           lot_id: lot.id,
-          invoice_no: lot.invoice_no,
+          invoice_no: formatFourDigitNo(lot.invoice_no as string),
         })),
       );
     }
@@ -172,10 +181,18 @@ export async function confirmValuation(importId: string, saleId: string) {
   const detail = `${AUC}/${saleId}`;
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
-  const parsed = imp.parsed_json as ParsedValuation;
+  const rawParsed = imp.parsed_json as ParsedValuation;
+  const parsed: ParsedValuation = {
+    ...rawParsed,
+    lots: rawParsed.lots.map((lot) => ({
+      ...lot,
+      invoiceNo: formatFourDigitNo(lot.invoiceNo),
+      lotNo: formatFourDigitNo(lot.lotNo),
+    })),
+  };
 
   const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no").eq("sale_id", saleId);
-  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
+  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [formatFourDigitNo(l.invoice_no as string), l.id as string]));
 
   // One valuation per lot (last line wins, as the sequential upsert did); flip
   // matched lots to "valued" in a single statement.
@@ -219,11 +236,19 @@ export async function confirmContract(importId: string, saleId: string) {
   const detail = `${AUC}/${saleId}`;
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
-  const parsed = imp.parsed_json as ParsedContract;
+  const rawParsed = imp.parsed_json as ParsedContract;
+  const parsed: ParsedContract = {
+    ...rawParsed,
+    lines: rawParsed.lines.map((line) => ({
+      ...line,
+      lotNo: formatFourDigitNo(line.lotNo),
+      invoiceNo: formatFourDigitNo(line.invoiceNo),
+    })),
+  };
 
   const { data: lotRows } = await supabase.from("auction_lots").select("id, invoice_no, net_wt").eq("sale_id", saleId);
   const lotByInv = new Map<string, { id: string; netWt: number }>(
-    (lotRows ?? []).map((l) => [l.invoice_no as string, { id: l.id as string, netWt: Number(l.net_wt) }]),
+    (lotRows ?? []).map((l) => [formatFourDigitNo(l.invoice_no as string), { id: l.id as string, netWt: Number(l.net_wt) }]),
   );
 
   // Resolve buyers (upsert by name).

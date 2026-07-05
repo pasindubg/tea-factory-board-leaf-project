@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { fetchWithTimeout } from "./fetch-timeout";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
@@ -21,6 +22,9 @@ export async function createClient() {
             // called from a Server Component — middleware handles refresh
           }
         },
+      },
+      global: {
+        fetch: fetchWithTimeout,
       },
     },
   );

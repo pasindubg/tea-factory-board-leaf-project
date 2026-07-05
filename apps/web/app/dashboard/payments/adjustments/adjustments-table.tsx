@@ -3,7 +3,7 @@
 import { SubmitButton } from "@/components/submit-button";
 import { lkr } from "@/lib/money";
 import { deleteAdjustment } from "../actions";
-import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
+import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 
 const KIND_LABELS: Record<string, string> = {
   advance: "Advance / loan",
@@ -37,6 +37,7 @@ export function AdjustmentsTable({ rows }: { rows: AdjustmentRow[] }) {
 
   return (
     <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+      <ListSearchPanel columns={COLUMNS} controls={controls} />
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
@@ -47,16 +48,6 @@ export function AdjustmentsTable({ rows }: { rows: AdjustmentRow[] }) {
             ))}
             <th className="px-4 py-3 text-right">Actions</th>
           </tr>
-          {controls.hasFilters && (
-            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
-              {COLUMNS.map((col) => (
-                <th key={col.key} className="px-4 py-1.5 font-normal">
-                  <FilterCell col={col} controls={controls} />
-                </th>
-              ))}
-              <th className="px-4 py-1.5"></th>
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.map((a) => (

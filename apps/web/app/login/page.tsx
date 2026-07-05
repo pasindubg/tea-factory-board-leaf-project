@@ -13,6 +13,7 @@ function LoginForm() {
   const errorMessages: Record<string, string> = {
     deactivated: "Your account has been deactivated. Contact your factory owner.",
     no_profile: "Your login isn't linked to any factory. Contact your factory owner.",
+    session_refresh_failed: "Your saved session could not be refreshed. Please sign in again.",
   };
   const errorParam = searchParams.get("error");
 

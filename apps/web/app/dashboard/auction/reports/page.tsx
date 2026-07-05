@@ -4,6 +4,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { ingestAckAuto, ingestValAuto, ingestConAuto, ingestBankAuto } from "../actions";
 import { ReportsTabs } from "./reports-tabs";
 import { SettlementsTable, type SettlementRow } from "./settlements-table";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 export default async function ReportsPage() {
   const { supabase } = await requireModuleAccess("auction");
@@ -53,8 +54,8 @@ export default async function ReportsPage() {
     return {
       id: st.id as string,
       contractNo: st.contract_no as string,
-      dispatchNo: sale?.sale_no ?? "—",
-      saleNo: sale?.target_sale_no || "—",
+      dispatchNo: formatFourDigitNo(sale?.sale_no) || "—",
+      saleNo: formatSaleNo(sale?.target_sale_no) || "—",
       broker: sale?.brokers?.name ?? "—",
       proceeds: Number(st.proceeds_total ?? 0),
       deductions: Number(st.total_deductions ?? 0),

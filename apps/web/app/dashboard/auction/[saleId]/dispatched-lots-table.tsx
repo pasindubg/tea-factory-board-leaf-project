@@ -4,7 +4,8 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
-import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
+import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 const LOT_STATES = ["invoiced","acknowledged","pending","missing","shutout","valued","withdrawn","re-print","sold","settled"];
 
@@ -14,6 +15,7 @@ const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
   { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true },
   { key: "kg_per_bag", label: "kg/bag", accessor: (r) => r.kg_per_bag ?? null, sortable: true },
+  { key: "sample_allowance", label: "Sample kg", accessor: (r) => Number(r.sample_allowance ?? 0), sortable: true },
   { key: "net_wt", label: "Net kg", accessor: (r) => Number(r.net_wt ?? 0), sortable: true },
   { key: "state", label: "State", accessor: (r) => r.state ?? null, sortable: true, filter: "select", filterOptions: LOT_STATES.map((s) => ({ value: s, label: s })) },
 ];
@@ -46,33 +48,25 @@ export function DispatchedLotsTable({
   }, [rows, canEdit]);
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
+      <ListSearchPanel columns={COLUMNS} controls={controls} />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
             {COLUMNS.map((col) => (
-              <th key={col.key} className={`px-3 py-3 ${["bags", "kg_per_bag", "net_wt"].includes(col.key) ? "text-right" : ""}`}>
+              <th key={col.key} className={`px-3 py-3 ${["bags", "kg_per_bag", "sample_allowance", "net_wt"].includes(col.key) ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
             ))}
             <th className="px-3 py-3"></th>
           </tr>
-          {controls.hasFilters && (
-            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
-              {COLUMNS.map((col) => (
-                <th key={col.key} className="px-3 py-1.5 font-normal">
-                  <FilterCell col={col} controls={controls} />
-                </th>
-              ))}
-              <th className="px-3 py-1.5"></th>
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.map((l) => {
             const isEditing = editingId === l.id;
             const invoices = (l.lot_invoices ?? []).map((i) => i.invoice_no);
-            const invoiceLabel = invoices.length ? invoices.join(", ") : l.invoice_no ?? "";
+            const invoiceLabel = (invoices.length ? invoices : [l.invoice_no ?? ""]).map(formatFourDigitNo).filter(Boolean).join(", ");
             const displayState = soldLotIds.includes(l.id) ? "sold" : l.state;
             const bucket = stateBucket(displayState);
             const netWeight = Number(l.net_wt ?? 0);
@@ -126,6 +120,9 @@ export function DispatchedLotsTable({
                     <td className="px-3 py-2 text-right">{l.bags ?? "—"}</td>
                     <td className="px-3 py-2 text-right">
                       {l.kg_per_bag != null ? Number(l.kg_per_bag).toFixed(2) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {l.sample_allowance != null ? Number(l.sample_allowance).toFixed(2) : "0.00"}
                     </td>
                     <td className="px-3 py-2 text-right">{netWeight.toFixed(2)}</td>
                     <td className="px-3 py-2">
@@ -226,7 +223,7 @@ export function DispatchedLotsTable({
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={8} className="px-6 py-12 text-center">
+              <td colSpan={9} className="px-6 py-12 text-center">
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots match these filters.</p>
                 <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
                   Clear filters
@@ -236,7 +233,7 @@ export function DispatchedLotsTable({
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-6 py-12 text-center">
+              <td colSpan={9} className="px-6 py-12 text-center">
                 <p className="text-2xl mb-2">📦</p>
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots yet.</p>
                 <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Click + Add lot above to enter the lots you dispatched.</p>
@@ -245,6 +242,7 @@ export function DispatchedLotsTable({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -261,7 +259,7 @@ export function EditRow({
   saleId: string;
   isOwner: boolean;
   onCancel: () => void;
-  onSaved: (patch: Partial<Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "net_wt" | "state">>) => void;
+  onSaved: (patch: Partial<Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">>) => void;
   onBusy: (busy: boolean) => void;
 }) {
   const formId = `edit-${lot.id}`;
@@ -274,7 +272,10 @@ export function EditRow({
         <input
           name="invoice_no"
           form={formId}
-          defaultValue={lot.invoice_no ?? ""}
+          defaultValue={formatFourDigitNo(lot.invoice_no)}
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
           className="w-20 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
         />
         {invoices.length > 1 && (
@@ -287,8 +288,11 @@ export function EditRow({
         <input
           name="lot_no"
           form={formId}
-          defaultValue={lot.lot_no ?? ""}
+          defaultValue={formatFourDigitNo(lot.lot_no)}
           placeholder="Lot no."
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
           className="w-16 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
         />
       </td>
@@ -321,6 +325,17 @@ export function EditRow({
           className="w-16 rounded border border-stone-300 px-1.5 py-1 text-right text-xs dark:border-stone-600 dark:bg-stone-800"
         />
       </td>
+      <td className="px-3 py-2 text-right">
+        <input
+          name="sample_allowance"
+          form={formId}
+          type="number"
+          min="0"
+          step="0.01"
+          defaultValue={lot.sample_allowance != null ? Number(lot.sample_allowance) : ""}
+          className="w-20 rounded border border-stone-300 px-1.5 py-1 text-right text-xs dark:border-stone-600 dark:bg-stone-800"
+        />
+      </td>
       <td className="px-3 py-2 text-right text-xs">
         {Number(lot.net_wt ?? 0).toFixed(2)}
       </td>
@@ -350,13 +365,17 @@ export function EditRow({
             onBusy(true);
             try {
               await updateLot(lot.id, saleId, formData);
+              const bags = Number(String(formData.get("bags") ?? 0)) || 0;
+              const kgPerBag = Number(String(formData.get("kg_per_bag") ?? 0)) || 0;
+              const sampleKg = Math.max(0, Number(String(formData.get("sample_allowance") ?? 0)) || 0);
               onSaved({
-                invoice_no: String(formData.get("invoice_no") ?? "").trim() || null,
-                lot_no: String(formData.get("lot_no") ?? "").trim() || null,
+                invoice_no: formatFourDigitNo(String(formData.get("invoice_no") ?? "")) || null,
+                lot_no: formatFourDigitNo(String(formData.get("lot_no") ?? "")) || null,
                 grade: String(formData.get("grade") ?? "").trim() || null,
-                bags: Number(String(formData.get("bags") ?? 0)) || null,
-                kg_per_bag: Number(String(formData.get("kg_per_bag") ?? 0)) || null,
-                net_wt: Number(((Number(String(formData.get("bags") ?? 0)) || 0) * (Number(String(formData.get("kg_per_bag") ?? 0)) || 0)).toFixed(2)),
+                bags: bags || null,
+                kg_per_bag: kgPerBag || null,
+                sample_allowance: sampleKg,
+                net_wt: Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2)),
                 state: String(formData.get("state") ?? lot.state ?? "invoiced"),
               });
             } finally {
@@ -428,6 +447,7 @@ function ReprintForm({
       <input
         value={targetSaleNo}
         onChange={(e) => setTargetSaleNo(e.target.value)}
+        onBlur={(e) => setTargetSaleNo(formatSaleNo(e.target.value))}
         placeholder="Target sale no."
         className="w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
       />

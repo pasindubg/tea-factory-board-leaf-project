@@ -1,5 +1,26 @@
 # UI/UX Guidelines
 
+## Lists And Search
+
+List pages and list sections must use one consistent search pattern.
+
+- Use `useListControls`, `SortButton`, and `ListSearchPanel` from `apps/web/components/list-controls.tsx` for sortable/searchable tables.
+- Do not add inline filter rows inside `<thead>`. Put the top-right `Search` button/panel above the table inside the same bordered table surface.
+- The search panel must expose all meaningful list columns, including dates and numeric columns. Use `searchInput: "date"` for date columns and `"number"` for numeric columns when useful.
+- Keep advanced search enabled through `ListSearchPanel`; do not build one-off query boxes per page.
+- Wrap table surfaces as an outer bordered `overflow-hidden` container, then put the actual table in an inner `overflow-x-auto` container when horizontal scrolling is needed.
+- Searchable list labels should match the visible table headers so users can move between column search and table scanning without translation.
+
+## Auction Number Formats
+
+Auction identifiers are similar but not interchangeable.
+
+- **Dispatch no.** uses four digits: `0001`, `0004`, `0123`.
+- **Invoice no.** and **lot no.** use four digits when numeric: `0951`, `0058`.
+- **Auction sale no. / target sale no.** uses three digits: `019`, `023`.
+- Code should use `formatFourDigitNo` only for dispatch, invoice, and lot numbers. Use `formatSaleNo` for `target_sale_no` and sales overview/detail display.
+- Multiple brokers can participate in the same auction sale number. Any sale-level overview grouped by sale number must show all participating brokers, not a single overwritten broker.
+
 ## Detail Pages
 
 Detail pages are operational work surfaces. Keep the user anchored on the record they are editing or reviewing.

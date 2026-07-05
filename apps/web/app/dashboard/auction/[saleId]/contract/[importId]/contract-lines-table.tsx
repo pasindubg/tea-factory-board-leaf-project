@@ -1,7 +1,7 @@
 "use client";
 
 import type { ValClass } from "@tea/api";
-import { useListControls, SortButton, FilterCell, type ColumnDef } from "@/components/list-controls";
+import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 
 const CLASS_STYLE: Record<ValClass, string> = {
   above: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
@@ -44,6 +44,7 @@ export function ContractLinesTable({ rows }: { rows: ContractLineRow[] }) {
 
   return (
     <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+      <ListSearchPanel columns={COLUMNS} controls={controls} />
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
@@ -53,15 +54,6 @@ export function ContractLinesTable({ rows }: { rows: ContractLineRow[] }) {
               </th>
             ))}
           </tr>
-          {controls.hasFilters && (
-            <tr className="border-b border-stone-100 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-900/40">
-              {COLUMNS.map((col) => (
-                <th key={col.key} className="px-3 py-1.5 font-normal">
-                  <FilterCell col={col} controls={controls} />
-                </th>
-              ))}
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.map((l) => (

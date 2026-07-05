@@ -22,6 +22,34 @@ export async function createBroker(formData: FormData) {
   redirect(reg);
 }
 
+export async function updateBroker(id: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const name = str(formData.get("name"));
+  if (!name) back(reg, "Broker name is required.");
+  const { error } = await supabase
+    .from("brokers")
+    .update({
+      name,
+      vat_no: str(formData.get("vat_no")) || null,
+      address: str(formData.get("address")) || null,
+    })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
+export async function deleteBroker(id: string) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const { error } = await supabase.from("brokers").delete().eq("id", id).eq("factory_id", profile.factory_id);
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
 export async function createMark(formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const reg = `${AUC}/registry`;
@@ -34,6 +62,35 @@ export async function createMark(formData: FormData) {
     name,
     address: str(formData.get("address")) || null,
   });
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
+export async function updateMark(id: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const code = str(formData.get("code")).toUpperCase();
+  const name = str(formData.get("name"));
+  if (!code || !name) back(reg, "Mark code and name are both required.");
+  const { error } = await supabase
+    .from("marks")
+    .update({
+      code,
+      name,
+      address: str(formData.get("address")) || null,
+    })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
+export async function deleteMark(id: string) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const { error } = await supabase.from("marks").delete().eq("id", id).eq("factory_id", profile.factory_id);
   if (error) back(reg, error.message);
   revalidatePath(reg);
   redirect(reg);
@@ -78,6 +135,55 @@ export async function createBrokerRate(formData: FormData) {
   redirect(reg);
 }
 
+export async function updateBrokerRate(id: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const brokerId = str(formData.get("broker_id"));
+  const effectiveFrom = str(formData.get("effective_from"));
+  if (!brokerId) back(reg, "Pick a broker for the rate card.");
+  if (!effectiveFrom) back(reg, "Effective-from date is required.");
+  const { data: broker } = await supabase
+    .from("brokers")
+    .select("id")
+    .eq("id", brokerId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (!broker) back(reg, "Unknown broker.");
+  const rate = (key: string, d = 0): string => {
+    const v = Number(str(formData.get(key)));
+    return (Number.isFinite(v) ? v : d).toString();
+  };
+  const { error } = await supabase
+    .from("broker_rates")
+    .update({
+      broker_id: brokerId,
+      effective_from: effectiveFrom,
+      insurance_per_kg: rate("insurance_per_kg"),
+      public_sale_ex_per_lot: rate("public_sale_ex_per_lot"),
+      brokerage_pct: rate("brokerage_pct"),
+      handling_per_kg: rate("handling_per_kg"),
+      documentation_per_lot: rate("documentation_per_lot"),
+      eplatform_per_kg: rate("eplatform_per_kg"),
+      govt_relief_loan: rate("govt_relief_loan"),
+      charges_vat_pct: rate("charges_vat_pct", 18),
+      proceeds_vat_pct: rate("proceeds_vat_pct", 18),
+    })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
+export async function deleteBrokerRate(id: string) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const reg = `${AUC}/registry`;
+  const { error } = await supabase.from("broker_rates").delete().eq("id", id).eq("factory_id", profile.factory_id);
+  if (error) back(reg, error.message);
+  revalidatePath(reg);
+  redirect(reg);
+}
+
 export async function createAuctionGrade(formData: FormData) {
   const { supabase, profile } = await requireProfile(["owner"]);
   const settings = `${AUC}/settings`;
@@ -94,6 +200,50 @@ export async function createAuctionGrade(formData: FormData) {
   });
   if (error) back(settings, error.message);
   revalidatePath(settings);
+  redirect(settings);
+}
+
+export async function updateAuctionGrade(id: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const settings = `${AUC}/settings`;
+  const code = str(formData.get("code")).toUpperCase();
+  const name = str(formData.get("name")) || code;
+  const sortOrder = Number(str(formData.get("sort_order")) || "0");
+  const active = formData.get("active") === "on";
+  if (!code) back(settings, "Grade code is required.");
+
+  const { data: existing } = await supabase
+    .from("auction_grades")
+    .select("code")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (!existing) back(settings, "Unknown grade.");
+
+  const { error } = await supabase
+    .from("auction_grades")
+    .update({
+      code,
+      name,
+      sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+      active,
+    })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (error) back(settings, error.message);
+
+  const oldCode = (existing as { code: string | null }).code;
+  if (oldCode && oldCode !== code) {
+    const { error: lotError } = await supabase
+      .from("auction_lots")
+      .update({ grade: code })
+      .eq("factory_id", profile.factory_id)
+      .eq("grade", oldCode);
+    if (lotError) back(settings, lotError.message);
+  }
+
+  revalidatePath(settings);
+  revalidatePath(AUC);
   redirect(settings);
 }
 

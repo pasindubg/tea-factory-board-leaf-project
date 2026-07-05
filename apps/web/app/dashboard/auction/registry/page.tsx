@@ -37,18 +37,25 @@ export default async function RegistryPage({
   const { data: marks } = await supabase.from("marks").select("id, code, name, address").order("code");
   const { data: rates } = await supabase
     .from("broker_rates")
-    .select("id, effective_from, brokerage_pct, insurance_per_kg, handling_per_kg, eplatform_per_kg, public_sale_ex_per_lot, documentation_per_lot, govt_relief_loan, charges_vat_pct, proceeds_vat_pct, brokers(name)")
+    .select("id, broker_id, effective_from, brokerage_pct, insurance_per_kg, handling_per_kg, eplatform_per_kg, public_sale_ex_per_lot, documentation_per_lot, govt_relief_loan, charges_vat_pct, proceeds_vat_pct, brokers(name)")
     .order("effective_from", { ascending: false });
 
-  const brokerRows: BrokerRow[] = (brokers ?? []).map((b) => ({ id: b.id, name: b.name, vat_no: b.vat_no }));
-  const markRows: MarkRow[] = (marks ?? []).map((m) => ({ id: m.id, code: m.code, name: m.name }));
+  const brokerRows: BrokerRow[] = (brokers ?? []).map((b) => ({ id: b.id, name: b.name, vat_no: b.vat_no, address: b.address }));
+  const markRows: MarkRow[] = (marks ?? []).map((m) => ({ id: m.id, code: m.code, name: m.name, address: m.address }));
   const rateRows: RateRow[] = (rates ?? []).map((r) => ({
     id: r.id as string,
+    brokerId: r.broker_id as string,
     broker: (r.brokers as unknown as { name: string } | null)?.name ?? "—",
     effectiveFrom: r.effective_from as string,
     brokeragePct: Number(r.brokerage_pct),
     insurancePerKg: Number(r.insurance_per_kg),
+    handlingPerKg: Number(r.handling_per_kg),
+    eplatformPerKg: Number(r.eplatform_per_kg),
+    publicSaleExPerLot: Number(r.public_sale_ex_per_lot),
+    documentationPerLot: Number(r.documentation_per_lot),
+    govtReliefLoan: Number(r.govt_relief_loan),
     chargesVatPct: Number(r.charges_vat_pct),
+    proceedsVatPct: Number(r.proceeds_vat_pct),
   }));
 
   return (
@@ -59,7 +66,7 @@ export default async function RegistryPage({
         <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Brokers</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">The auction houses that catalogue, value and settle your teas.</p>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
-          <BrokersTable rows={brokerRows} />
+          <BrokersTable rows={brokerRows} isOwner={isOwner} />
           <form action={createBroker} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
             <div>
               <label className={label}>Name</label>
@@ -87,7 +94,7 @@ export default async function RegistryPage({
           the most recent card (by effective date) is applied when you confirm a sellers contract.
         </p>
         <div className="mt-4 grid gap-6 lg:grid-cols-2">
-          <RatesTable rows={rateRows} />
+          <RatesTable rows={rateRows} brokers={(brokers ?? []).map((b) => ({ id: b.id as string, name: b.name as string }))} isOwner={isOwner} />
           {isOwner ? (
             <form action={createBrokerRate} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
               <div className="grid grid-cols-2 gap-3">
@@ -137,7 +144,7 @@ export default async function RegistryPage({
         <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Estate marks</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">The selling identities you trade under (e.g. MF1530 KUMUDU).</p>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
-          <MarksTable rows={markRows} />
+          <MarksTable rows={markRows} isOwner={isOwner} />
           <form action={createMark} className="space-y-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
             <div>
               <label className={label}>Mark code</label>

@@ -8,6 +8,7 @@ export type LotRow = {
   grade: string | null;
   bags: number | null;
   kg_per_bag: number | null;
+  sample_allowance: string | number | null;
   net_wt: string | number | null;
   state: string | null;
   shutout_reason: string | null;

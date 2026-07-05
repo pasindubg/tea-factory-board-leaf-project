@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { createDispatch } from "./actions";
+import { formatSaleNo, saleNoMatches } from "./sale-number";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
@@ -11,13 +12,18 @@ const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 export function NewDispatchForm({
   brokers,
   nextDispatchNo,
+  dispatchHistory,
 }: {
   brokers: { id: string; name: string }[];
   nextDispatchNo: string;
+  dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLFormElement>(null);
   const today = new Date().toISOString().split("T")[0];
+  const [targetSaleNo, setTargetSaleNo] = useState("");
+  const [dispatchDate, setDispatchDate] = useState(today);
+  const [saleDate, setSaleDate] = useState(addDays(today, 14));
+  const ref = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -27,6 +33,18 @@ export function NewDispatchForm({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  useEffect(() => {
+    const formattedSaleNo = formatSaleNo(targetSaleNo);
+    const previousSameSale = dispatchHistory.find((dispatch) =>
+      dispatch.saleDate && (
+        saleNoMatches(dispatch.targetSaleNo, formattedSaleNo) ||
+        saleNoMatches(dispatch.saleNo, formattedSaleNo)
+      )
+    );
+    if (previousSameSale && targetSaleNo !== formattedSaleNo) setTargetSaleNo(formattedSaleNo);
+    setSaleDate(previousSameSale?.saleDate ?? addDays(dispatchDate, 14));
+  }, [dispatchDate, dispatchHistory, targetSaleNo]);
 
   if (brokers.length === 0) {
     return (
@@ -77,16 +95,38 @@ export function NewDispatchForm({
         </div>
         <div>
           <label className={label}>Sale number</label>
-          <input name="target_sale_no" required placeholder="023" className={input} />
+          <input
+            name="target_sale_no"
+            required
+            value={targetSaleNo}
+            onChange={(event) => setTargetSaleNo(event.target.value)}
+            onBlur={(event) => setTargetSaleNo(formatSaleNo(event.target.value))}
+            placeholder="023"
+            className={input}
+          />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className={label}>Dispatch date <span className="text-red-500">*</span></label>
-            <input type="date" name="dispatch_date" required defaultValue={today} className={input} />
+            <input
+              type="date"
+              name="dispatch_date"
+              required
+              value={dispatchDate}
+              onChange={(event) => setDispatchDate(event.target.value)}
+              className={input}
+            />
           </div>
           <div>
             <label className={label}>Sale date <span className="text-red-500">*</span></label>
-            <input type="date" name="sale_date" required className={input} />
+            <input
+              type="date"
+              name="sale_date"
+              required
+              value={saleDate}
+              onChange={(event) => setSaleDate(event.target.value)}
+              className={input}
+            />
           </div>
         </div>
         <SubmitButton
@@ -98,4 +138,12 @@ export function NewDispatchForm({
       </form>
     </div>
   );
+}
+
+function addDays(date: string, days: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) return "";
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
 }
