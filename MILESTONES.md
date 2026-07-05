@@ -347,10 +347,12 @@ purchased modules, and `db:verify-rls` proves the new tenant is isolated.
 # Phase 1.5 — AI Insights track (AI1–AI4, entitlement `insights`)
 
 Money-denominated, evidence-backed suggestions computed from the ERP's own
-data. Full spec: [docs/AI_INSIGHTS.md](docs/AI_INSIGHTS.md); implementation
-playbook: `.claude/skills/ai-insights`. Design principle: deterministic
-analyzers + rules first (zero LLM tokens); the LLM only narrates curated
-evidence packs and synthesizes the weekly digest, under a per-factory budget.
+data. Architecture spec: [docs/AI_INSIGHTS.md](docs/AI_INSIGHTS.md);
+task-level plan: [docs/AI_INSIGHTS_IMPLEMENTATION.md](docs/AI_INSIGHTS_IMPLEMENTATION.md)
+(T1–T23 with exit gates); playbook: `.claude/skills/ai-insights`. Design
+principle: deterministic analyzers + rules first (zero LLM tokens); the LLM
+only narrates curated evidence packs and synthesizes the weekly digest, under
+a per-factory budget with a citation validator blocking invented figures.
 
 ## AI1 — Deterministic insight engine (no LLM)
 Insights/insight_runs/metric_snapshots/insight_feedback tables (+RLS), analyzer
