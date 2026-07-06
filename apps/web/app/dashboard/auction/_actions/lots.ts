@@ -245,9 +245,41 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
 }
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).
+// Lots on a draft dispatch can be removed by any auction role, but only while
+// still invoiced/pending (fixing entry mistakes). Once the dispatch is
+// confirmed, deletion is OWNER-ONLY and works at any lot lifecycle stage —
+// the delete cascades the lot's dependent records (VAT ledger + sale line,
+// valuation, invoice records, audit rows) so a wrongly imported lot can be
+// cleaned up without leaving orphans.
 export async function deleteLot(id: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  await ensureDispatchEditable(supabase, saleId, profile.role, `${AUC}/${saleId}`);
-  await supabase.from("auction_lots").delete().eq("id", id).in("state", ["invoiced", "pending"]);
-  revalidatePath(`${AUC}/${saleId}`);
+  const detail = `${AUC}/${saleId}`;
+  const { data: lot } = await supabase
+    .from("auction_lots")
+    .select("id, state, auction_sales(status)")
+    .eq("id", id)
+    .eq("sale_id", saleId)
+    .maybeSingle();
+  if (!lot) return;
+  const saleStatus = (lot.auction_sales as unknown as { status: string } | null)?.status;
+  const isDraft = saleStatus === "draft" || saleStatus === "dispatched";
+  const isOwner = profile.role === "owner";
+  if (!isDraft && !isOwner) {
+    back(detail, "Only the owner can delete lots after the dispatch is confirmed.");
+  }
+  if (!isOwner && !["invoiced", "pending"].includes(lot.state as string)) {
+    back(detail, "Only invoiced/pending lots can be removed.");
+  }
+  // Cascade dependents before the lot (mirrors deleteSale's ordering).
+  const { data: slRows } = await supabase.from("sale_lines").select("id").eq("lot_id", id);
+  const slIds = (slRows ?? []).map((s) => s.id as string);
+  if (slIds.length > 0) {
+    await supabase.from("vat_ledger").delete().in("sale_line_id", slIds);
+    await supabase.from("sale_lines").delete().in("id", slIds);
+  }
+  await supabase.from("valuations").delete().eq("lot_id", id);
+  await supabase.from("lot_invoices").delete().eq("lot_id", id);
+  await supabase.from("auction_audit").delete().eq("lot_id", id);
+  await supabase.from("auction_lots").delete().eq("id", id);
+  revalidatePath(detail);
 }

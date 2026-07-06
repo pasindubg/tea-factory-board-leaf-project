@@ -74,6 +74,10 @@ export function DispatchedLotsTable({
             const hasMinimumWeightIssue = l.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
             const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`;
             const removable = l.state === "invoiced" || l.state === "pending";
+            // The owner may delete a lot at ANY lifecycle stage (e.g. cleaning up a
+            // wrongly imported ack lot after the dispatch is confirmed) — the server
+            // cascades the lot's dependent records. Non-owners keep the old rule.
+            const deletable = removable || isOwner;
             const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
 
             return (
@@ -144,8 +148,9 @@ export function DispatchedLotsTable({
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {canEdit && isOwner && removable && (
+                      {canEdit && isOwner && deletable && (
                         <div className="flex items-center justify-end gap-1">
+                          {removable && (
                           <button
                             onClick={() => setEditingId(l.id)}
                             disabled={pendingIds.has(l.id)}
@@ -157,11 +162,15 @@ export function DispatchedLotsTable({
                               <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
                             </svg>
                           </button>
+                          )}
                           <button
                             type="button"
                             disabled={pendingIds.has(l.id)}
                             onClick={async () => {
-                              if (!confirm("Delete this lot and all its invoice records? This cannot be undone.")) return;
+                              const msg = removable
+                                ? "Delete this lot and all its invoice records? This cannot be undone."
+                                : "Delete this lot AND its acknowledgement/valuation/sale records? This cannot be undone.";
+                              if (!confirm(msg)) return;
                               setPendingIds((prev) => new Set(prev).add(l.id));
                               try {
                                 await deleteLot(l.id, saleId);
