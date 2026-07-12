@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireModuleAccess } from "@/lib/profile";
 import { AUC, str, num, back, writeAudit, type Supa } from "./_shared";
 import { formatFourDigitNo } from "../sale-number";
+import { isLotState } from "../lot-states";
 
 async function ensureDispatchEditable(
   supabase: Supa,
@@ -175,8 +176,10 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
 
   // State override — owners only, for when the PDF parser missed something.
   const isOwner = profile.role === "owner";
-  const validStates = ["invoiced", "acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"];
-  if (newState && isOwner && validStates.includes(newState)) {
+  if (newState && isOwner && !isLotState(newState)) {
+    back(detail, `Invalid lot state: ${newState}.`);
+  }
+  if (newState && isOwner && isLotState(newState)) {
     updates.state = newState;
     if (newState === "shutout") updates.shutout_reason = str(formData.get("shutout_reason")) || "Manual override";
     else updates.shutout_reason = null;
@@ -190,11 +193,21 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
     }
   }
 
-  if (Object.keys(updates).length === 0) return;
+  if (Object.keys(updates).length === 0) return null;
   if (invoiceNo) {
     await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], detail, id);
   }
-  await supabase.from("auction_lots").update(updates).eq("id", id);
+  const { data: updatedLot, error: updateError } = await supabase
+    .from("auction_lots")
+    .update(updates)
+    .eq("id", id)
+    .eq("sale_id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .select("invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state")
+    .single();
+  if (updateError || !updatedLot) {
+    back(detail, `Could not update lot: ${updateError?.message ?? "lot not found"}.`);
+  }
   if (invoiceNo) {
     const { data: existingInvoice } = await supabase
       .from("lot_invoices")
@@ -213,6 +226,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData) 
   }
   await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
   revalidatePath(detail);
+  return updatedLot;
 }
 
 export async function markReprint(lotId: string, saleId: string, formData: FormData) {

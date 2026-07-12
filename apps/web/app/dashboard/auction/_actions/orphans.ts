@@ -11,9 +11,21 @@ export async function linkOrphanLot(input: {
   confidence: number; reason?: string;
 }) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const markId = input.candidateMarkCode ? (await supabase.from("marks").select("id").eq("code", input.candidateMarkCode).maybeSingle()).data?.id as string ?? null : null;
+  const markId = input.candidateMarkCode
+    ? (await supabase
+        .from("marks")
+        .select("id")
+        .eq("factory_id", profile.factory_id)
+        .eq("code", input.candidateMarkCode)
+        .maybeSingle()).data?.id as string ?? null
+    : null;
   const weightDelta = Number((input.candidateNetWt - input.orphanNetWt).toFixed(2));
-  await supabase.from("auction_lots").update({ lot_no: input.candidateLotNo, mark_id: markId, state: "acknowledged", shutout_reason: null }).eq("id", input.lotId).eq("sale_id", input.saleId);
+  await supabase
+    .from("auction_lots")
+    .update({ lot_no: input.candidateLotNo, mark_id: markId, state: "acknowledged", shutout_reason: null })
+    .eq("id", input.lotId)
+    .eq("sale_id", input.saleId)
+    .eq("factory_id", profile.factory_id);
   await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action: "Linked", detail: `Invoice ${input.invoiceNo} → lot ${input.candidateLotNo ?? "—"}`, reason: input.reason, actor: profile.name, confidenceShown: input.confidence, weightDelta: weightDelta !== 0 ? weightDelta : null });
   revalidatePath(`${AUC}/${input.saleId}`);
 }
@@ -25,7 +37,12 @@ type OrphanStateInput = { saleId: string; lotId: string; invoiceNo: string; orph
 
 async function setOrphanState(input: OrphanStateInput, patch: Record<string, string | null>, action: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  await supabase.from("auction_lots").update(patch).eq("id", input.lotId).eq("sale_id", input.saleId);
+  await supabase
+    .from("auction_lots")
+    .update(patch)
+    .eq("id", input.lotId)
+    .eq("sale_id", input.saleId)
+    .eq("factory_id", profile.factory_id);
   await writeAudit(supabase, profile.factory_id, { saleId: input.saleId, lotId: input.lotId, action, detail: `Invoice ${input.invoiceNo}`, actor: profile.name });
   revalidatePath(`${AUC}/${input.saleId}`);
 }

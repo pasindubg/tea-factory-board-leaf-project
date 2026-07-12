@@ -6,8 +6,7 @@ import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { formatFourDigitNo } from "../sale-number";
-
-const LOT_STATES = ["invoiced","acknowledged","pending","missing","shutout","valued","withdrawn","re-print","sold","settled"];
+import { LOT_STATES } from "../lot-states";
 
 const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
@@ -355,7 +354,7 @@ export function EditRow({
             defaultValue={lot.state ?? "invoiced"}
             className="w-24 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
           >
-            {["invoiced","acknowledged","pending","missing","shutout","valued","withdrawn","re-print","sold","settled"].map(s => (
+            {LOT_STATES.map(s => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
@@ -372,19 +371,17 @@ export function EditRow({
             setSaving(true);
             onBusy(true);
             try {
-              await updateLot(lot.id, saleId, formData);
-              const bags = Number(String(formData.get("bags") ?? 0)) || 0;
-              const kgPerBag = Number(String(formData.get("kg_per_bag") ?? 0)) || 0;
-              const sampleKg = Math.max(0, Number(String(formData.get("sample_allowance") ?? 0)) || 0);
+              const saved = await updateLot(lot.id, saleId, formData);
+              if (!saved) return;
               onSaved({
-                invoice_no: formatFourDigitNo(String(formData.get("invoice_no") ?? "")) || null,
-                lot_no: formatFourDigitNo(String(formData.get("lot_no") ?? "")) || null,
-                grade: String(formData.get("grade") ?? "").trim() || null,
-                bags: bags || null,
-                kg_per_bag: kgPerBag || null,
-                sample_allowance: sampleKg,
-                net_wt: Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2)),
-                state: String(formData.get("state") ?? lot.state ?? "invoiced"),
+                invoice_no: saved.invoice_no as string | null,
+                lot_no: saved.lot_no as string | null,
+                grade: saved.grade as string | null,
+                bags: saved.bags as number | null,
+                kg_per_bag: saved.kg_per_bag as number | null,
+                sample_allowance: saved.sample_allowance as number | null,
+                net_wt: saved.net_wt as number | null,
+                state: saved.state as string | null,
               });
             } finally {
               setSaving(false);
