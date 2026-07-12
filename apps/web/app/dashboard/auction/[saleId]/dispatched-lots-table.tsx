@@ -5,7 +5,7 @@ import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { formatFourDigitNo } from "../sale-number";
 
 const LOT_STATES = ["invoiced","acknowledged","pending","missing","shutout","valued","withdrawn","re-print","sold","settled"];
 
@@ -150,7 +150,6 @@ export function DispatchedLotsTable({
                     <td className="px-3 py-2 text-right">
                       {canEdit && isOwner && deletable && (
                         <div className="flex items-center justify-end gap-1">
-                          {removable && (
                           <button
                             onClick={() => setEditingId(l.id)}
                             disabled={pendingIds.has(l.id)}
@@ -162,7 +161,6 @@ export function DispatchedLotsTable({
                               <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
                             </svg>
                           </button>
-                          )}
                           <button
                             type="button"
                             disabled={pendingIds.has(l.id)}
@@ -199,6 +197,7 @@ export function DispatchedLotsTable({
                               lotId={l.id}
                               saleId={saleId}
                               invoices={invoices}
+                              existingSampleKg={Number(l.sample_allowance ?? 0)}
                               onCancel={() => setReprintId(null)}
                               onSaved={(patch) => {
                                 setRows((curr) => curr.map((row) => (row.id === l.id ? { ...row, ...patch } : row)));
@@ -422,16 +421,16 @@ function ReprintForm({
   onSaved,
   onBusy,
   invoices,
+  existingSampleKg,
 }: {
   lotId: string;
   saleId: string;
   onCancel: () => void;
-  onSaved: (patch: Partial<Pick<LotRow, "state">>) => void;
+  onSaved: (patch: Partial<LotRow>) => void;
   onBusy: (busy: boolean) => void;
   invoices: string[];
+  existingSampleKg: number;
 }) {
-  const [targetSaleNo, setTargetSaleNo] = useState("");
-  const [sampleKg, setSampleKg] = useState("");
   const [saving, setSaving] = useState(false);
   const invLabel = invoices.length > 1 ? `Invoices: ${invoices.join(", ")}` : `Invoice: ${invoices[0] ?? ""}`;
 
@@ -441,34 +440,35 @@ function ReprintForm({
         setSaving(true);
         onBusy(true);
         try {
-          formData.set("target_sale_no", targetSaleNo);
-          formData.set("sample_kg", sampleKg);
           await markReprint(lotId, saleId, formData);
-          onSaved({ state: "re-print" });
+          onSaved({
+            state: "re-print",
+            reprint_target_sale_id: null,
+            reprint_target_label: null,
+          });
         } finally {
           setSaving(false);
           onBusy(false);
         }
       }}
-      className="mt-1 space-y-1 rounded-lg border border-stone-200 p-2 text-left dark:border-stone-700"
+      className="mt-1 space-y-2 rounded-lg border border-stone-200 p-2 text-left dark:border-stone-700"
     >
       <p className="text-[10px] text-stone-400 dark:text-stone-500">{invLabel}</p>
-      <input
-        value={targetSaleNo}
-        onChange={(e) => setTargetSaleNo(e.target.value)}
-        onBlur={(e) => setTargetSaleNo(formatSaleNo(e.target.value))}
-        placeholder="Target sale no."
-        className="w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-      />
-      <input
-        value={sampleKg}
-        onChange={(e) => setSampleKg(e.target.value)}
-        type="number"
-        min="0"
-        step="0.01"
-        placeholder="Sample kg lost"
-        className="w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-      />
+      <p className="text-[11px] leading-4 text-stone-500 dark:text-stone-400">
+        This keeps the lot in this sale as history. When the same invoice is added to a later dispatch, the new lot is linked as the re-print.
+      </p>
+      <label className="block text-[11px] text-stone-500 dark:text-stone-400">
+        Additional sample kg
+        <input
+          name="additional_sample_kg"
+          type="number"
+          min="0"
+          step="0.01"
+          defaultValue={existingSampleKg || ""}
+          placeholder="0.00"
+          className="mt-1 w-full rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        />
+      </label>
       <div className="flex gap-1">
         <button
           type="submit"
@@ -476,7 +476,7 @@ function ReprintForm({
           className="inline-flex w-full items-center justify-center gap-1 rounded-md bg-orange-600 px-2 py-1 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-60"
         >
           <span className={`h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent ${saving ? "" : "opacity-0"}`} />
-          {saving ? "Rolling…" : "Roll forward"}
+          {saving ? "Marking..." : "Mark re-print"}
         </button>
         <button
           type="button"

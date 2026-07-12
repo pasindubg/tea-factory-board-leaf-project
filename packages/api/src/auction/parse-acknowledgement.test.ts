@@ -29,18 +29,20 @@ ok(
 const l58 = byInv("0058");
 ok("inv 0058 → lot 0477 OP 280kg KUMUDU catalogued",
   !!l58 && l58.lotNo === "0477" && l58.grade === "OP" && l58.netWt === 280 &&
-    l58.markCode === "MF1530" && l58.section === "catalogued",
-  l58 ? `lot=${l58.lotNo} grade=${l58.grade} net=${l58.netWt} mark=${l58.markCode}` : "missing");
+    l58.markCode === "MF1530" && l58.section === "catalogued" && l58.dispatchDate === "29/05/2026",
+  l58 ? `lot=${l58.lotNo} grade=${l58.grade} net=${l58.netWt} mark=${l58.markCode} date=${l58.dispatchDate}` : "missing");
 
 const l74 = byInv("0074");
 ok("inv 0074 → lot 1270 BM 300kg ITTAPANA catalogued",
-  !!l74 && l74.lotNo === "1270" && l74.grade === "BM" && l74.netWt === 300 && l74.markCode === "MF1530A",
-  l74 ? `lot=${l74.lotNo} grade=${l74.grade} net=${l74.netWt} mark=${l74.markCode}` : "missing");
+  !!l74 && l74.lotNo === "1270" && l74.grade === "BM" && l74.netWt === 300 &&
+    l74.markCode === "MF1530A" && l74.dispatchDate === "26/05/2026",
+  l74 ? `lot=${l74.lotNo} grade=${l74.grade} net=${l74.netWt} mark=${l74.markCode} date=${l74.dispatchDate}` : "missing");
 
 const l61 = byInv("0061");
 ok("inv 0061 → shutout OPA 200kg (no lot no)",
-  !!l61 && l61.section === "shutout" && l61.lotNo === null && l61.netWt === 200 && l61.markCode === "MF1530",
-  l61 ? `section=${l61.section} net=${l61.netWt}` : "missing");
+  !!l61 && l61.section === "shutout" && l61.lotNo === null && l61.netWt === 200 &&
+    l61.markCode === "MF1530" && l61.dispatchDate === "29/05/2026",
+  l61 ? `section=${l61.section} net=${l61.netWt} date=${l61.dispatchDate}` : "missing");
 
 const l63 = byInv("0063");
 ok("inv 0063 → shutout OPA 230kg ITTAPANA",

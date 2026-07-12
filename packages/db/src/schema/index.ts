@@ -21,6 +21,7 @@ export * from "./supplier-messages";
 export * from "./brokers";
 export * from "./marks";
 export * from "./auction-grades";
+export * from "./auction-grade-aliases";
 export * from "./broker-grade-thresholds";
 export * from "./auction-sales";
 export * from "./auction-lots";

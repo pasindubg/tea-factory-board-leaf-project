@@ -268,10 +268,12 @@ export function ListSearchPanel<T>({
   columns,
   controls,
   label = "Search",
+  variant = "inline",
 }: {
   columns: ColumnDef<T>[];
   controls: ListControls<T>;
   label?: string;
+  variant?: "inline" | "popover";
 }) {
   const searchCols = columns.filter((col) => col.accessor);
   if (searchCols.length === 0) return null;
@@ -302,31 +304,63 @@ export function ListSearchPanel<T>({
           </button>
         )}
       </div>
-      {controls.searchOpen && (
+      {controls.searchOpen && variant === "inline" && (
         <div className="mt-3 grid gap-3">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {searchCols.map((col) => (
-              <label key={col.key} className="grid gap-1 text-xs font-medium text-stone-500 dark:text-stone-400">
-                {col.label}
-                <ColumnSearchInput col={col} controls={controls} />
-              </label>
-            ))}
-          </div>
-          <label className="grid gap-1 text-xs font-medium text-stone-500 dark:text-stone-400">
-            Advanced search
-            <input
-              value={controls.advancedQuery}
-              onChange={(event) => controls.setAdvancedQuery(event.target.value)}
-              placeholder='broker:BPML netKg>100 saleNo:0019 "Galle"'
-              className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
-            />
-          </label>
-          <p className="text-xs text-stone-400 dark:text-stone-500">
-            Use free text across all columns, or column queries with <span className="font-mono">:</span>, <span className="font-mono">=</span>, <span className="font-mono">&gt;</span>, <span className="font-mono">&gt;=</span>, <span className="font-mono">&lt;</span>, <span className="font-mono">&lt;=</span>.
-          </p>
+          <SearchFields columns={searchCols} controls={controls} />
         </div>
       )}
+      {controls.searchOpen && variant === "popover" && (
+        <>
+          <button
+            type="button"
+            aria-label="Close search"
+            onClick={() => controls.setSearchOpen(false)}
+            className="fixed inset-0 z-30 cursor-default bg-transparent"
+          />
+          <div className="fixed left-6 top-24 z-40 max-h-[calc(100vh-7rem)] w-[calc(100vw-3rem)] max-w-2xl overflow-y-auto rounded-xl border border-stone-200 bg-white p-4 shadow-2xl dark:border-stone-700 dark:bg-stone-950">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-100">{label}</h3>
+              <button
+                type="button"
+                aria-label="Close search"
+                onClick={() => controls.setSearchOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-800 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+            <SearchFields columns={searchCols} controls={controls} />
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+function SearchFields<T>({ columns, controls }: { columns: ColumnDef<T>[]; controls: ListControls<T> }) {
+  return (
+    <>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {columns.map((col) => (
+          <label key={col.key} className="grid gap-1 text-xs font-medium text-stone-500 dark:text-stone-400">
+            {col.label}
+            <ColumnSearchInput col={col} controls={controls} />
+          </label>
+        ))}
+      </div>
+      <label className="grid gap-1 text-xs font-medium text-stone-500 dark:text-stone-400">
+        Advanced search
+        <input
+          value={controls.advancedQuery}
+          onChange={(event) => controls.setAdvancedQuery(event.target.value)}
+          placeholder='broker:BPML netKg>100 saleNo:0019 "Galle"'
+          className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
+        />
+      </label>
+      <p className="text-xs text-stone-400 dark:text-stone-500">
+        Use free text across all columns, or column queries with <span className="font-mono">:</span>, <span className="font-mono">=</span>, <span className="font-mono">&gt;</span>, <span className="font-mono">&gt;=</span>, <span className="font-mono">&lt;</span>, <span className="font-mono">&lt;=</span>.
+      </p>
+    </>
   );
 }
 

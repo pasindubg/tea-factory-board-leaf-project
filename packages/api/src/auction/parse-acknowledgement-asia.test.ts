@@ -25,20 +25,22 @@ ok("9 lots parsed, all catalogued", ack.lots.length === 9 && ack.lots.every((l) 
 const l951 = byInv("0951");
 ok("inv 0951 → lot B0877 BOP1 10×30 = 300kg KUMUDU",
   !!l951 && l951.lotNo === "B0877" && l951.grade === "BOP1" && l951.bags === 10 &&
-    l951.kgPerBag === 30 && l951.netWt === 300 && l951.markCode === "KUMUDU",
-  l951 ? `lot=${l951.lotNo} grade=${l951.grade} net=${l951.netWt} mark=${l951.markCode}` : "missing");
+    l951.kgPerBag === 30 && l951.netWt === 300 && l951.markCode === "KUMUDU" &&
+    l951.dispatchDate === "30/04/2026",
+  l951 ? `lot=${l951.lotNo} grade=${l951.grade} net=${l951.netWt} mark=${l951.markCode} date=${l951.dispatchDate}` : "missing");
 
 // "02/04/2026RKUMUDU 0909 …" — R flag glued onto the mark name must be stripped.
 const l909 = byInv("0909");
 ok("inv 0909 → flag letter stripped, mark KUMUDU, 297kg (sample deducted)",
   !!l909 && l909.markCode === "KUMUDU" && l909.netWt === 297 && l909.lotNo === "B1265" &&
-    l909.section === "catalogued",
-  l909 ? `mark=${l909.markCode} net=${l909.netWt} lot=${l909.lotNo}` : "missing");
+    l909.section === "catalogued" && l909.dispatchDate === "02/04/2026",
+  l909 ? `mark=${l909.markCode} net=${l909.netWt} lot=${l909.lotNo} date=${l909.dispatchDate}` : "missing");
 
 const l957 = byInv("0957");
 ok("inv 0957 → ITTAPANA BM 300kg lot B1686",
-  !!l957 && l957.markCode === "ITTAPANA" && l957.grade === "BM" && l957.netWt === 300 && l957.lotNo === "B1686",
-  l957 ? `mark=${l957.markCode} grade=${l957.grade} net=${l957.netWt}` : "missing");
+  !!l957 && l957.markCode === "ITTAPANA" && l957.grade === "BM" && l957.netWt === 300 &&
+    l957.lotNo === "B1686" && l957.dispatchDate === "28/04/2026",
+  l957 ? `mark=${l957.markCode} grade=${l957.grade} net=${l957.netWt} date=${l957.dispatchDate}` : "missing");
 
 const l958 = byInv("0958");
 ok("inv 0958 → FGS 40kg/chest 400kg",

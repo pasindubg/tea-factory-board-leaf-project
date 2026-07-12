@@ -17,10 +17,14 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
     if (item.key === "auction-sales") {
       return pathname === "/dashboard/auction/sales";
     }
+    if (item.key === "auction-reprints") {
+      return pathname === "/dashboard/auction/reprints";
+    }
     if (item.key === "auction-dispatch-detail") {
       return pathname.startsWith("/dashboard/auction/") &&
         !pathname.startsWith("/dashboard/auction/dashboard") &&
         !pathname.startsWith("/dashboard/auction/sales") &&
+        !pathname.startsWith("/dashboard/auction/reprints") &&
         !pathname.startsWith("/dashboard/auction/reports") &&
         !pathname.startsWith("/dashboard/auction/registry") &&
         !pathname.startsWith("/dashboard/auction/settings") &&
@@ -92,18 +96,16 @@ export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
   function renderItem(item: ModuleDef, activeOverride?: boolean) {
     const isActive = activeOverride ?? itemMatches(item);
     const isLoading = isPending && pendingHref === item.href;
-    // Detail entries are indicators only — navigation happens from overview lists.
-    const nonNavigable = (item.key === "auction-dispatch-detail" || item.key === "auction-sale-detail") && !isActive;
     return (
       <button
         key={item.key}
-        onClick={nonNavigable ? undefined : () => navigate(item.href)}
+        data-module-key={item.key}
+        data-href={item.href}
+        onClick={() => navigate(item.href)}
         className={`flex w-full items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActive
             ? "bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-400"
-            : nonNavigable
-              ? "text-stone-400 dark:text-stone-500 cursor-default"
-              : "text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
         } ${isLoading ? "opacity-60" : ""}`}
       >
         <span className="flex-1 text-left">{item.label}</span>

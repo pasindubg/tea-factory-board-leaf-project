@@ -8,7 +8,8 @@ import {
 } from "@tea/api";
 import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
 import { buildInvoicedLots } from "../../../recon-helpers";
-import { saleGroupIds } from "../../../_actions/_shared";
+import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
+import { saleNoKey } from "../../../sale-number";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
 import { ReconTable } from "./recon-table";
 
@@ -19,26 +20,27 @@ export default async function AckReviewPage({
 }) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const { saleId, importId } = await params;
-  const detail = `/dashboard/auction/${saleId}`;
+  const fallback = "/dashboard/auction/sales";
 
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("id, parsed_json, status, source_filename, sale_id")
+    .select("id, parsed_json, status, source_filename, sale_id, doc_type")
     .eq("id", importId)
     .single();
 
-  if (!imp || imp.sale_id !== saleId || !imp.parsed_json) {
+  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "acknowledgement" || !imp.parsed_json) {
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sale
+        <Link href={fallback} className="text-green-700 dark:text-green-400 hover:underline">
+          Back to sales
         </Link>
       </div>
     );
   }
 
-  const { data: sale } = await supabase.from("auction_sales").select("sale_no").eq("id", saleId).single();
+  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no, brokers(name)").eq("id", saleId).single();
+  const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
   // The ack is the broker's statement for the WHOLE sale — reconcile against
   // every dispatch in this sale's group, not just the one being reviewed.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
@@ -53,7 +55,12 @@ export default async function AckReviewPage({
     .order("created_at", { ascending: false })
     .limit(50);
 
-  const parsed = imp.parsed_json as ParsedAcknowledgement;
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
+  const rawParsed = imp.parsed_json as ParsedAcknowledgement;
+  const parsed: ParsedAcknowledgement = {
+    ...rawParsed,
+    lots: rawParsed.lots.map((lot) => ({ ...lot, grade: canonicalGrade(lot.grade, aliases) })),
+  };
   const invoiced = buildInvoicedLots(lotRows ?? []);
   const recon = reconcileAcknowledgement(invoiced, parsed);
   const order: Record<ReconStatus, number> = { pending: 0, unexpected: 1, shutout: 2, catalogued: 3 };
@@ -119,7 +126,7 @@ export default async function AckReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Dispatch {sale?.sale_no ?? ""}
+          ← Sale {(sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null) ?? ""}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ① — invoice ↔ acknowledgement</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">

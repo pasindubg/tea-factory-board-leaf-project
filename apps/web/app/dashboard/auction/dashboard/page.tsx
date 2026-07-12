@@ -33,7 +33,7 @@ export default async function AuctionDashboardPage() {
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([
       supabase.from("auction_lots").select("id, sale_id, state, net_wt, grade"),
-      supabase.from("auction_sales").select("id, sale_no, target_sale_no, status, sale_date, prompt_date, brokers(name)").order("sale_date", { ascending: false }),
+      supabase.from("auction_sales").select("id, sale_no, target_sale_no, status, sale_date, prompt_date, brokers(name)").eq("sale_kind", "dispatch").order("sale_date", { ascending: false }),
       supabase.from("sale_lines").select("sale_id, lot_id, proceeds, vat_amount, on_guarantee, net_wt"),
       supabase.from("valuations").select("lot_id, projected_proceeds"),
       supabase.from("settlements").select("sale_id, total_net_proceeds, prompt_date"),

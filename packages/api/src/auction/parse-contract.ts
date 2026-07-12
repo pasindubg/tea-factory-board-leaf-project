@@ -7,6 +7,7 @@
 // deduction stack (insurance, brokerage, …) is deferred to A3. Feeds recon ② / ③.
 
 export type ContractLine = {
+  sold: boolean;
   contractNo: string;
   markCode: string;
   markName: string;
@@ -43,12 +44,103 @@ const HEADER =
 const CORE =
   /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+Bags\s+([\d,]+\.\d{2})\s+([\d.]+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(\d{9}-\d{4})\s+(YES|NO)/g;
 
+const ASIA_HEADER =
+  /(\d{4}\/\d{3}\/\d{4})\s+Miriswatte,?-?\s*Ittapana\.\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
+const ASIA_SOLD_ROW =
+  /([\d,]+\.\d{2})([\d,]+\.\d{2})(\d{9}-\d{4})\s+([\d,]+\.\d{2})([\d.]+)([A-Z][A-Z0-9]*?)(\d{4})(\d{4})([A-Z][A-Za-z].*?)\s+([\d,]+\.\d{2})([\d,]+\.\d{2})([\d.]+)\s+([\d,]+\.\d{2})\s+(YES|NO)/g;
+const ASIA_NOT_SOLD_ROW =
+  /(0\.00)(0\.00)(0\.00)([\d.]+)([A-Z][A-Z0-9]*?)(\d{4})(\d{4})\*{3}\s*N O T S O L D\s*\*{3}\s*(0\.00)([\d,]+\.\d{2})([\d.]+)\s+([\d,]+\.\d{2})\s+(YES|NO)/g;
+
+const asiaDate = (value: string) => {
+  const [month, day, year] = value.split("/");
+  return `${day}/${month}/${year}`;
+};
+
+function parseAsiaSiyakaContract(text: string): ParsedContract {
+  const headers = [...text.matchAll(ASIA_HEADER)].map((match) => ({
+    contractNo: match[1],
+    saleDate: asiaDate(match[2]),
+    promptDate: asiaDate(match[3]),
+    markCode: match[4],
+    markName: match[5],
+    index: match.index ?? 0,
+  }));
+  const headerAt = (index: number) => {
+    let header = headers[0];
+    for (const candidate of headers) if (candidate.index <= index) header = candidate;
+    return header;
+  };
+  const contracts = headers.map(({ contractNo, markCode, markName }) => ({ contractNo, markCode, markName }));
+  const saleNo = contracts[0] ? contracts[0].contractNo.split("/").slice(0, 2).join("-") : null;
+
+  const lines: ContractLine[] = [];
+  for (const row of text.matchAll(ASIA_SOLD_ROW)) {
+    const header = headerAt(row.index ?? 0);
+    lines.push({
+      sold: true,
+      contractNo: header?.contractNo ?? "",
+      markCode: header?.markCode ?? "",
+      markName: header?.markName ?? "",
+      buyerName: row[9].replace(/\s+/g, " ").trim(),
+      buyerVatNo: row[3],
+      lotNo: row[8],
+      invoiceNo: row[7],
+      grade: row[6],
+      bags: num(row[12]),
+      grossWt: num(row[11]),
+      sampleAllowance: num(row[5]),
+      netWt: num(row[13]),
+      pricePerKg: num(row[10]),
+      proceeds: num(row[4]),
+      vatAmount: num(row[2]),
+      proceedsPlusVat: num(row[1]),
+      onGuarantee: row[14] === "YES",
+    });
+  }
+  for (const row of text.matchAll(ASIA_NOT_SOLD_ROW)) {
+    const header = headerAt(row.index ?? 0);
+    lines.push({
+      sold: false,
+      contractNo: header?.contractNo ?? "",
+      markCode: header?.markCode ?? "",
+      markName: header?.markName ?? "",
+      buyerName: "Not sold",
+      buyerVatNo: "",
+      lotNo: row[7],
+      invoiceNo: row[6],
+      grade: row[5],
+      bags: num(row[10]),
+      grossWt: num(row[9]),
+      sampleAllowance: num(row[4]),
+      netWt: num(row[11]),
+      pricePerKg: num(row[8]),
+      proceeds: num(row[3]),
+      vatAmount: num(row[2]),
+      proceedsPlusVat: num(row[1]),
+      onGuarantee: row[12] === "YES",
+    });
+  }
+  lines.sort((a, b) => a.contractNo.localeCompare(b.contractNo) || a.invoiceNo.localeCompare(b.invoiceNo));
+
+  const issues = validateContractLines(lines, "No ASIA SIYAKA contract lines could be parsed.");
+  return {
+    docType: "contract",
+    saleNo,
+    saleDate: headers[0]?.saleDate ?? null,
+    promptDate: headers[0]?.promptDate ?? null,
+    contracts,
+    lines,
+    issues,
+  };
+}
+
 export function isContract(text: string): boolean {
-  return /TEA SELLERS CONTRACT & ACCOUNT SALES/.test(text);
+  return /TEA SELLERS CONTRACT & ACCOUNT SALES/i.test(text);
 }
 
 export function parseContract(rawText: string): ParsedContract {
   const text = rawText.replace(/\s+/g, " ").trim();
+  if (/Asia Siyaka Commodities PLC/i.test(text)) return parseAsiaSiyakaContract(text);
 
   // Contract/mark headers, in document order (dedup by contractNo, keep first).
   const headers = [...text.matchAll(HEADER)].map((m) => ({
@@ -82,6 +174,7 @@ export function parseContract(rawText: string): ParsedContract {
     const buyerName = (gap.split("Bank Guarantee").pop() ?? "").replace(/\s+/g, " ").trim();
     const h = headerAt(start);
     lines.push({
+      sold: true,
       contractNo: h?.contractNo ?? "",
       markCode: h?.markCode ?? "",
       markName: h?.markName ?? "",
@@ -103,8 +196,14 @@ export function parseContract(rawText: string): ParsedContract {
     prevEnd = start + m[0].length;
   }
 
+  const issues = validateContractLines(lines, "No contract lines could be parsed.");
+
+  return { docType: "contract", saleNo, saleDate, promptDate, contracts, lines, issues };
+}
+
+function validateContractLines(lines: ContractLine[], emptyMessage: string): string[] {
   const issues: string[] = [];
-  if (lines.length === 0) issues.push("No contract lines could be parsed.");
+  if (lines.length === 0) issues.push(emptyMessage);
   for (const l of lines) {
     if (Math.abs(l.netWt - (l.grossWt - l.sampleAllowance)) > 0.01)
       issues.push(`Lot ${l.invoiceNo}: net ≠ gross − sample allowance.`);
@@ -116,6 +215,5 @@ export function parseContract(rawText: string): ParsedContract {
       issues.push(`Lot ${l.invoiceNo}: proceeds+VAT mismatch.`);
     if (!l.buyerName) issues.push(`Lot ${l.invoiceNo}: buyer name not captured.`);
   }
-
-  return { docType: "contract", saleNo, saleDate, promptDate, contracts, lines, issues };
+  return issues;
 }

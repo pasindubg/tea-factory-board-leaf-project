@@ -13,6 +13,8 @@ export type LotRow = {
   state: string | null;
   shutout_reason: string | null;
   lot_source: string | null;
+  reprint_target_sale_id?: string | null;
+  reprint_target_label?: string | null;
   threshold_min_net_kg: number | null;
   threshold_applies: boolean;
   marks: { code: string; name: string } | null;

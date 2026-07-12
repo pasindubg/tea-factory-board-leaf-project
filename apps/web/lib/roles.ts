@@ -163,6 +163,14 @@ export const MODULES: readonly ModuleDef[] = [
     entitlement: "auction",
     group: "Dispatch Handling",
   },
+  {
+    key: "auction-reprints",
+    href: "/dashboard/auction/reprints",
+    label: "Re-print Overview",
+    roles: ["owner", "manager", "accountant"],
+    entitlement: "auction",
+    group: "Dispatch Handling",
+  },
 ];
 
 export function getDefaultRoles(moduleKey: string): readonly Role[] {

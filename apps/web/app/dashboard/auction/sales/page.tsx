@@ -64,6 +64,7 @@ export default async function SalesPage() {
     supabase
       .from("auction_sales")
       .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+      .eq("sale_kind", "dispatch")
       .not("target_sale_no", "is", null)
       .order("dispatch_date", { ascending: false }),
     supabase

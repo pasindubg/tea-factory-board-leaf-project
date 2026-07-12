@@ -16,6 +16,7 @@ export function LotsSection({
   canEdit,
   canAdd,
   soldLotIds,
+  title = "Dispatched lots",
 }: {
   rows: LotRow[];
   saleId: string;
@@ -26,6 +27,7 @@ export function LotsSection({
   canEdit: boolean;
   canAdd: boolean;
   soldLotIds: string[];
+  title?: string;
 }) {
   const [, startTransition] = useTransition();
   const [currentRows, setCurrentRows] = useState(rows);
@@ -56,6 +58,8 @@ export function LotsSection({
       state: "invoiced",
       shutout_reason: null,
       lot_source: "factory",
+      reprint_target_sale_id: null,
+      reprint_target_label: null,
       threshold_min_net_kg: null,
       threshold_applies: false,
       marks: mark ? { code: mark.code, name: mark.name } : null,
@@ -79,7 +83,7 @@ export function LotsSection({
     <section>
       <div className="flex items-baseline justify-between">
         <div>
-          <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Dispatched lots</h3>
+          <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">{title}</h3>
           <p className="text-sm text-stone-500 dark:text-stone-400">
             {currentRows.length} lot{currentRows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
           </p>

@@ -50,11 +50,12 @@ export async function middleware(request: NextRequest) {
   );
 
   // Refresh the session if expired — required for Server Components. getUser()
-  // hits the Supabase auth server, so a flaky network can make it throw or
-  // return an error. Fail OPEN in that case: redirecting an authenticated user
-  // to /login on a transient blip is worse than letting the request through,
-  // and each page's requireProfile re-checks auth anyway (the real gate). We
-  // only redirect when we DEFINITIVELY got no user and no error.
+  // hits the Supabase auth server, so a dev reload or flaky network can make it
+  // throw or return an error. Fail OPEN in that case: redirecting an
+  // authenticated user to /login on a transient blip would delete valid auth
+  // cookies and turn a temporary verification miss into a real logout. Each
+  // page's requireProfile re-checks auth anyway (the real gate). We only
+  // redirect when we DEFINITIVELY got no user and no error.
   let user = null;
   let couldNotVerify = false;
   try {
@@ -67,10 +68,6 @@ export async function middleware(request: NextRequest) {
 
   if (!user && !couldNotVerify && request.nextUrl.pathname.startsWith("/dashboard")) {
     return redirectToLogin(request);
-  }
-
-  if (!user && couldNotVerify && request.nextUrl.pathname.startsWith("/dashboard")) {
-    return redirectToLogin(request, "session_refresh_failed");
   }
 
   return response;

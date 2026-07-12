@@ -17,19 +17,25 @@ type SaleRow = {
   brokers: { name: string } | null;
 };
 
-type EditableSaleField = "target_sale_no" | "status";
+type EditableSaleField = "target_sale_no";
 type SaleDraft = Pick<SaleRow, EditableSaleField>;
 
 const STATE_PILL: Record<string, string> = {
   dispatched: "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700",
   draft:      "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700",
+  grn:        "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800",
   catalogued: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800",
   valued:     "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",
   sold:       "bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800",
   settled:    "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800",
+  broker_statement: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800",
 };
 
-const ALL_STATES = ["draft","catalogued","valued","sold","settled"];
+const ALL_STATES = ["draft","grn","catalogued"];
+
+function dispatchDisplayStatus(status: string | null | undefined) {
+  return ["valued", "sold", "settled", "broker_statement"].includes(status ?? "") ? "catalogued" : (status ?? "draft");
+}
 
 const COLUMNS: ColumnDef<SaleRow>[] = [
   { key: "sale_no", label: "Dispatch no.", accessor: (r) => r.sale_no, sortable: true, filter: "text" },
@@ -38,7 +44,7 @@ const COLUMNS: ColumnDef<SaleRow>[] = [
   { key: "dispatch_date", label: "Dispatched", accessor: (r) => r.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true, searchInput: "date" },
   { key: "prompt_date", label: "Prompt", accessor: (r) => r.prompt_date ?? null, sortable: true, searchInput: "date" },
-  { key: "status", label: "Status", accessor: (r) => r.status, sortable: true, filter: "select", filterOptions: ALL_STATES.map((s) => ({ value: s, label: s })) },
+  { key: "status", label: "Status", accessor: (r) => dispatchDisplayStatus(r.status), sortable: true, filter: "select", filterOptions: ALL_STATES.map((s) => ({ value: s, label: s })) },
 ];
 
 export function DispatchesTable({
@@ -125,7 +131,6 @@ export function DispatchesTable({
     setEditingId(row.id);
     setDraft({
       target_sale_no: row.target_sale_no ?? "",
-      status: row.status,
     });
   }
 
@@ -143,7 +148,6 @@ export function DispatchesTable({
     setPendingIds((prev) => new Set(prev).add(id));
     const form = new FormData();
     form.set("target_sale_no", formatSaleNo(draft.target_sale_no));
-    form.set("status", draft.status);
     try {
       await updateSale(id, form);
       setRows((curr) => curr.map((row) => (row.id === id ? { ...row, ...draft, target_sale_no: formatSaleNo(draft.target_sale_no) } : row)));
@@ -203,6 +207,7 @@ export function DispatchesTable({
             const broker = s.brokers?.name ?? "—";
             const isEditing = editingId === s.id;
             const rowBusy = pendingIds.has(s.id);
+            const displayStatus = dispatchDisplayStatus(s.status);
             return (
               <tr
                 key={s.id}
@@ -242,22 +247,9 @@ export function DispatchesTable({
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.sale_date ?? "—"}</td>
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.prompt_date ?? "—"}</td>
                 <td className="px-4 py-2.5">
-                  {isEditing ? (
-                    <select
-                      value={draft?.status ?? s.status}
-                      onChange={(e) => updateDraft("status", e.target.value)}
-                      disabled={rowBusy}
-                      className="rounded-full border border-stone-200 px-2.5 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-500/30 bg-white dark:bg-stone-800 dark:border-stone-700 disabled:opacity-50"
-                    >
-                      {ALL_STATES.map((st) => (
-                        <option key={st} value={st}>{st}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATE_PILL[s.status] ?? "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700"}`}>
-                      {s.status}
-                    </span>
-                  )}
+                  <span className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATE_PILL[displayStatus] ?? "bg-stone-100 text-stone-600 border-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:border-stone-700"}`} title={s.status !== displayStatus ? `Saved status: ${s.status}` : displayStatus}>
+                    {displayStatus}
+                  </span>
                 </td>
                 {isOwner && (
                   <td className="px-4 py-2.5">

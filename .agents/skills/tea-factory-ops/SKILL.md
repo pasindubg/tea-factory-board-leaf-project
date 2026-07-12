@@ -173,6 +173,26 @@ needs **≥ 20.19.4**, and the machine's default is older.
   - auction sale / target sale numbers are 3 digits (`019`);
   - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
     invoice, and lot numbers.
+- Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.
+  Broker documents may spell a factory grade differently (`PEK` vs `PEKO`), so ACK,
+  valuation, and sellers contract import/review paths must canonicalize through the
+  alias map before reconciliation or persistence.
+- Valuation parsing is broker-format aware. Preserve both BPML `Valuation Report`
+  and ASIA SIYAKA `VALUATION & MUSTER REPORT` support. ASIA SIYAKA rows are lot,
+  invoice, grade, net weight, last-sale average, value/kg and value/lot; reconcile
+  by normalized four-digit invoice number across the broker's sale dispatches.
+- Seller-contract parsing is broker-format aware. ASIA SIYAKA may include several
+  contract/mark pages in one PDF. Capture `*** NOT SOLD ***` rows for review with
+  an explicit not-sold state. On confirmation, transition those lots to `re-print`,
+  add one additional sampling cycle to cumulative sample allowance, recalculate
+  remaining net kg, and audit the change. Exclude them from reconciliation,
+  `sale_lines`, settlement totals, and transitions to `sold`; a later ACK creates
+  the linked re-print child and restarts acknowledgement/valuation/contract stages.
+- Treat `auction_lots.reprint_source_lot_id` as the normalized re-print history
+  chain; do not add a duplicate history table. ACK and manual dispatch children
+  inherit cumulative sample/net quantities. Re-print Overview summarizes all
+  chain sales, eventual sold sale, total sample kg, and actual sold kg. Automatic
+  and manual transitions must enforce the same behavior.
 
 **UI conventions:**
 - Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add

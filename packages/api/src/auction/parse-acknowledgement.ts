@@ -16,6 +16,7 @@ export type AckLot = {
   section: AckSection;
   markCode: string;
   markName: string;
+  dispatchDate: string | null; // dd/mm/yyyy as printed on the acknowledgement row
   lotNo: string | null; // null in the shutout section (no catalogue no. assigned)
   invoiceNo: string;
   grade: string;
@@ -35,8 +36,10 @@ export type ParsedAcknowledgement = {
 
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
-const CATALOGUED_ROW = /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})/g;
-const SHUTOUT_ROW = /(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})/g;
+const CATALOGUED_ROW =
+  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
+const SHUTOUT_ROW =
+  /(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
 const MARK_HEADER = /(MF\d+[A-Z]?)\s+([A-Z][A-Z ]*?)\s+Catalogued/g;
 
 /** Cheap content-based type detection for the ingestion router. */
@@ -74,6 +77,7 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
         section: "catalogued",
         markCode: mark.code,
         markName: mark.name,
+        dispatchDate: r[7] ?? null,
         lotNo: r[1],
         invoiceNo: r[2],
         grade: r[3],
@@ -87,6 +91,7 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
         section: "shutout",
         markCode: mark.code,
         markName: mark.name,
+        dispatchDate: r[6] ?? null,
         lotNo: null,
         invoiceNo: r[1],
         grade: r[2],
@@ -137,6 +142,7 @@ function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
 
   const raw = [...text.matchAll(ASIA_ROW)].map((r) => ({
     markToken: r[2],
+    dispatchDate: r[1],
     invoiceNo: r[3],
     grade: r[4],
     bags: Number(r[5]),
@@ -162,6 +168,7 @@ function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
       section: flag === "S" || flag === "V" ? "shutout" : "catalogued",
       markCode: mark, // the document only prints the mark NAME — resolved by code OR name downstream
       markName: mark,
+      dispatchDate: r.dispatchDate,
       lotNo: r.lotNo,
       invoiceNo: r.invoiceNo,
       grade: r.grade,

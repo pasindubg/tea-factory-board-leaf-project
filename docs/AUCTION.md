@@ -44,6 +44,25 @@
 | **Prompt date** | The date the broker pays Total Net Proceeds to the factory's bank. |
 | **Out-turn, grades** | Production-side concepts (deferred milestones M7/M8); the valuation tasting note is the future link to them. |
 
+Valuation imports are broker-format aware. BPML uses the `Valuation Report`
+layout with bags, kg/bag and tasting notes. ASIA SIYAKA uses the `VALUATION &
+MUSTER REPORT` layout with selling-mark sections and columns ordered as lot,
+invoice, grade, net weight, last-sale average, value/kg and value/lot. ASIA
+SIYAKA reconciliation is keyed by normalized four-digit invoice number; its lot
+number is retained for review but is not the primary join key.
+
+Seller-contract imports are also broker-format aware. ASIA SIYAKA's `TEA
+SELLERS CONTRACT & ACCOUNT SALES` may contain multiple contract/mark pages in
+one PDF. Sold rows supply buyer and buyer VAT, lot/invoice, grade, bags,
+gross/sample/net weights, price, proceeds, VAT, bank guarantee and proceeds plus
+VAT. Rows labelled `*** NOT SOLD ***` are captured and shown in contract review.
+On confirmation they automatically move the original lot to `re-print`, add one
+more sampling cycle to cumulative `sample_allowance`, recalculate remaining net
+weight from the original gross quantity, and write an audit-history record. They
+must not create a `sale_lines` record. A later acknowledgement containing the
+same invoice creates the linked `reprint_source_lot_id` child for the later sale,
+where acknowledgement, valuation and seller-contract processing starts again.
+
 ---
 
 ## 2. Actors & the document chain
@@ -70,12 +89,14 @@ reconciliation.
 
 > **Dispatch-first model.** The factory does **not** create a sale. It
 > **dispatches** lots to a 3rd-party store first; the broker later catalogues a
-> **subset** (acknowledgements are *partial*) → values → sells; unsold lots are
-> **re-printed** (re-sampled, slight kg loss) and roll to the next sale ~3 weeks
-> later. So the lot's first state is `dispatched` (was `invoiced`), a dispatched
-> lot absent from the *current* ack is `pending` (not an error — may roll
-> forward), and an unsold lot becomes `re-print`. `missing` is only ever set by an
-> explicit human decision in the orphan resolver, never by the reconciliation.
+> **subset** (acknowledgements are *partial*). Dispatch detail stops after GRN /
+> acknowledgement at `catalogued`; valuation, sale, settlement, withdrawal, and
+> re-print handling live in Sales Detail. Acknowledgement, valuation, and
+> sellers contract documents are uploaded per sale and broker, then matched by
+> invoice number across every dispatch in that broker/sale group. A dispatched lot absent from the
+> *current* ack is `pending` (not an error — may roll forward), and an unsold lot
+> becomes `re-print`. `missing` is only ever set by an explicit human decision in
+> the orphan resolver, never by the reconciliation.
 
 ```mermaid
 stateDiagram-v2
@@ -87,13 +108,14 @@ stateDiagram-v2
     Dispatched --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
     Pending --> Catalogued: catalogued by a later ack
     Pending --> Missing: explicit human decision — expected & overdue, no counterpart
-    Catalogued --> Valued: Valuation Report confirmed
+    Catalogued --> SalesDetail: dispatch workflow ends; sales workflow owns next steps
+    SalesDetail --> Valued: Valuation Report confirmed
     Valued --> Sold: Sellers Contract confirmed — buyer + actual price  [Recon ②, ③]
-    Valued --> Reprint: unsold — re-sampled, rolls to the next sale
+    Valued --> Reprint: unsold — keep original as history
     Valued --> Withdrawn: catalogued & valued but absent from the contract
     Sold --> Settled: Total Net Proceeds matched to a bank credit  [Recon ④]
     Settled --> BrokerStatement: broker statement received after settlement
-    Reprint --> [*]: a fresh dispatched lot is created under the next sale
+    Reprint --> Dispatched: same invoice entered on a later dispatch, linked by reprint_source_lot_id
     Shutout --> [*]: rolls to next sale (re-dispatched)
     Withdrawn --> [*]
     BrokerStatement --> [*]
@@ -108,12 +130,24 @@ stateDiagram-v2
 | `catalogued` | `valued` | Valuation | lot_no found; `price_min ≤ price_max`; projected proceeds present | — | Tasting note stored |
 | `valued` | `sold` | Sellers Contract | lot_no found; buyer resolved; `proceeds == round(net_wt × price_per_kg, 2)` | ②, ③ | Creates `sale_line` + VAT ledger entry |
 | `valued` | `withdrawn` | Sellers Contract (absence) | lot catalogued/valued but no contract line | — | Unsold / withdrawn at auction |
+| `valued` / `sold` / `withdrawn` | `re-print` | Owner action or Sellers Contract `NOT SOLD` | Original lot remains visible as history; contract-driven transition deducts one additional sample cycle | — | Later reuse of the same invoice is allowed only when the new lot links to this re-print source |
 | `sold` | `settled` | Bank CSV | contract's Total Net Proceeds matched to a credit (full or ex-guarantee) | ④ | Guarantee-VAT may settle later |
 | `settled` | `broker_statement` | Broker statement | Final broker statement received | — | Dispatch-level post-settlement stage |
 
 **Invariant:** a lot is in exactly one state. Allowed transitions are only those
 above; anything else is a bug. Re-ingesting a document is idempotent (§6) and must
 not move a lot backwards.
+
+### Re-print chain history
+
+Do not duplicate re-print history into a second table. Each appearance in a sale
+is an `auction_lots` version linked to its preceding version through
+`reprint_source_lot_id`. The root and descendants form the complete chain: sales
+where it was re-printed, the later sale where it sold, cumulative sample
+allowance, remaining net kg, and actual sold kg from `sale_lines`. A later ACK or
+manual dispatch entry creates the child; valuation and contract processing apply
+to that child in its own sale. Document-driven and manual state changes preserve
+the same chain rules.
 
 ---
 

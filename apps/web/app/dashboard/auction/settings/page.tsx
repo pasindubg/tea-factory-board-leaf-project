@@ -10,6 +10,7 @@ const addBtn = "rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white
 
 type BrokerRow = { id: string; name: string };
 type GradeRow = { id: string; code: string; name: string; active: boolean; sort_order: number | null };
+type GradeAliasRow = { id: string; grade_id: string; alias: string };
 type ThresholdRow = {
   id: string;
   broker_id: string;
@@ -27,20 +28,31 @@ export default async function AuctionSettingsPage({
   const isOwner = profile.role === "owner";
   const { error } = await searchParams;
 
-  const [{ data: brokers }, { data: grades }, { data: thresholds }] = await Promise.all([
+  const [{ data: brokers }, { data: grades }, { data: gradeAliases }, { data: thresholds }] = await Promise.all([
     supabase.from("brokers").select("id, name").order("name"),
     supabase.from("auction_grades").select("id, code, name, active, sort_order").order("sort_order").order("code"),
+    supabase.from("auction_grade_aliases").select("id, grade_id, alias").order("alias"),
     supabase.from("broker_grade_thresholds").select("id, broker_id, grade_id, min_net_kg, applies"),
   ]);
 
   const brokerRows = (brokers ?? []) as BrokerRow[];
   const gradeRows = (grades ?? []) as GradeRow[];
+  const aliasRows = (gradeAliases ?? []) as GradeAliasRow[];
   const thresholdRows = (thresholds ?? []) as ThresholdRow[];
   const thresholdByPair = new Map(thresholdRows.map((row) => [`${row.broker_id}:${row.grade_id}`, row]));
+  const aliasesByGrade = new Map<string, string[]>();
+  for (const alias of aliasRows) {
+    aliasesByGrade.set(alias.grade_id, [...(aliasesByGrade.get(alias.grade_id) ?? []), alias.alias]);
+  }
   const activeGrades = gradeRows.filter((grade) => grade.active);
 
   const gradeTableRows: GradeTableRow[] = gradeRows.map((g) => ({
-    id: g.id, code: g.code, name: g.name, active: g.active, sortOrder: g.sort_order ?? 0,
+    id: g.id,
+    code: g.code,
+    name: g.name,
+    active: g.active,
+    sortOrder: g.sort_order ?? 0,
+    aliases: aliasesByGrade.get(g.id) ?? [],
   }));
 
   const thresholdTableRows: ThresholdTableRow[] = brokerRows.flatMap((broker) =>
@@ -86,6 +98,10 @@ export default async function AuctionSettingsPage({
               <div>
                 <label className={label}>Sort order</label>
                 <input name="sort_order" type="number" step="1" min="0" placeholder="30" className={input} />
+              </div>
+              <div>
+                <label className={label}>Aliases</label>
+                <input name="aliases" placeholder="PEK, PEKOE" className={input} />
               </div>
               <SubmitButton pendingText="Adding..." className={addBtn}>
                 Add grade

@@ -15,6 +15,11 @@ export const auctionSales = pgTable(
     brokerId: uuid("broker_id")
       .references(() => brokers.id)
       .notNull(),
+    saleKind: text("sale_kind", { enum: ["dispatch", "reprint"] })
+      .default("dispatch")
+      .notNull(),
+    parentSaleId: uuid("parent_sale_id"),
+    reprintNo: text("reprint_no"),
     saleNo: text("sale_no").notNull(), // dispatch number, e.g. DSP-001
     dispatchDate: date("dispatch_date").notNull().default("now()"), // when dispatched physically
     targetSaleNo: text("target_sale_no"), // the auction sale this dispatch targets (e.g. 2026-023)
@@ -32,6 +37,8 @@ export const auctionSales = pgTable(
   },
   (t) => [
     index("idx_auction_sales_factory").on(t.factoryId),
+    index("idx_auction_sales_parent_sale").on(t.parentSaleId),
     uniqueIndex("uq_auction_sales_factory_broker_no").on(t.factoryId, t.brokerId, t.saleNo),
+    uniqueIndex("uq_auction_sales_factory_parent_reprint_no").on(t.factoryId, t.parentSaleId, t.reprintNo),
   ],
 );

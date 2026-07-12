@@ -8,7 +8,8 @@ import {
   type SaleInput,
 } from "@tea/api";
 import { confirmContract, rejectImport } from "../../../actions";
-import { saleGroupIds } from "../../../_actions/_shared";
+import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
+import { formatFourDigitNo, saleNoKey } from "../../../sale-number";
 import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
 export default async function ContractReviewPage({
@@ -18,31 +19,32 @@ export default async function ContractReviewPage({
 }) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const { saleId, importId } = await params;
-  const detail = `/dashboard/auction/${saleId}`;
+  const fallback = "/dashboard/auction/sales";
 
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("parsed_json, status, source_filename, sale_id")
+    .select("parsed_json, status, source_filename, sale_id, doc_type")
     .eq("id", importId)
     .single();
-  if (!imp || imp.sale_id !== saleId || !imp.parsed_json) {
+  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "contract" || !imp.parsed_json) {
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Staged import not found.{" "}
-        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
+        <Link href={fallback} className="text-green-700 dark:text-green-400 hover:underline">
           Back to sale
         </Link>
       </div>
     );
   }
 
-  const { data: sale } = await supabase.from("auction_sales").select("sale_no").eq("id", saleId).single();
+  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no").eq("id", saleId).single();
+  const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
   // The contract covers the broker's whole sale — match against lots on every
   // dispatch in this sale's group.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt")
+    .select("id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
     .in("sale_id", groupIds);
   const lotIds = (lotRows ?? []).map((l) => l.id as string);
   const { data: valRows } = await supabase
@@ -50,11 +52,22 @@ export default async function ContractReviewPage({
     .select("lot_id, price_min, price_max, projected_proceeds")
     .in("lot_id", lotIds.length > 0 ? lotIds : ["00000000-0000-0000-0000-000000000000"]);
 
-  const parsed = imp.parsed_json as ParsedContract;
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
+  const rawParsed = imp.parsed_json as ParsedContract;
+  const parsed: ParsedContract = {
+    ...rawParsed,
+    lines: rawParsed.lines.map((line) => ({ ...line, grade: canonicalGrade(line.grade, aliases) })),
+  };
   const confirmed = imp.status === "confirmed";
 
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
-  const invoiceToLotId = new Map((lotRows ?? []).map((l) => [l.invoice_no as string, l.id as string]));
+  const invoiceToLotId = new Map<string, string>();
+  for (const lot of (lotRows ?? []) as { id: string; invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
+    if (lot.invoice_no) invoiceToLotId.set(formatFourDigitNo(lot.invoice_no), lot.id);
+    for (const invoice of lot.lot_invoices ?? []) {
+      if (invoice.invoice_no) invoiceToLotId.set(formatFourDigitNo(invoice.invoice_no), lot.id);
+    }
+  }
 
   const valInputs: ValuationInput[] = (valRows ?? [])
     .filter((v) => lotById.has(v.lot_id as string))
@@ -62,7 +75,7 @@ export default async function ContractReviewPage({
       const lot = lotById.get(v.lot_id as string)!;
       return {
         lotId: v.lot_id as string,
-        invoiceNo: lot.invoice_no as string,
+        invoiceNo: formatFourDigitNo(lot.invoice_no as string),
         grade: lot.grade as string,
         netWt: Number(lot.net_wt),
         priceMin: v.price_min == null ? null : Number(v.price_min),
@@ -71,8 +84,8 @@ export default async function ContractReviewPage({
       };
     });
   const saleInputs: SaleInput[] = parsed.lines
-    .filter((l) => invoiceToLotId.has(l.invoiceNo))
-    .map((l) => ({ lotId: invoiceToLotId.get(l.invoiceNo)!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
+    .filter((l) => l.sold !== false && invoiceToLotId.has(formatFourDigitNo(l.invoiceNo)))
+    .map((l) => ({ lotId: invoiceToLotId.get(formatFourDigitNo(l.invoiceNo))!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
 
   const recon = reconcileValuation(valInputs, saleInputs);
   const reconByLot = new Map(recon.rows.map((r) => [r.lotId, r]));
@@ -80,9 +93,11 @@ export default async function ContractReviewPage({
   const hasValuations = valInputs.length > 0;
 
   const contractLineRows: ContractLineRow[] = parsed.lines.map((l) => {
-    const lotId = invoiceToLotId.get(l.invoiceNo);
+    const lotId = invoiceToLotId.get(formatFourDigitNo(l.invoiceNo));
     const r = lotId ? reconByLot.get(lotId) : undefined;
     return {
+      sold: l.sold !== false,
+      status: l.sold !== false ? "Sold" : confirmed ? "Re-print" : "Not sold",
       invoiceNo: l.invoiceNo,
       buyerName: l.buyerName,
       pricePerKg: l.pricePerKg,
@@ -100,11 +115,11 @@ export default async function ContractReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Dispatch {sale?.sale_no ?? ""}
+          ← Sale {(sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null) ?? ""}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} sale lines · prompt {parsed.promptDate ?? "—"}
+          {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} contract lines · {saleInputs.length} sold · prompt {parsed.promptDate ?? "—"}
         </p>
       </div>
 
@@ -162,7 +177,7 @@ export default async function ContractReviewPage({
               pendingText="Saving…"
               className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
-              Confirm — record {saleInputs.length} sale line(s)
+              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false).length} re-print
             </SubmitButton>
           </form>
           <form action={rejectImport.bind(null, importId, saleId)}>

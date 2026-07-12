@@ -54,6 +54,7 @@ export default async function SaleDetailPage({
     supabase
       .from("auction_sales")
       .select("id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name)")
+      .eq("sale_kind", "dispatch")
       .order("sale_no", { ascending: false }),
   ]);
 
@@ -118,6 +119,8 @@ export default async function SaleDetailPage({
           state: l.state as string | null,
           shutout_reason: l.shutout_reason as string | null,
           lot_source: (l as { lot_source?: string | null }).lot_source ?? "factory",
+          reprint_target_sale_id: null,
+          reprint_target_label: null,
           marks: (l.marks as unknown as { code: string; name: string } | null) ?? null,
           lot_invoices: ((l.lot_invoices as unknown as { invoice_no: string }[] | null) ?? null)?.map((invoice) => ({
             invoice_no: formatFourDigitNo(invoice.invoice_no),

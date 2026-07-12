@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import type { ModuleDef } from "@/lib/roles";
 import { SidebarNav } from "./sidebar-nav";
@@ -58,7 +59,15 @@ export function DashboardShell({
         <div className={collapsed ? "hidden" : "flex h-full flex-col"}>
           <div className="border-b border-stone-200 p-4 dark:border-stone-700">
             <p className="text-sm font-semibold text-green-800 dark:text-green-400">{factoryName}</p>
-            <p className="text-xs text-stone-500 dark:text-stone-400">Tea Factory Ops</p>
+            <div
+              className="mt-1 inline-flex skew-x-[-8deg] overflow-hidden rounded-[1px] border border-stone-950 bg-stone-950 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)] dark:border-white dark:bg-white dark:text-stone-950 dark:shadow-[inset_0_0_0_1px_rgba(0,0,0,0.16)]"
+              aria-label="DCT Enterprise"
+            >
+              <span className="skew-x-[8deg] px-1.5 py-0.5 text-[12px] font-black leading-none tracking-[0.08em]">DCT</span>
+              <span className="skew-x-[8deg] border-l border-white/30 px-1.5 py-0.5 text-[8px] font-black leading-none tracking-[0.14em] dark:border-stone-950/30">
+                ENTERPRISE
+              </span>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             <SidebarNav items={nav} />
@@ -78,6 +87,36 @@ export function DashboardShell({
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-8">{children}</main>
+      <UrlToast />
+    </div>
+  );
+}
+
+function UrlToast() {
+  const searchParams = useSearchParams();
+  const message = searchParams.get("error") || searchParams.get("notice");
+  const kind = searchParams.get("error") ? "error" : "notice";
+  const [visibleMessage, setVisibleMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!message) return;
+    setVisibleMessage(message);
+    const timer = window.setTimeout(() => setVisibleMessage(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
+  if (!visibleMessage) return null;
+
+  return (
+    <div
+      role={kind === "error" ? "alert" : "status"}
+      className={`fixed bottom-5 left-5 z-[80] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg ${
+        kind === "error"
+          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          : "border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
+      }`}
+    >
+      {visibleMessage}
     </div>
   );
 }

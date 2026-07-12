@@ -4,11 +4,12 @@ import { useState } from "react";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { updateAuctionGrade } from "../actions";
 
-export type GradeTableRow = { id: string; code: string; name: string; active: boolean; sortOrder: number };
+export type GradeTableRow = { id: string; code: string; name: string; active: boolean; sortOrder: number; aliases: string[] };
 
 const COLUMNS: ColumnDef<GradeTableRow>[] = [
   { key: "code", label: "Code", accessor: (r) => r.code, sortable: true, filter: "text" },
   { key: "name", label: "Name", accessor: (r) => r.name, sortable: true, filter: "text" },
+  { key: "aliases", label: "Aliases", accessor: (r) => r.aliases.join(" "), sortable: false, filter: "text" },
   { key: "sortOrder", label: "Sort", accessor: (r) => r.sortOrder, sortable: true },
   { key: "active", label: "State", accessor: (r) => (r.active ? "Active" : "Inactive"), sortable: true, filter: "select", filterOptions: [{ value: "Active", label: "Active" }, { value: "Inactive", label: "Inactive" }] },
 ];
@@ -52,6 +53,21 @@ export function GradesTable({ rows, isOwner }: { rows: GradeTableRow[]; isOwner:
                 <td className="px-4 py-3">
                   {isEditing ? <input form={formId} name="name" defaultValue={grade.name} className={input} /> : grade.name}
                 </td>
+                <td className="px-4 py-3">
+                  {isEditing ? (
+                    <input form={formId} name="aliases" defaultValue={grade.aliases.join(", ")} placeholder="PEK, PEKOE" className={input} />
+                  ) : grade.aliases.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {grade.aliases.map((alias) => (
+                        <span key={alias} className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+                          {alias}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-stone-400 dark:text-stone-500">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right tabular-nums">
                   {isEditing ? (
                     <input form={formId} name="sort_order" type="number" step="1" min="0" defaultValue={grade.sortOrder} className={`${input} text-right`} />
@@ -94,12 +110,12 @@ export function GradesTable({ rows, isOwner }: { rows: GradeTableRow[]; isOwner:
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={isOwner ? 5 : 4} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No grades match these filters.</td>
+              <td colSpan={isOwner ? 6 : 5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No grades match these filters.</td>
             </tr>
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={isOwner ? 5 : 4} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No grades yet.</td>
+              <td colSpan={isOwner ? 6 : 5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No grades yet.</td>
             </tr>
           )}
         </tbody>

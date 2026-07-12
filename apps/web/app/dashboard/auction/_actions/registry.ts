@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
-import { AUC, str, back } from "./_shared";
+import { AUC, str, back, gradeAliasKey, type Supa } from "./_shared";
 
 // ---------- Registry: brokers & marks ----------
 export async function createBroker(formData: FormData) {
@@ -190,15 +190,27 @@ export async function createAuctionGrade(formData: FormData) {
   const code = str(formData.get("code")).toUpperCase();
   const name = str(formData.get("name")) || code;
   const sortOrder = Number(str(formData.get("sort_order")) || "0");
+  const aliases = parseGradeAliases(formData, code, name);
   if (!code) back(settings, "Grade code is required.");
-  const { error } = await supabase.from("auction_grades").insert({
+  await rejectAmbiguousGradeAliases(supabase, profile.factory_id, aliases, settings);
+  const { data: grade, error } = await supabase.from("auction_grades").insert({
     factory_id: profile.factory_id,
     code,
     name,
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
     active: true,
-  });
+  }).select("id").single();
   if (error) back(settings, error.message);
+  if (aliases.length > 0 && grade?.id) {
+    const { error: aliasError } = await supabase.from("auction_grade_aliases").insert(
+      aliases.map((alias) => ({
+        factory_id: profile.factory_id,
+        grade_id: grade.id,
+        alias,
+      })),
+    );
+    if (aliasError) back(settings, aliasError.message);
+  }
   revalidatePath(settings);
   redirect(settings);
 }
@@ -210,6 +222,7 @@ export async function updateAuctionGrade(id: string, formData: FormData) {
   const name = str(formData.get("name")) || code;
   const sortOrder = Number(str(formData.get("sort_order")) || "0");
   const active = formData.get("active") === "on";
+  const aliases = parseGradeAliases(formData, code, name);
   if (!code) back(settings, "Grade code is required.");
 
   const { data: existing } = await supabase
@@ -219,6 +232,7 @@ export async function updateAuctionGrade(id: string, formData: FormData) {
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (!existing) back(settings, "Unknown grade.");
+  await rejectAmbiguousGradeAliases(supabase, profile.factory_id, aliases, settings, id);
 
   const { error } = await supabase
     .from("auction_grades")
@@ -242,9 +256,54 @@ export async function updateAuctionGrade(id: string, formData: FormData) {
     if (lotError) back(settings, lotError.message);
   }
 
+  await supabase.from("auction_grade_aliases").delete().eq("grade_id", id).eq("factory_id", profile.factory_id);
+  if (aliases.length > 0) {
+    const { error: aliasError } = await supabase.from("auction_grade_aliases").insert(
+      aliases.map((alias) => ({
+        factory_id: profile.factory_id,
+        grade_id: id,
+        alias,
+      })),
+    );
+    if (aliasError) back(settings, aliasError.message);
+  }
+
   revalidatePath(settings);
   revalidatePath(AUC);
   redirect(settings);
+}
+
+function parseGradeAliases(formData: FormData, code: string, name: string): string[] {
+  const canonical = new Set([gradeAliasKey(code), gradeAliasKey(name)].filter(Boolean));
+  return [
+    ...new Set(
+      str(formData.get("aliases"))
+        .split(/[,\n]+/)
+        .map((alias) => gradeAliasKey(alias))
+        .filter((alias) => alias && !canonical.has(alias)),
+    ),
+  ];
+}
+
+async function rejectAmbiguousGradeAliases(
+  supabase: Supa,
+  factoryId: string,
+  aliases: string[],
+  settingsPath: string,
+  currentGradeId?: string,
+) {
+  if (aliases.length === 0) return;
+  const aliasSet = new Set(aliases);
+  const { data: grades } = await supabase
+    .from("auction_grades")
+    .select("id, code, name")
+    .eq("factory_id", factoryId);
+
+  for (const grade of (grades ?? []) as { id: string; code: string; name: string }[]) {
+    if (grade.id === currentGradeId) continue;
+    const conflicting = [grade.code, grade.name].map(gradeAliasKey).find((key) => aliasSet.has(key));
+    if (conflicting) back(settingsPath, `Alias ${conflicting} already belongs to grade ${grade.code}.`);
+  }
 }
 
 export async function saveBrokerGradeThreshold(formData: FormData) {

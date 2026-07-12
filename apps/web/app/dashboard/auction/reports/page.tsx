@@ -120,6 +120,7 @@ export default async function ReportsPage() {
         action={ingestAckAuto}
         imports={ackImports}
         reviewBase={`/dashboard/auction`}
+        reviewType="ack"
       />
       <AutoIngestSection
         title="Valuation report"
@@ -127,6 +128,7 @@ export default async function ReportsPage() {
         action={ingestValAuto}
         imports={valImports}
         reviewBase={`/dashboard/auction`}
+        reviewType="valuation"
       />
       <AutoIngestSection
         title="Sellers contract"
@@ -134,6 +136,7 @@ export default async function ReportsPage() {
         action={ingestConAuto}
         imports={conImports}
         reviewBase={`/dashboard/auction`}
+        reviewType="contract"
       />
       <AutoIngestSection
         title="Bank statement (CSV)"
@@ -141,6 +144,7 @@ export default async function ReportsPage() {
         action={ingestBankAuto}
         imports={bankImports}
         reviewBase={`/dashboard/auction`}
+        reviewType="bank"
         accept=".csv,text/csv"
       />
     </div>
@@ -162,6 +166,7 @@ function AutoIngestSection({
   action,
   imports,
   reviewBase,
+  reviewType,
   accept = "application/pdf",
 }: {
   title: string;
@@ -169,6 +174,7 @@ function AutoIngestSection({
   action: (formData: FormData) => void;
   imports: { id: string; source_filename: string | null; status: string; parsed_at: string | null; sale_id: string | null }[];
   reviewBase: string;
+  reviewType: "ack" | "valuation" | "contract" | "bank";
   accept?: string;
 }) {
   return (
@@ -208,7 +214,7 @@ function AutoIngestSection({
             <tbody>
               {imports.map((im) => {
                 const saleId = im.sale_id as string | null;
-                const href = saleId ? `${reviewBase}/${saleId}/ack/${im.id}` : `${reviewBase}/${im.id}`;
+                const href = saleId ? `${reviewBase}/${saleId}/${reviewType}/${im.id}` : `${reviewBase}/${im.id}`;
                 return (
                   <tr key={im.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
                     <td className="px-4 py-2">{im.source_filename ?? "document.pdf"}</td>

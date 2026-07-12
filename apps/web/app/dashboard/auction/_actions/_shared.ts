@@ -18,6 +18,35 @@ export const back = (path: string, error: string): never => redirect(`${path}?er
 export type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
 export type DocType = "acknowledgement" | "valuation" | "contract" | "bank_csv";
 
+export const gradeAliasKey = (value: string | null | undefined) =>
+  String(value ?? "").toUpperCase().replace(/\s+/g, "");
+
+export async function gradeAliasMap(supabase: Supa, factoryId: string): Promise<Map<string, string>> {
+  const [{ data: grades }, { data: aliases }] = await Promise.all([
+    supabase.from("auction_grades").select("id, code, name").eq("factory_id", factoryId),
+    supabase.from("auction_grade_aliases").select("grade_id, alias").eq("factory_id", factoryId),
+  ]);
+  const canonicalById = new Map<string, string>();
+  const map = new Map<string, string>();
+
+  for (const grade of (grades ?? []) as { id: string; code: string; name: string | null }[]) {
+    canonicalById.set(grade.id, grade.code);
+    map.set(gradeAliasKey(grade.code), grade.code);
+    map.set(gradeAliasKey(grade.name), grade.code);
+  }
+
+  for (const alias of (aliases ?? []) as { grade_id: string; alias: string }[]) {
+    const canonical = canonicalById.get(alias.grade_id);
+    if (canonical) map.set(gradeAliasKey(alias.alias), canonical);
+  }
+
+  return map;
+}
+
+export function canonicalGrade(value: string, aliases: Map<string, string>): string {
+  return aliases.get(gradeAliasKey(value)) ?? value;
+}
+
 // Extract the merged text of an uploaded PDF, or null if it's missing/unreadable.
 export async function extractPdf(file: FormDataEntryValue | null): Promise<string | null> {
   if (!(file instanceof File) || file.size === 0) return null;
@@ -135,6 +164,7 @@ export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: st
     .from("auction_sales")
     .select("id, sale_no, target_sale_no")
     .eq("factory_id", factoryId)
+    .eq("sale_kind", "dispatch")
     .eq("broker_id", current.broker_id as string);
   const ids = (siblings ?? [])
     .filter((s) => saleNoKey(((s.target_sale_no as string | null) || (s.sale_no as string))) === saleNoKey(key))
@@ -142,8 +172,19 @@ export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: st
   return ids.includes(saleId) ? ids : [saleId, ...ids];
 }
 
+export async function saleDetailPath(supabase: Supa, factoryId: string, saleId: string): Promise<string> {
+  const { data: sale } = await supabase
+    .from("auction_sales")
+    .select("sale_no, target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  const key = saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null));
+  return `${AUC}/sales/${encodeURIComponent(key || saleId)}`;
+}
+
 export async function nextDispatchNo(supabase: Supa): Promise<string> {
-  const { data } = await supabase.from("auction_sales").select("sale_no");
+  const { data } = await supabase.from("auction_sales").select("sale_no").eq("sale_kind", "dispatch");
   const maxNo = (data ?? []).reduce((max, row) => {
     const match = (row.sale_no as string | null)?.match(/\d+$/);
     return match ? Math.max(max, Number(match[0])) : max;

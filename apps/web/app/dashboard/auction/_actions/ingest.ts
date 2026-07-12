@@ -17,14 +17,55 @@ import {
   type ParsedContract,
 } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
-import { AUC, back, extractPdf, stageImport, toISODate, saleGroupIds } from "./_shared";
+import {
+  AUC,
+  back,
+  canonicalGrade,
+  extractPdf,
+  gradeAliasMap,
+  stageImport,
+  toISODate,
+  saleGroupIds,
+  saleDetailPath,
+  writeAudit,
+} from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
 import { formatFourDigitNo } from "../sale-number";
+
+type CarryForwardLot = {
+  id: string;
+  sale_id: string;
+  invoice_no: string | null;
+  lot_no: string | null;
+  bags: number | null;
+  kg_per_bag: number | string | null;
+  gross_wt: number | string | null;
+  sample_allowance: number | string | null;
+  net_wt: number | string | null;
+  state: string | null;
+  auction_sales: {
+    broker_id: string;
+    sale_no: string | null;
+    target_sale_no: string | null;
+    dispatch_date: string | null;
+  } | null;
+  lot_invoices?: { invoice_no: string }[] | null;
+};
+
+const CARRY_FORWARD_BLOCKED_STATES = new Set(["sold", "settled"]);
+
+function invoiceKeys(row: { invoice_no?: string | null; lot_invoices?: { invoice_no: string | null }[] | null }) {
+  return [
+    formatFourDigitNo(row.invoice_no ?? null),
+    ...((row.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean)),
+  ].filter(Boolean);
+}
 
 // ---------- Acknowledgement (① catalogue & reconcile) ----------
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
@@ -32,12 +73,12 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   const parsed = parseAcknowledgement(text);
   const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${detail}/ack/${importId}`);
+  redirect(`${reviewBase}/ack/${importId}`);
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const { data: imp } = await supabase
     .from("doc_imports")
     .select("id, parsed_json")
@@ -45,18 +86,31 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     .single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedAcknowledgement;
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
   const parsed: ParsedAcknowledgement = {
     ...rawParsed,
     lots: rawParsed.lots.map((lot) => ({
       ...lot,
       invoiceNo: formatFourDigitNo(lot.invoiceNo),
       lotNo: formatFourDigitNo(lot.lotNo) || null,
+      grade: canonicalGrade(lot.grade, aliases),
     })),
   };
 
   // The ack covers the whole sale for this broker — the factory may have split
   // that sale across several dispatches, so reconcile against ALL of them.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const { data: groupSales } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date")
+    .in("id", groupIds);
+  const saleIdByDispatchDate = new Map(
+    (groupSales ?? [])
+      .filter((sale) => sale.dispatch_date)
+      .map((sale) => [sale.dispatch_date as string, sale.id as string]),
+  );
+  const currentBrokerId = (groupSales ?? [])[0]?.broker_id as string | undefined;
+  const dispatchNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.sale_no as string | null]));
   const { data: lotRows } = await supabase
     .from("auction_lots")
     .select("id, sale_id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
@@ -105,14 +159,17 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       ),
   );
 
-  const unexpectedAckRows = recon.rows
+  const unexpectedAckEntries = recon.rows
     .filter((row) => row.status === "unexpected" && row.ack)
     .map((row) => {
       const ackLot = parsed.lots.find((lot) => lot.invoiceNo === row.invoiceNo && lot.lotNo === row.ack?.lotNo);
       if (!ackLot) return null;
+      const ackDispatchDate = toISODate(ackLot.dispatchDate);
+      const targetSaleId = (ackDispatchDate ? saleIdByDispatchDate.get(ackDispatchDate) : null) ?? saleId;
       return {
+        ackLot,
         factory_id: profile.factory_id,
-        sale_id: saleId,
+        sale_id: targetSaleId,
         mark_id: markByCode.get(ackLot.markCode.toUpperCase()) ?? null,
         invoice_no: formatFourDigitNo(ackLot.invoiceNo),
         lot_no: formatFourDigitNo(ackLot.lotNo) || null,
@@ -128,14 +185,135 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
 
-  let createdAcknowledgedLots = 0;
-  if (unexpectedAckRows.length > 0) {
+  const unexpectedInvoiceNos = [...new Set(unexpectedAckEntries.map((row) => row.invoice_no))];
+  const unexpectedLotNos = [...new Set(unexpectedAckEntries.map((row) => row.lot_no).filter((lotNo): lotNo is string => Boolean(lotNo)))];
+  // A broker can catalogue the same invoice/lot again in a later sale. Before
+  // creating an ACK-sourced "unexpected" lot, move the existing unsold lot
+  // forward so invoice history stays on one lot id.
+  const { data: linkedInvoiceLots } = unexpectedInvoiceNos.length > 0
+    ? await supabase
+        .from("lot_invoices")
+        .select("lot_id, invoice_no")
+        .eq("factory_id", profile.factory_id)
+        .in("invoice_no", unexpectedInvoiceNos)
+    : { data: [] };
+  const linkedLotIds = [...new Set((linkedInvoiceLots ?? []).map((row) => row.lot_id as string))];
+  const carryForwardParts: string[] = [];
+  if (unexpectedInvoiceNos.length > 0) carryForwardParts.push(`invoice_no.in.(${unexpectedInvoiceNos.join(",")})`);
+  if (unexpectedLotNos.length > 0) carryForwardParts.push(`lot_no.in.(${unexpectedLotNos.join(",")})`);
+  if (linkedLotIds.length > 0) carryForwardParts.push(`id.in.(${linkedLotIds.join(",")})`);
+  const { data: carryForwardRows } = carryForwardParts.length > 0
+    ? await supabase
+        .from("auction_lots")
+        .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date), lot_invoices(invoice_no)")
+        .eq("factory_id", profile.factory_id)
+        .or(carryForwardParts.join(","))
+    : { data: [] };
+  const carryForwardCandidates = ((carryForwardRows ?? []) as unknown as CarryForwardLot[]).filter((lot) => {
+    if (groupIds.includes(lot.sale_id)) return false;
+    if (currentBrokerId && lot.auction_sales?.broker_id !== currentBrokerId) return false;
+    return true;
+  });
+  const { data: existingSaleLines } = carryForwardCandidates.length > 0
+    ? await supabase
+        .from("sale_lines")
+        .select("lot_id")
+        .in("lot_id", carryForwardCandidates.map((lot) => lot.id))
+    : { data: [] };
+  const soldLotIds = new Set((existingSaleLines ?? []).map((line) => line.lot_id as string));
+  const movableLots = carryForwardCandidates.filter((lot) => !CARRY_FORWARD_BLOCKED_STATES.has(lot.state ?? "") && !soldLotIds.has(lot.id));
+  const usedCarryForwardLotIds = new Set<string>();
+  const rowsToCreate = [];
+  const movedLotsFromAck: { id: string; sale_id: string; state: string }[] = [];
+
+  for (const row of unexpectedAckEntries) {
+    const matchingCarryForwardLots = carryForwardCandidates
+      .filter((lot) => {
+        if (usedCarryForwardLotIds.has(lot.id)) return false;
+        const invoiceMatches =
+          formatFourDigitNo(lot.invoice_no) === row.invoice_no ||
+          (lot.lot_invoices ?? []).some((invoice) => formatFourDigitNo(invoice.invoice_no) === row.invoice_no);
+        const lotMatches = row.lot_no && formatFourDigitNo(lot.lot_no) === row.lot_no;
+        return invoiceMatches || lotMatches;
+      })
+      .sort((a, b) => String(b.auction_sales?.dispatch_date ?? "").localeCompare(String(a.auction_sales?.dispatch_date ?? "")));
+    const candidate = matchingCarryForwardLots.find((lot) => movableLots.some((movable) => movable.id === lot.id));
+
+    if (!candidate) {
+      if (matchingCarryForwardLots.length > 0) {
+        const blocked = matchingCarryForwardLots[0];
+        const blockedDispatch = formatFourDigitNo(blocked.auction_sales?.sale_no) || "—";
+        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on dispatch ${blockedDispatch}; it cannot be rolled forward automatically.`);
+      }
+      rowsToCreate.push(row);
+      continue;
+    }
+
+    usedCarryForwardLotIds.add(candidate.id);
+    if (candidate.state === "re-print") {
+      rowsToCreate.push({
+        ...row,
+        bags: candidate.bags ?? row.bags,
+        kg_per_bag: candidate.kg_per_bag ?? row.kg_per_bag,
+        gross_wt: candidate.gross_wt,
+        sample_allowance: candidate.sample_allowance,
+        net_wt: candidate.net_wt ?? row.net_wt,
+        reprint_source_lot_id: candidate.id,
+      });
+      await writeAudit(supabase, profile.factory_id, {
+        saleId: row.sale_id,
+        lotId: candidate.id,
+        action: "Re-print acknowledged",
+        detail: `Invoice ${row.invoice_no} was found again by acknowledgement and added to the new sale as a re-print child lot.`,
+        reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice again${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
+        actor: profile.name,
+      });
+      continue;
+    }
+
+    const patch = {
+      sale_id: row.sale_id,
+      mark_id: row.mark_id,
+      invoice_no: row.invoice_no,
+      lot_no: row.lot_no,
+      grade: row.grade,
+      bags: row.bags,
+      kg_per_bag: row.kg_per_bag,
+      net_wt: row.net_wt,
+      state: row.state,
+      shutout_reason: row.shutout_reason,
+    };
+    await supabase.from("auction_lots").update(patch).eq("id", candidate.id);
+
+    if (!(candidate.lot_invoices ?? []).some((invoice) => formatFourDigitNo(invoice.invoice_no) === row.invoice_no)) {
+      await supabase.from("lot_invoices").insert({
+        factory_id: profile.factory_id,
+        lot_id: candidate.id,
+        invoice_no: row.invoice_no,
+      });
+    }
+
+    movedLotsFromAck.push({ id: candidate.id, sale_id: row.sale_id, state: row.state });
+    const fromDispatch = formatFourDigitNo(candidate.auction_sales?.sale_no) || "—";
+    const toDispatch = formatFourDigitNo(dispatchNoBySaleId.get(row.sale_id)) || "—";
+    await writeAudit(supabase, profile.factory_id, {
+      saleId: row.sale_id,
+      lotId: candidate.id,
+      action: "Rolled forward",
+      detail: `Invoice ${row.invoice_no} moved from dispatch ${fromDispatch} to ${toDispatch} by later acknowledgement.`,
+      reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice again${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
+      actor: profile.name,
+    });
+  }
+
+  let createdLotsFromAck: { id: string; sale_id: string; invoice_no: string; state: string }[] = [];
+  if (rowsToCreate.length > 0) {
     const { data: createdLots } = await supabase
       .from("auction_lots")
-      .insert(unexpectedAckRows)
-      .select("id, invoice_no");
-    createdAcknowledgedLots = unexpectedAckRows.filter((row) => row.state === "acknowledged").length;
+      .insert(rowsToCreate.map(({ ackLot: _ackLot, ...row }) => row))
+      .select("id, sale_id, invoice_no, state");
     if (createdLots && createdLots.length > 0) {
+      createdLotsFromAck = createdLots as { id: string; sale_id: string; invoice_no: string; state: string }[];
       await supabase.from("lot_invoices").insert(
         createdLots.map((lot) => ({
           factory_id: profile.factory_id,
@@ -164,7 +342,12 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       if (sid) affectedSales.add(sid);
     }
   }
-  if (createdAcknowledgedLots > 0) affectedSales.add(saleId);
+  for (const lot of createdLotsFromAck) {
+    if (lot.state === "acknowledged") affectedSales.add(lot.sale_id as string);
+  }
+  for (const lot of movedLotsFromAck) {
+    if (lot.state === "acknowledged") affectedSales.add(lot.sale_id);
+  }
   if (affectedSales.size > 0) {
     await supabase
       .from("auction_sales")
@@ -173,22 +356,25 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .in("status", ["draft", "dispatched", "grn"]);
   }
   revalidatePath(detail);
+  const movedNotice = movedLotsFromAck.length > 0 ? ` ${movedLotsFromAck.length} lot(s) rolled forward.` : "";
   redirect(
-    `${detail}?notice=${encodeURIComponent(`Acknowledged ${recon.summary.catalogued} lot(s); ${recon.summary.shutout} shutout.`)}`,
+    `${detail}?notice=${encodeURIComponent(`Acknowledged ${recon.summary.catalogued} lot(s); ${recon.summary.shutout} shutout.${movedNotice}`)}`,
   );
 }
 
 export async function rejectAcknowledgement(importId: string, saleId: string) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
-  revalidatePath(`${AUC}/${saleId}`);
-  redirect(`${AUC}/${saleId}`);
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  revalidatePath(detail);
+  redirect(detail);
 }
 
 // ---------- Valuation (② valuation ↔ realised) ----------
 export async function ingestValuation(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
@@ -196,30 +382,34 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   const parsed = parseValuation(text);
   const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${detail}/valuation/${importId}`);
+  redirect(`${reviewBase}/valuation/${importId}`);
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedValuation;
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
   const parsed: ParsedValuation = {
     ...rawParsed,
     lots: rawParsed.lots.map((lot) => ({
       ...lot,
       invoiceNo: formatFourDigitNo(lot.invoiceNo),
       lotNo: formatFourDigitNo(lot.lotNo),
+      grade: canonicalGrade(lot.grade, aliases),
     })),
   };
 
   // The valuation covers the broker's whole sale — match lots across all
   // dispatches in the sale group, not just the one it was uploaded to.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no").in("sale_id", groupIds);
-  const lotByInv = new Map<string, string>((lotRows ?? []).map((l) => [formatFourDigitNo(l.invoice_no as string), l.id as string]));
-  const saleIdByLot = new Map((lotRows ?? []).map((l) => [l.id as string, l.sale_id as string]));
+  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no, lot_invoices(invoice_no)").in("sale_id", groupIds);
+  const lotByInv = new Map<string, string>();
+  for (const lot of (lotRows ?? []) as { id: string; invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
+    for (const invoiceNo of invoiceKeys(lot)) lotByInv.set(invoiceNo, lot.id);
+  }
 
   // One valuation per lot (last line wins, as the sequential upsert did); flip
   // matched lots to "valued" in a single statement.
@@ -239,15 +429,7 @@ export async function confirmValuation(importId: string, saleId: string) {
     await supabase.from("auction_lots").update({ state: "valued" }).in("id", [...valuationByLot.keys()]).neq("state", "shutout");
   }
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
-  // Advance every dispatch in the group that had lots valued (never regress a later status).
-  const valuedSales = new Set<string>([...valuationByLot.keys()].map((id) => saleIdByLot.get(id) ?? saleId));
-  if (valuedSales.size > 0) {
-    await supabase
-      .from("auction_sales")
-      .update({ status: "valued" })
-      .in("id", [...valuedSales])
-      .in("status", ["draft", "dispatched", "grn", "catalogued"]);
-  }
+  // Dispatch status stops at catalogued; valuation state now lives on lots and sales detail.
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(`Recorded valuations for ${applied} lot(s).`)}`);
 }
@@ -255,7 +437,8 @@ export async function confirmValuation(importId: string, saleId: string) {
 // ---------- Sellers Contract (sale lines, settlements, VAT — A3) ----------
 export async function ingestContract(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
@@ -263,37 +446,104 @@ export async function ingestContract(saleId: string, formData: FormData) {
   const parsed = parseContract(text);
   const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${detail}/contract/${importId}`);
+  redirect(`${reviewBase}/contract/${importId}`);
 }
 
 export async function confirmContract(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedContract;
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
   const parsed: ParsedContract = {
     ...rawParsed,
     lines: rawParsed.lines.map((line) => ({
       ...line,
       lotNo: formatFourDigitNo(line.lotNo),
       invoiceNo: formatFourDigitNo(line.invoiceNo),
+      grade: canonicalGrade(line.grade, aliases),
     })),
   };
 
   // The sellers contract covers the broker's whole sale — match lots across all
   // dispatches in the sale group, and file each sale line under its lot's own dispatch.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no, net_wt").in("sale_id", groupIds);
-  const lotByInv = new Map<string, { id: string; saleId: string; netWt: number }>(
-    (lotRows ?? []).map((l) => [
-      formatFourDigitNo(l.invoice_no as string),
-      { id: l.id as string, saleId: l.sale_id as string, netWt: Number(l.net_wt) },
-    ]),
-  );
+  const { data: lotRows } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, lot_invoices(invoice_no)")
+    .in("sale_id", groupIds);
+  type ContractLot = {
+    id: string;
+    sale_id: string;
+    invoice_no: string | null;
+    bags: number | null;
+    kg_per_bag: number | string | null;
+    gross_wt: number | string | null;
+    sample_allowance: number | string | null;
+    net_wt: number | string | null;
+    state: string;
+    lot_invoices?: { invoice_no: string | null }[] | null;
+  };
+  const contractLots = (lotRows ?? []) as ContractLot[];
+  const lotByInv = new Map<string, ContractLot>();
+  for (const lot of contractLots) {
+    for (const invoiceNo of invoiceKeys(lot)) {
+      lotByInv.set(invoiceNo, lot);
+    }
+  }
+
+  // NOT SOLD is the broker's re-print instruction. Add one more sampling
+  // cycle to the original lot, preserve it as history, and wait for a later ACK
+  // to create the linked child. The audit guard prevents double deduction when
+  // a confirmed contract is re-run.
+  const notSoldMatches = parsed.lines
+    .filter((line) => line.sold === false && lotByInv.has(line.invoiceNo))
+    .map((line) => ({ line, lot: lotByInv.get(line.invoiceNo)! }));
+  const notSoldLotIds = [...new Set(notSoldMatches.map(({ lot }) => lot.id))];
+  const reprintAuditAction = "Contract not sold re-print";
+  const { data: priorReprintAudits } = notSoldLotIds.length > 0
+    ? await supabase.from("auction_audit").select("lot_id").in("lot_id", notSoldLotIds).eq("action", reprintAuditAction)
+    : { data: [] };
+  const alreadyApplied = new Set((priorReprintAudits ?? []).map((row) => row.lot_id as string));
+
+  if (notSoldLotIds.length > 0) {
+    const { data: staleSaleLines } = await supabase.from("sale_lines").select("id").in("lot_id", notSoldLotIds);
+    const staleSaleLineIds = (staleSaleLines ?? []).map((row) => row.id as string);
+    if (staleSaleLineIds.length > 0) {
+      await supabase.from("vat_ledger").delete().in("sale_line_id", staleSaleLineIds);
+      await supabase.from("sale_lines").delete().in("id", staleSaleLineIds);
+    }
+  }
+
+  for (const { line, lot } of notSoldMatches) {
+    if (alreadyApplied.has(lot.id)) {
+      await supabase.from("auction_lots").update({ state: "re-print" }).eq("id", lot.id);
+      continue;
+    }
+    const existingSample = Math.max(0, Number(lot.sample_allowance ?? 0));
+    const additionalSample = Math.max(0, line.sampleAllowance) || existingSample;
+    const cumulativeSample = Number((existingSample + additionalSample).toFixed(2));
+    const bagGross = Number(lot.bags ?? 0) * Number(lot.kg_per_bag ?? 0);
+    const baseGross = Number(lot.gross_wt ?? 0) || bagGross || Number(lot.net_wt ?? 0) + existingSample;
+    const nextNet = Number(Math.max(0, baseGross - cumulativeSample).toFixed(2));
+    await supabase
+      .from("auction_lots")
+      .update({ state: "re-print", sample_allowance: cumulativeSample, net_wt: nextNet })
+      .eq("id", lot.id);
+    await writeAudit(supabase, profile.factory_id, {
+      saleId: lot.sale_id,
+      lotId: lot.id,
+      action: reprintAuditAction,
+      detail: `Invoice ${line.invoiceNo} was not sold and moved to re-print. Sample allowance increased from ${existingSample.toFixed(2)} kg to ${cumulativeSample.toFixed(2)} kg; remaining net weight is ${nextNet.toFixed(2)} kg.`,
+      reason: `Sellers contract ${line.contractNo} marked the lot NOT SOLD. It can return through a later sale acknowledgement.`,
+      actor: profile.name,
+    });
+  }
 
   // Resolve buyers (upsert by name).
-  const uniqueBuyers = [...new Map(parsed.lines.map((l) => [l.buyerName, l.buyerVatNo])).entries()]
+  const soldLines = parsed.lines.filter((line) => line.sold !== false);
+  const uniqueBuyers = [...new Map(soldLines.map((l) => [l.buyerName, l.buyerVatNo])).entries()]
     .filter(([name]) => name)
     .map(([name, vatNo]) => ({ factory_id: profile.factory_id, name, vat_no: vatNo || null }));
   const buyerByName = new Map<string, string>();
@@ -306,13 +556,13 @@ export async function confirmContract(importId: string, saleId: string) {
   }
 
   // ── Sale lines (one row per lot; last contract line wins, as before) ──
-  const matchedLines = parsed.lines.filter((line) => lotByInv.has(line.invoiceNo));
+  const matchedLines = soldLines.filter((line) => lotByInv.has(line.invoiceNo));
   const applied = matchedLines.length;
   const saleLineByLot = new Map<string, Record<string, unknown>>();
   for (const line of matchedLines) {
     const lot = lotByInv.get(line.invoiceNo)!;
     saleLineByLot.set(lot.id, {
-      factory_id: profile.factory_id, sale_id: lot.saleId, lot_id: lot.id,
+      factory_id: profile.factory_id, sale_id: lot.sale_id, lot_id: lot.id,
       buyer_id: buyerByName.get(line.buyerName) ?? null,
       gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
       net_wt: line.netWt, price_per_kg: line.pricePerKg,
@@ -360,7 +610,7 @@ export async function confirmContract(importId: string, saleId: string) {
       // Compute every contract's settlement first (pure), then write all
       // settlements and all their charge lines in two batched upserts.
       const computed = parsed.contracts.map((c) => {
-        const contractLines = parsed.lines.filter((l) => l.contractNo === c.contractNo);
+        const contractLines = soldLines.filter((l) => l.contractNo === c.contractNo);
         const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
         const s = computeSettlement(rates, {
           contractNo: c.contractNo,
@@ -439,31 +689,32 @@ export async function confirmContract(importId: string, saleId: string) {
     }
   }
 
-  // The contract settles the whole broker/sale group: stamp the prompt date and
-  // advance status on every dispatch that had lots sold by this contract (plus
-  // the one it was uploaded to).
+  // The contract settles the whole broker/sale group: stamp the prompt date on
+  // related dispatches, but keep dispatch status capped at catalogued.
   const settledSales = new Set<string>([saleId]);
   for (const line of matchedLines) {
     const lot = lotByInv.get(line.invoiceNo);
-    if (lot) settledSales.add(lot.saleId);
+    if (lot) settledSales.add(lot.sale_id);
   }
   await supabase
     .from("auction_sales")
-    .update({ status: "settled", prompt_date: toISODate(parsed.promptDate) })
+    .update({ prompt_date: toISODate(parsed.promptDate) })
     .in("id", [...settledSales]);
   await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
   revalidatePath(detail);
+  revalidatePath(`${AUC}/reprints`);
   const settlementNote = settlementCount
     ? `; ${settlementCount} settlement(s) computed`
     : "";
   redirect(
-    `${detail}?notice=${encodeURIComponent(`Recorded ${applied} sale line(s)${settlementNote}; prompt date ${parsed.promptDate ?? "—"}.`)}`,
+    `${detail}?notice=${encodeURIComponent(`Recorded ${applied} sale line(s)${settlementNote}; ${notSoldMatches.length} lot(s) moved to re-print; prompt date ${parsed.promptDate ?? "—"}.`)}`,
   );
 }
 
 export async function rejectImport(importId: string, saleId: string) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
-  revalidatePath(`${AUC}/${saleId}`);
-  redirect(`${AUC}/${saleId}`);
+  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  revalidatePath(detail);
+  redirect(detail);
 }
