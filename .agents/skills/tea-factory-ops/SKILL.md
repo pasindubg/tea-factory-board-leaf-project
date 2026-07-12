@@ -195,11 +195,70 @@ needs **≥ 20.19.4**, and the machine's default is older.
   and manual transitions must enforce the same behavior.
 
 **UI conventions:**
+- Shared React primitives live in `apps/web/components/ui`: `AppButton`,
+  `AppNavLink`, and `AppDrawer`. Domain pages compose these primitives rather
+  than copying button/navigation/drawer class strings. Confirmation, feedback,
+  and list primitives remain in their dedicated shared components.
 - Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
   inline filter rows under table headers.
 - Search panels expose all meaningful columns and keep advanced search available.
+- All operational lists use the shared list framework in
+  `apps/web/components/list-controls.tsx`: declare columns, `selectionMode`,
+  editability, and command actions in one list definition; compose
+  `ListSurface`, `ListCommandToolbar`, `ListSelectionHeader`/
+  `ListSelectionCell`, and `ListSidePanel` instead of inventing page-specific
+  list controls. Non-control clicks on a row select it and keyboard Enter/Space
+  must provide the same behavior with `aria-selected` for feedback.
 - Sale overviews grouped by `target_sale_no` must show all brokers participating
   in that auction sale, because multiple brokers can sell tea in the same sale.
+- The dashboard sidebar uses drill-in sections, not expanding dropdown trees:
+  root shows standalone destinations plus handling sections; selecting a section
+  shows only its emphasized destination rows and a compact `Overview` back link.
+  Remove generic sidebar labels such as `SECTION`, and keep the section name
+  visually subordinate to its destinations. Use Next.js `Link`
+  for destinations and buttons only for local section/menu state.
+- Every non-overview page gets the shared linked breadcrumb `Overview / section /
+  current page`; do not duplicate it with page-specific back links.
+- Dashboard pages are top-left oriented and use the full available viewport width;
+  never reintroduce a centered global max-width. Desktop selector/record side
+  panels float inside page padding with rounded corners/elevation, stretch through
+  the available viewport height without hitting the bottom, and scroll only their
+  inner list body.
+- List headers expose an always-visible LOV select for every `ColumnDef` with an
+  accessor; omit the accessor only when an attribute is explicitly non-searchable.
+  Do not use a Google-style general search box. Advanced syntax appears only after
+  selecting `Advanced`, in a fixed viewport panel with its own max-height/scroll so
+  table overflow containers cannot clip it. List Search panels use the native
+  Popover API so Search/Clear and outside-click dismissal are consistent.
+- Search criteria stay collapsed by default and LOV changes do not filter until
+  the explicit `Search` action is selected.
+- Editable operational lists default to multi-select: leading row checkboxes plus
+  top-toolbar Edit and domain actions, never repeated row text actions. Edit accepts
+  exactly one selected row; compatible state actions may accept many. When framework
+  config explicitly sets `selectionMode: "single"`, omit checkboxes/bulk controls
+  and show edit only for the current row.
+- Related list work surfaces use the shared `TabbedListSurface` top tab bar
+  rather than stacking dense tables. Each tab preserves its own list controls;
+  top tabs are keyboard navigable with arrows and Home/End.
+- Appearance lives in the bottom `Settings` menu with explicit System, Light, and
+  Dark choices. New user preferences should extend this menu rather than adding
+  scattered shell buttons.
+- Every interactive action needs immediate acknowledgement through the shared
+  dashboard action-feedback layer: navigation shows Opening, forms/server
+  actions show Working, settings show Updating, and route completion shows Page
+  ready. Do not add silent new buttons or links; opt out only for decorative
+  controls with `data-action-feedback-ignore`.
+- Completed work/notices use green bottom-right toasts and failures use red
+  bottom-right toasts. Browser alerts and confirms are forbidden: consequential
+  actions use the shared `ConfirmationDialog` or `ConfirmSubmitButton` instead.
+- Navigation must also trigger the shared animated gradient progress bar. Links
+  are automatic; call `startNavigationFeedback()` before any direct
+  `router.push` or `router.replace` implementation.
+- The navigation control itself carries the shared animated gradient pending
+  state until its destination is ready; keep the top-right status message as
+  secondary confirmation rather than the primary loading indicator.
+- Dashboard charts must use `resolvedTheme`, remain legible in light and dark
+  modes, and show an explicit zero-data message instead of an empty plot.
 
 ## Domain cheat-sheet
 

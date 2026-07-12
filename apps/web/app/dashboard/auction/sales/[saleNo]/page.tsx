@@ -8,6 +8,7 @@ import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-s
 import { SaleLinesTable, type SaleLineRow } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
+import { TabbedListSurface } from "@/components/list-controls";
 
 type DispatchRow = {
   id: string;
@@ -323,7 +324,7 @@ export default async function SaleDetailPage({
   });
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[17rem_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
       <SalesSideList rows={saleListRows} currentSaleNo={displaySaleNo} />
       <div className="min-w-0 space-y-6">
       <div>
@@ -379,15 +380,15 @@ export default async function SaleDetailPage({
         <SalesReconciliationAssistant saleNo={displaySaleNo} groups={reconciliationGroups} />
       </section>
 
-      <section>
-        <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Lots and invoices in this sale</h3>
+      <TabbedListSurface
+        tabs={[
+          { id: "lots", label: "Lots & invoices", count: `${saleLineTableRows.length} lots` },
+          { id: "dispatches", label: "Dispatches", count: `${dispatchTableRows.length} dispatches` },
+        ]}
+      >
         <SaleLinesTable rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} />
-      </section>
-
-      <section>
-        <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Dispatches in this sale</h3>
         <DispatchesInSaleTable rows={dispatchTableRows} />
-      </section>
+      </TabbedListSurface>
       </div>
     </div>
   );

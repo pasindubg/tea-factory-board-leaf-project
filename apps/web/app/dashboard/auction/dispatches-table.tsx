@@ -5,6 +5,8 @@ import Link from "next/link";
 import { deleteSale, updateSale } from "./actions";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { formatSaleNo } from "./sale-number";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { showAppToast } from "@/components/action-feedback";
 
 type SaleRow = {
   id: string;
@@ -59,6 +61,8 @@ export function DispatchesTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SaleDraft | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const [deleteRequest, setDeleteRequest] = useState<{ ids: string[]; label: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const controls = useListControls(rows, COLUMNS);
   const visibleRows = controls.rows;
 
@@ -86,16 +90,23 @@ export function DispatchesTable({
     else setSelected(new Set(visibleRows.map((s) => s.id)));
   }
 
+  function handleRowSelection(event: React.MouseEvent<HTMLTableRowElement>, id: string) {
+    if ((event.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+    toggle(id);
+  }
+
   async function deleteSelected() {
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} dispatch(es)? This cannot be undone.`)) return;
     const ids = [...selected];
+    let succeeded = 0;
     setPendingIds((prev) => new Set([...prev, ...ids]));
     for (const id of ids) {
       try {
         await deleteSale(id);
         setRows((curr) => curr.filter((row) => row.id !== id));
+        succeeded += 1;
       } catch {
+        showAppToast("Could not delete one or more dispatches. Please try again.", "error");
         setPendingIds((prev) => {
           const next = new Set(prev);
           next.delete(id);
@@ -103,21 +114,24 @@ export function DispatchesTable({
         });
       }
     }
+    if (succeeded > 0) showAppToast(`${succeeded === 1 ? "Dispatch" : "Dispatches"} deleted.`);
     setSelected(new Set());
     setPendingIds(new Set());
   }
 
   async function deleteOne(id: string) {
-    if (!confirm("Delete this dispatch? This cannot be undone.")) return;
     setPendingIds((prev) => new Set(prev).add(id));
     try {
       await deleteSale(id);
       setRows((curr) => curr.filter((row) => row.id !== id));
+      showAppToast("Dispatch deleted.");
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
+    } catch {
+      showAppToast("Could not delete the dispatch. Please try again.", "error");
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -125,6 +139,15 @@ export function DispatchesTable({
         return next;
       });
     }
+  }
+
+  async function confirmDelete() {
+    if (!deleteRequest) return;
+    setDeleteBusy(true);
+    if (deleteRequest.ids.length === 1) await deleteOne(deleteRequest.ids[0]);
+    else await deleteSelected();
+    setDeleteBusy(false);
+    setDeleteRequest(null);
   }
 
   function beginEdit(row: SaleRow) {
@@ -170,7 +193,7 @@ export function DispatchesTable({
           <span className="text-xs font-medium text-stone-600 dark:text-stone-400">{selected.size} selected</span>
           <button
             type="button"
-            onClick={deleteSelected}
+            onClick={() => setDeleteRequest({ ids: [...selected], label: `Delete ${selected.size} dispatch${selected.size === 1 ? "" : "es"}?` })}
             disabled={pendingIds.size > 0}
             className="inline-flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
           >
@@ -211,6 +234,15 @@ export function DispatchesTable({
             return (
               <tr
                 key={s.id}
+                tabIndex={0}
+                aria-selected={selected.has(s.id)}
+                onClick={(event) => handleRowSelection(event, s.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    toggle(s.id);
+                  }
+                }}
                 className={`border-b border-stone-100 last:border-0 transition-colors dark:border-stone-800 ${
                   selected.has(s.id)
                     ? "bg-green-50/70 dark:bg-green-950/50"
@@ -276,7 +308,7 @@ export function DispatchesTable({
                           </button>
                           <button
                             type="button"
-                            onClick={() => deleteOne(s.id)}
+                            onClick={() => setDeleteRequest({ ids: [s.id], label: "Delete this dispatch?" })}
                             disabled={rowBusy}
                             className="rounded p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 transition-colors dark:text-stone-500 dark:hover:text-red-400 dark:hover:bg-red-950 disabled:opacity-40"
                             title="Delete"
@@ -323,6 +355,16 @@ export function DispatchesTable({
         </tbody>
       </table>
       </div>
+      <ConfirmationDialog
+        open={deleteRequest !== null}
+        title={deleteRequest?.label ?? "Delete dispatch?"}
+        description="This will permanently remove the dispatch and its related records. This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        busy={deleteBusy}
+        onCancel={() => setDeleteRequest(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

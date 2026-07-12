@@ -18,14 +18,14 @@ export type DispatchInSaleRow = {
 };
 
 const COLUMNS: ColumnDef<DispatchInSaleRow>[] = [
-  { key: "saleNo", label: "Dispatch no.", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
+  { key: "saleNo", label: "Dispatch no.", accessor: (r) => r.saleNo, sortable: true, filter: "text", lov: false },
   { key: "broker", label: "Broker", accessor: (r) => r.broker, sortable: true, filter: "select" },
-  { key: "dispatchDate", label: "Dispatched", accessor: (r) => r.dispatchDate ?? null, sortable: true },
-  { key: "saleDate", label: "Sale date", accessor: (r) => r.saleDate ?? null, sortable: true },
-  { key: "lotsCount", label: "Lots", accessor: (r) => r.lotsCount, sortable: true },
+  { key: "dispatchDate", label: "Dispatched", accessor: (r) => r.dispatchDate ?? null, sortable: true, lov: false, searchInput: "date" },
+  { key: "saleDate", label: "Sale date", accessor: (r) => r.saleDate ?? null, sortable: true, lov: false, searchInput: "date" },
+  { key: "lotsCount", label: "Lots", accessor: (r) => r.lotsCount, sortable: true, lov: false, searchInput: "number" },
   { key: "statusChips", label: "Lot statuses" },
-  { key: "soldLots", label: "Sold", accessor: (r) => r.soldLots, sortable: true },
-  { key: "reprintLots", label: "Re-print", accessor: (r) => r.reprintLots, sortable: true },
+  { key: "soldLots", label: "Sold", accessor: (r) => r.soldLots, sortable: true, lov: false, searchInput: "number" },
+  { key: "reprintLots", label: "Re-print", accessor: (r) => r.reprintLots, sortable: true, lov: false, searchInput: "number" },
   { key: "statusLabel", label: "Dispatch status", accessor: (r) => r.statusLabel, sortable: true, filter: "select" },
 ];
 
@@ -36,7 +36,7 @@ export function DispatchesInSaleTable({ rows }: { rows: DispatchInSaleRow[] }) {
   const visibleRows = controls.rows;
 
   return (
-    <div className="mt-3 overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
+    <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
       <ListSearchPanel columns={COLUMNS} controls={controls} />
       <table className="w-full text-sm">
         <thead>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { deleteMark, updateMark } from "../actions";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 
 export type MarkRow = { id: string; code: string; name: string; address: string | null };
 
@@ -70,10 +71,10 @@ export function MarksTable({ rows, isOwner }: { rows: MarkRow[]; isOwner: boolea
                         <button type="button" onClick={() => setEditingId(m.id)} className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-600">
                           Edit
                         </button>
-                        <form action={deleteMark.bind(null, m.id)} onSubmit={(event) => { if (!confirm("Delete this mark?")) event.preventDefault(); }}>
-                          <button className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
+                        <form action={deleteMark.bind(null, m.id)}>
+                          <ConfirmSubmitButton title="Delete mark?" description="This mark will be permanently removed. This cannot be undone." className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
                             Delete
-                          </button>
+                          </ConfirmSubmitButton>
                         </form>
                       </div>
                     )}

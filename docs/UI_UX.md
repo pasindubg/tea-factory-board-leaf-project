@@ -1,10 +1,112 @@
 # UI/UX Guidelines
 
+## Shared React UI Architecture
+
+- Pages and domain components compose shared primitives; they do not restyle
+  native controls independently. Use `AppButton` for buttons, `AppNavLink` for
+  application navigation, `AppDrawer` for assistants/drawers,
+  `ConfirmationDialog`/`ConfirmSubmitButton` for consequential actions, and the
+  shared list components in `list-controls.tsx` for lists.
+- Shared primitives own shape, spacing, focus, disabled, busy, dark-mode, and
+  feedback behavior. Call sites supply semantic variants (`primary`,
+  `secondary`, `danger`, or `ghost`) and domain content, not copied class strings.
+- Server components fetch and authorize data. Client components own transient UI
+  state such as selection, tabs, drawers, pending controls, and confirmation.
+  Server actions own mutations and revalidation. Keep those boundaries explicit.
+
+## Application Shell And Navigation
+
+- Every user action must acknowledge itself immediately. The shared dashboard
+  action-feedback layer reports navigation as `Opening…`, server/form actions as
+  `Working…`, setting changes as `Updating…`, and completed route changes as
+  `Page ready`. New buttons, links, popovers, and settings controls inherit
+  this behavior automatically; use `data-action-feedback-ignore` only for
+  decorative controls that do not perform an action.
+- Completed work and server notices appear as green bottom-right toasts; errors
+  appear as red bottom-right toasts. Do not use browser `alert` or `confirm`.
+  Destructive or consequential operations must use the shared in-app
+  `ConfirmationDialog` (or `ConfirmSubmitButton` for server-action forms), with
+  clear consequences and an explicit cancel choice.
+- Navigation additionally starts the shared animated gradient progress bar before
+  the route transition and keeps it visible until the destination is ready.
+  Use `startNavigationFeedback()` before `router.push`/`router.replace` calls;
+  regular Next.js links are detected automatically.
+- The clicked navigation link or button itself must carry the animated gradient
+  pending state while that route loads. The top-right notification is secondary
+  acknowledgement, not the only navigation-loading signal.
+
+- Use a Material 3-inspired visual language: tonal surfaces, rounded containers,
+  restrained elevation, clear focus rings, and touch targets of at least 44 px.
+- The main sidebar uses drill-in navigation, not nested dropdown accordions. Its
+  root level shows standalone destinations and handling sections. Selecting a
+  handling section replaces the sidebar list with only that section's entries and
+  a compact link back to `Overview`.
+- Every non-overview dashboard page shows a top-left breadcrumb using real links:
+  `Overview / Handling section / Current page`. Do not add a second page-specific
+  back link when the shared breadcrumb already represents that path.
+- In a drill-in sidebar, keep the handling-section name compact and subordinate to
+  the navigation rows. Do not add generic labels such as `SECTION`; destination
+  rows should be the strongest elements and use filled hover/active surfaces.
+- Navigation destinations must use Next.js `Link` elements. Buttons are reserved
+  for changing local UI state, such as entering a navigation section or opening a
+  settings panel.
+- Keep appearance controls in a clearly labelled `Settings` menu near the bottom
+  of the application shell. Offer System, Light, and Dark modes explicitly; leave
+  room in this menu for future user preferences.
+- Navigation and settings must remain usable at mobile widths. The sidebar becomes
+  a modal drawer with a visible menu trigger and dismissible backdrop.
+- Shared shell behavior belongs in `dashboard-shell.tsx`, `sidebar-nav.tsx`, and
+  shared components. Do not create page-specific sidebars or theme controls.
+
+## Dashboard Visuals
+
+- Dashboard charts must use theme-aware colors derived from `resolvedTheme`, not
+  the configured `theme` value, because `theme="system"` can resolve to dark mode.
+- Charts need a legible zero-data state; never leave an empty plotting rectangle
+  that looks broken. Preserve axes for context and overlay a short explanation.
+- Prefer restrained area/line charts for short operational trends, with subtle
+  grid lines, units on numeric axes, rounded tooltips, and accessible contrast in
+  both light and dark themes.
+
 ## Lists And Search
+
+The shared list framework in `apps/web/components/list-controls.tsx` is the
+contract for every operational list, including tables, record selectors, and
+side panels. Define columns once, declare `selectionMode` (`"multi"` or
+`"single"`), and expose actions through `ListCommandToolbar` rather than
+duplicating row-specific controls. Use `ListSurface` for bordered table
+surfaces and `ListSidePanel` for persistent selectors. Rows must be selectable
+from any non-control area of the row and expose `aria-selected`; keyboard
+Enter/Space should perform the same selection. A list marked non-editable may
+still use the same search, sorting, and selection primitives without exposing
+edit commands.
 
 List pages and list sections must use one consistent search pattern.
 
 - Use `useListControls`, `SortButton`, and `ListSearchPanel` from `apps/web/components/list-controls.tsx` for sortable/searchable tables.
+- `ListSearchPanel` shows one always-visible LOV select for every column with an
+  accessor. Omitting the accessor is the explicit way to make a list attribute
+  non-searchable. Do not use a Google-style general text box for ordinary list
+  filtering. Advanced query syntax stays hidden in a separate `Advanced`
+  disclosure until explicitly selected.
+- Advanced/search dialogs inside table surfaces must use fixed viewport positioning,
+  a viewport-based maximum height, and their own vertical scrolling. Never position
+  them inside an `overflow-x-auto` list container where they will be clipped. Use
+  the native Popover API for light-dismiss behavior when the dialog is opened from
+  a list Search button.
+- Keep the search surface collapsed by default. LOV selections are drafts until
+  the user selects the explicit `Search` action; only then update the visible rows.
+- Editable lists use a selection toolbar above the list. Multi-select lists show a
+  leading checkbox column and top-level Edit plus domain actions such as Deactivate
+  and Reactivate; do not repeat text actions on every row. Edit requires exactly
+  one selected record, while compatible state actions may apply to many records.
+- A list explicitly configured with `selectionMode: "single"` omits the checkbox
+  column and bulk toolbar; it exposes the edit action only for its selected/current
+  row. Multi-select is the default for editable operational lists.
+- When two or more related lists belong to the same work surface, use
+  `TabbedListSurface` with a top `tablist` instead of stacking full tables. Each
+  tab retains its own list search, selection, and actions; arrow keys plus
+  Home/End must navigate the tab bar.
 - Do not add inline filter rows inside `<thead>`. Put the top-right `Search` button/panel above the table inside the same bordered table surface.
 - The search panel must expose all meaningful list columns, including dates and numeric columns. Use `searchInput: "date"` for date columns and `"number"` for numeric columns when useful.
 - Keep advanced search enabled through `ListSearchPanel`; do not build one-off query boxes per page.
@@ -34,6 +136,14 @@ Detail pages are operational work surfaces. Keep the user anchored on the record
 - Lifecycle cards should show useful operational metrics instead of decorative step numbers: issue count, re-print count, sold/total, prompt date, or pending document state.
 - Keep field editing inside the main details group. Use a compact edit icon in the group header; avoid detached page-level edit buttons.
 - Move dense record metadata into a compact side panel when the main page task is table-heavy. The main column should carry the active work surface; the side panel should carry facts, actions, and owner-only edit controls.
+- Dashboard content is top-left oriented and fills the available viewport width;
+  do not center it inside a fixed maximum-width wrapper. Responsive grids should
+  add usable columns as space grows while preserving `minmax(0, 1fr)` for dense
+  operational tables.
+- Persistent selector/record side panels use the page padding as their outer
+  breathing room, float with rounded corners and subtle elevation, and stretch
+  through the available viewport height on desktop without touching the bottom.
+  Their header stays fixed within the panel and only the list body scrolls.
 - Avoid navigation for supporting workflows that belong to the current record. Use an in-page side drawer or modal for uploads, confirmations, and secondary tools, then navigate only when a review screen is the next required step.
 - Replace text links that trigger a workflow with buttons. A click should produce visible confirmation, such as an opened drawer, dialog, or inline panel, before any file upload or state-changing action.
 - Side drawers should be scoped to the current record, show the record identity, and contain the relevant actions only. Do not send the user to a generic overview when the task can be completed in context. Upload drawers should use dense one-line rows where possible: document name/purpose on the left, choose-file and upload buttons on the right.

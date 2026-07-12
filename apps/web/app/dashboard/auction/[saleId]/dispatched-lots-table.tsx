@@ -4,9 +4,11 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 import { formatFourDigitNo } from "../sale-number";
 import { LOT_STATES } from "../lot-states";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { showAppToast } from "@/components/action-feedback";
 
 const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
@@ -18,6 +20,13 @@ const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "net_wt", label: "Net kg", accessor: (r) => Number(r.net_wt ?? 0), sortable: true },
   { key: "state", label: "State", accessor: (r) => r.state ?? null, sortable: true, filter: "select", filterOptions: LOT_STATES.map((s) => ({ value: s, label: s })) },
 ];
+
+const LIST: ListDefinition<LotRow> = {
+  columns: COLUMNS,
+  selectionMode: "single",
+  editable: true,
+  commands: [{ id: "edit", label: "Edit selected lot", requiresSelection: true }],
+};
 
 export function DispatchedLotsTable({
   rows,
@@ -37,8 +46,11 @@ export function DispatchedLotsTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reprintId, setReprintId] = useState<string | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const controls = useListControls(rows, COLUMNS);
+  const [lotToDelete, setLotToDelete] = useState<{ id: string; cascade: boolean } | null>(null);
+  const controls = useListControls(rows, LIST.columns);
+  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
   const visibleRows = controls.rows;
+  const selectedLot = rows.find((row) => row.id === selection.selectedId) ?? null;
 
   useEffect(() => {
     setEditingId(null);
@@ -46,14 +58,47 @@ export function DispatchedLotsTable({
     setPendingIds(new Set());
   }, [rows, canEdit]);
 
+  async function confirmLotDelete() {
+    if (!lotToDelete) return;
+    const id = lotToDelete.id;
+    setPendingIds((prev) => new Set(prev).add(id));
+    try {
+      await deleteLot(id, saleId);
+      setRows((curr) => curr.filter((row) => row.id !== id));
+      setLotToDelete(null);
+      showAppToast("Lot deleted.");
+    } catch {
+      showAppToast("Could not delete the lot. Please try again.", "error");
+    } finally {
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface>
+      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount}>
+        {canEdit && isOwner && (
+          <button
+            type="button"
+            disabled={!selectedLot || pendingIds.has(selectedLot.id)}
+            onClick={() => selectedLot && setEditingId(selectedLot.id)}
+            className="inline-flex min-h-9 items-center rounded-full bg-green-700 px-4 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-green-600 dark:hover:bg-green-500"
+          >
+            Edit selected lot
+          </button>
+        )}
+      </ListCommandToolbar>
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {COLUMNS.map((col) => (
+            <ListSelectionHeader mode={LIST.selectionMode ?? "single"} scope="dispatch-lots" />
+            {LIST.columns.map((col) => (
               <th key={col.key} className={`px-3 py-3 ${["bags", "kg_per_bag", "sample_allowance", "net_wt"].includes(col.key) ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
@@ -80,7 +125,11 @@ export function DispatchedLotsTable({
             const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
 
             return (
-              <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0 align-top">
+              <tr
+                key={l.id}
+                {...selection.rowProps(l.id)}
+                className={`cursor-pointer border-b border-stone-100 dark:border-stone-800 last:border-0 align-top ${selection.isSelected(l.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+              >
                 {isEditing ? (
                   <EditRow
                     lot={l}
@@ -102,6 +151,15 @@ export function DispatchedLotsTable({
                   />
                 ) : (
                   <>
+                    <ListSelectionCell
+                      mode={LIST.selectionMode ?? "single"}
+                      scope="dispatch-lots"
+                      name="selected_dispatch_lot"
+                      id={l.id}
+                      label={`lot ${invoiceLabel || l.lot_no || l.id}`}
+                      checked={selection.isSelected(l.id)}
+                      onChange={() => selection.select(l.id)}
+                    />
                     <td className="px-3 py-2 font-medium">
                       {invoiceLabel}
                       {invoices.length > 1 && (
@@ -163,23 +221,7 @@ export function DispatchedLotsTable({
                           <button
                             type="button"
                             disabled={pendingIds.has(l.id)}
-                            onClick={async () => {
-                              const msg = removable
-                                ? "Delete this lot and all its invoice records? This cannot be undone."
-                                : "Delete this lot AND its acknowledgement/valuation/sale records? This cannot be undone.";
-                              if (!confirm(msg)) return;
-                              setPendingIds((prev) => new Set(prev).add(l.id));
-                              try {
-                                await deleteLot(l.id, saleId);
-                                setRows((curr) => curr.filter((row) => row.id !== l.id));
-                              } finally {
-                                setPendingIds((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(l.id);
-                                  return next;
-                                });
-                              }
-                            }}
+                            onClick={() => setLotToDelete({ id: l.id, cascade: !removable })}
                             className="rounded p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-40"
                             title="Delete"
                           >
@@ -250,7 +292,17 @@ export function DispatchedLotsTable({
         </tbody>
       </table>
       </div>
-    </div>
+      <ConfirmationDialog
+        open={lotToDelete !== null}
+        title="Delete lot?"
+        description={lotToDelete?.cascade ? "This will permanently remove the lot and its acknowledgement, valuation, and sale records. This cannot be undone." : "This will permanently remove the lot and its invoice records. This cannot be undone."}
+        confirmLabel="Delete lot"
+        destructive
+        busy={lotToDelete ? pendingIds.has(lotToDelete.id) : false}
+        onCancel={() => setLotToDelete(null)}
+        onConfirm={confirmLotDelete}
+      />
+    </ListSurface>
   );
 }
 

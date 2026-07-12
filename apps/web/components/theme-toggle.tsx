@@ -15,7 +15,7 @@ export function ThemeToggle() {
   if (!mounted) {
     return (
       <button
-        className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 dark:border-stone-600 dark:text-stone-400"
+        className="min-h-11 w-full rounded-full border border-stone-300 px-4 py-2 text-sm text-stone-600 dark:border-stone-600 dark:text-stone-400"
         disabled
       >
         &nbsp;
@@ -28,7 +28,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={() => setTheme(isDark ? "light" : "dark")}
-      className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-600 dark:text-stone-400 dark:hover:bg-stone-800"
+      className="min-h-11 w-full rounded-full border border-stone-300 px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
       aria-label="Toggle theme"
     >
       {isDark ? "☀️ Light mode" : "🌙 Dark mode"}

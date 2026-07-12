@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 const inputClass =
-  "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
+  "mt-2 min-h-12 w-full rounded-xl border border-stone-300 bg-white/80 px-4 py-3 text-sm shadow-inner outline-none transition focus:border-green-700 focus:ring-2 focus:ring-green-700/20 dark:border-stone-600 dark:bg-stone-900/80 dark:focus:border-green-400 dark:focus:ring-green-400/20";
 
 function LoginForm() {
   const router = useRouter();
@@ -111,19 +111,22 @@ function LoginForm() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-sm rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 shadow-sm">
-        <h1 className="text-xl font-semibold">Tea Factory Ops</h1>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f8faf3] p-4 dark:bg-[#10140e]">
+      <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-green-200/50 blur-3xl dark:bg-green-900/30" />
+      <div className="pointer-events-none absolute -bottom-40 -left-24 h-96 w-96 rounded-full bg-lime-100/70 blur-3xl dark:bg-lime-950/30" />
+      <div className="relative w-full max-w-md rounded-[2rem] border border-stone-200/80 bg-white/90 p-8 shadow-[0_24px_70px_rgba(25,29,23,0.12)] backdrop-blur-xl dark:border-stone-700/80 dark:bg-stone-900/90 sm:p-10">
+        <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-green-700 text-xl font-bold text-white shadow-lg shadow-green-800/20 dark:bg-green-500 dark:text-green-950">T</div>
+        <h1 className="text-2xl font-semibold tracking-tight">Tea Factory Ops</h1>
         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">Sign in to your factory dashboard</p>
 
         {/* Mode tabs */}
-        <div className="mt-5 flex rounded-lg border border-stone-200 dark:border-stone-700 p-0.5 text-sm">
+        <div className="mt-6 flex rounded-2xl bg-stone-100 p-1.5 text-sm dark:bg-stone-800">
           <button
             type="button"
             onClick={() => switchMode("otp")}
-            className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
+            className={`min-h-10 flex-1 rounded-xl px-3 py-2 font-medium transition-colors ${
               mode === "otp"
-                ? "bg-green-700 dark:bg-green-600 text-white"
+                ? "bg-white text-green-800 shadow-sm dark:bg-stone-700 dark:text-green-300"
                 : "text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
             }`}
           >
@@ -132,9 +135,9 @@ function LoginForm() {
           <button
             type="button"
             onClick={() => switchMode("password")}
-            className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
+            className={`min-h-10 flex-1 rounded-xl px-3 py-2 font-medium transition-colors ${
               mode === "password"
-                ? "bg-green-700 dark:bg-green-600 text-white"
+                ? "bg-white text-green-800 shadow-sm dark:bg-stone-700 dark:text-green-300"
                 : "text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
             }`}
           >
@@ -143,7 +146,7 @@ function LoginForm() {
         </div>
 
         {error && (
-          <p className="mt-4 rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">
+          <p className="mt-4 rounded-2xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950 dark:text-red-300" role="alert">
             {error}
           </p>
         )}
@@ -165,7 +168,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
+              className="min-h-12 w-full rounded-full bg-green-700 px-5 py-3 text-sm font-semibold text-white shadow-md shadow-green-800/15 hover:bg-green-800 disabled:opacity-50 dark:bg-green-500 dark:text-green-950 dark:hover:bg-green-400"
             >
               {busy ? "Sending…" : "Send sign-in code"}
             </button>
@@ -199,7 +202,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
+              className="min-h-12 w-full rounded-full bg-green-700 px-5 py-3 text-sm font-semibold text-white shadow-md shadow-green-800/15 hover:bg-green-800 disabled:opacity-50 dark:bg-green-500 dark:text-green-950 dark:hover:bg-green-400"
             >
               {busy ? "Verifying…" : "Sign in"}
             </button>
@@ -238,7 +241,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={busy}
-              className="w-full rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
+              className="min-h-12 w-full rounded-full bg-green-700 px-5 py-3 text-sm font-semibold text-white shadow-md shadow-green-800/15 hover:bg-green-800 disabled:opacity-50 dark:bg-green-500 dark:text-green-950 dark:hover:bg-green-400"
             >
               {busy ? "Signing in…" : "Sign in"}
             </button>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import { updateSaleLotsInline } from "../../actions";
 import { money } from "../../format";
@@ -33,22 +33,22 @@ export type SaleLineRow = {
 };
 
 const COLUMNS: ColumnDef<SaleLineRow>[] = [
-  { key: "dispatchSaleNo", label: "Dispatch no.", accessor: (r) => r.dispatchSaleNo ?? null, sortable: true, filter: "text" },
-  { key: "lotNo", label: "Lot no.", accessor: (r) => r.lotNo ?? null, sortable: true, filter: "text" },
-  { key: "invoiceNo", label: "Invoice(s)", accessor: (r) => r.invoiceNo, sortable: true, filter: "text" },
+  { key: "dispatchSaleNo", label: "Dispatch no.", accessor: (r) => r.dispatchSaleNo ?? null, sortable: true, filter: "text", lov: false },
+  { key: "lotNo", label: "Lot no.", accessor: (r) => r.lotNo ?? null, sortable: true, filter: "text", lov: false },
+  { key: "invoiceNo", label: "Invoice(s)", accessor: (r) => r.invoiceNo, sortable: true, filter: "text", lov: false },
   { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
   { key: "stateLabel", label: "Status", accessor: (r) => r.stateLabel, sortable: true, filter: "select" },
   { key: "buyerName", label: "Buyer", accessor: (r) => r.buyerName ?? null, sortable: true, filter: "select" },
-  { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true },
-  { key: "kgPerBag", label: "kg/bag", accessor: (r) => r.kgPerBag ?? null, sortable: true },
-  { key: "sampleKg", label: "Total sample kg", accessor: (r) => r.sampleKg ?? null, sortable: true },
-  { key: "netWt", label: "Net kg", accessor: (r) => r.netWt, sortable: true },
-  { key: "pricePerKg", label: "Price/kg", accessor: (r) => r.pricePerKg ?? null, sortable: true },
-  { key: "proceeds", label: "Proceeds", accessor: (r) => r.proceeds ?? null, sortable: true },
-  { key: "vatAmount", label: "VAT", accessor: (r) => r.vatAmount ?? null, sortable: true },
+  { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true, lov: false, searchInput: "number" },
+  { key: "kgPerBag", label: "kg/bag", accessor: (r) => r.kgPerBag ?? null, sortable: true, lov: false, searchInput: "number" },
+  { key: "sampleKg", label: "Total sample kg", accessor: (r) => r.sampleKg ?? null, sortable: true, lov: false, searchInput: "number" },
+  { key: "netWt", label: "Net kg", accessor: (r) => r.netWt, sortable: true, lov: false, searchInput: "number" },
+  { key: "pricePerKg", label: "Price/kg", accessor: (r) => r.pricePerKg ?? null, sortable: true, lov: false, searchInput: "number" },
+  { key: "proceeds", label: "Proceeds", accessor: (r) => r.proceeds ?? null, sortable: true, lov: false, searchInput: "number" },
+  { key: "vatAmount", label: "VAT", accessor: (r) => r.vatAmount ?? null, sortable: true, lov: false, searchInput: "number" },
   { key: "onGuarantee", label: "Guarantee", accessor: (r) => (r.onGuarantee == null ? "-" : r.onGuarantee ? "Guarantee" : "Cash"), sortable: true, filter: "select", filterOptions: [{ value: "Guarantee", label: "Guarantee" }, { value: "Cash", label: "Cash" }, { value: "-", label: "Not sold" }] },
   { key: "reprint", label: "Re-print", accessor: (r) => (r.reprint ? "Yes" : "No"), sortable: true, filter: "select", filterOptions: [{ value: "Yes", label: "Yes" }, { value: "No", label: "No" }] },
-  { key: "reprintCount", label: "Re-print count", accessor: (r) => r.reprintCount, sortable: true },
+  { key: "reprintCount", label: "Re-print count", accessor: (r) => r.reprintCount, sortable: true, lov: false, searchInput: "number" },
 ];
 
 const RIGHT_ALIGNED = new Set(["bags", "kgPerBag", "sampleKg", "netWt", "pricePerKg", "proceeds", "vatAmount", "reprintCount"]);
@@ -94,6 +94,17 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
       }
       return next;
     });
+  }
+
+  function handleRowSelection(event: MouseEvent<HTMLTableRowElement>, id: string) {
+    if ((event.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+    toggleSelected(id);
+  }
+
+  function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, id: string) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleSelected(id);
   }
 
   function validateSoldRows(formData: FormData) {
@@ -174,7 +185,6 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
                   onChange={toggleVisible}
                   disabled={invoiceEditingLocked}
                   aria-label="Select visible lots"
-                  className="h-4 w-4 rounded border-stone-300 text-green-700 focus:ring-green-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:bg-stone-900"
                 />
               </th>
               {COLUMNS.map((col) => (
@@ -188,7 +198,14 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
             {visibleRows.map((line) => {
               const isEditing = editing && selectedIds.has(line.id);
               return (
-                <tr key={line.id} className={`border-b border-stone-100 last:border-0 dark:border-stone-800 ${selectedIds.has(line.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
+                <tr
+                  key={line.id}
+                  tabIndex={invoiceEditingLocked ? -1 : 0}
+                  aria-selected={selectedIds.has(line.id)}
+                  onClick={(event) => handleRowSelection(event, line.id)}
+                  onKeyDown={(event) => handleRowKeyDown(event, line.id)}
+                  className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selectedIds.has(line.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                >
                   <td className="px-4 py-2">
                     <input
                       type="checkbox"
@@ -196,7 +213,6 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
                       onChange={() => toggleSelected(line.id)}
                       disabled={invoiceEditingLocked}
                       aria-label={`Select invoice ${line.invoiceNo || line.id}`}
-                      className="h-4 w-4 rounded border-stone-300 text-green-700 focus:ring-green-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:bg-stone-900"
                     />
                     {isEditing && <input type="hidden" name="lot_id" value={line.id} />}
                   </td>

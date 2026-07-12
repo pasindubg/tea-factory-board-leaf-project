@@ -4,7 +4,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { ROLE_LABELS } from "@/lib/roles";
 import { setUserActive, resetUserPassword } from "./actions";
 import { RemoveUserButton } from "./remove-user-button";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, useListControls, SortButton, ListSearchPanel, ListSelectionCell, ListSelectionHeader, useListSelection, type ColumnDef, type ListSelectionMode } from "@/components/list-controls";
 
 const roleBadge: Record<string, string> = {
   owner:      "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
@@ -27,23 +27,31 @@ export type UserRow = {
 };
 
 const COLUMNS: ColumnDef<UserRow>[] = [
-  { key: "name", label: "Name", accessor: (r) => r.name, sortable: true, filter: "text" },
-  { key: "email", label: "Email", accessor: (r) => r.email, sortable: true, filter: "text" },
-  { key: "username", label: "Username", accessor: (r) => r.username ?? null, sortable: true, filter: "text" },
+  { key: "name", label: "Name", accessor: (r) => r.name, sortable: true, filter: "text", lov: false },
+  { key: "email", label: "Email", accessor: (r) => r.email, sortable: true, filter: "text", lov: false },
+  { key: "username", label: "Username", accessor: (r) => r.username ?? null, sortable: true, filter: "text", lov: false },
   { key: "role", label: "Role", accessor: (r) => r.role, sortable: true, filter: "select", filterOptions: Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label })) },
   { key: "active", label: "Status", accessor: (r) => (r.active ? "active" : "inactive"), sortable: true, filter: "select", filterOptions: [{ value: "active", label: "active" }, { value: "inactive", label: "inactive" }] },
 ];
+// Credential/reset/remove operations are deliberately single-record actions.
+const SELECTION_MODE: ListSelectionMode = "single";
 
 export function UsersTable({ rows, currentUserId, isOwner }: { rows: UserRow[]; currentUserId: string; isOwner: boolean }) {
   const controls = useListControls(rows, COLUMNS);
   const visibleRows = controls.rows;
+  const selection = useListSelection(rows, { mode: SELECTION_MODE, getId: (row) => row.id });
+  const selectedUser = rows.find((row) => row.id === selection.selectedId) ?? null;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+    <div data-selection-mode={SELECTION_MODE} className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+      <ListCommandToolbar mode={SELECTION_MODE} count={selection.selectedCount}>
+        {selectedUser && <span className="text-sm font-semibold text-green-800 dark:text-green-300">{selectedUser.name}</span>}
+      </ListCommandToolbar>
       <ListSearchPanel columns={COLUMNS} controls={controls} />
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+            <ListSelectionHeader mode={SELECTION_MODE} scope="users" />
             {COLUMNS.map((col) => (
               <th key={col.key} className="px-4 py-3">
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
@@ -59,7 +67,8 @@ export function UsersTable({ rows, currentUserId, isOwner }: { rows: UserRow[]; 
             const canAct = !isSelf && (isOwner || !isOwnerRow);
 
             return (
-              <tr key={u.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
+              <tr key={u.id} {...selection.rowProps(u.id)} className={`cursor-pointer border-b border-stone-100 dark:border-stone-800 last:border-0 ${selection.isSelected(u.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
+                <ListSelectionCell mode={SELECTION_MODE} scope="users" name="selected_user" id={u.id} label={u.name} checked={selection.isSelected(u.id)} onChange={() => selection.select(u.id)} />
                 <td className="px-4 py-3 font-medium">
                   {u.name}
                   {isSelf && <span className="ml-2 text-xs font-normal text-stone-400 dark:text-stone-500">(you)</span>}
@@ -129,14 +138,14 @@ export function UsersTable({ rows, currentUserId, isOwner }: { rows: UserRow[]; 
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={6} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
+              <td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                 No users match these filters.
               </td>
             </tr>
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={6} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
+              <td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
                 No users yet.
               </td>
             </tr>

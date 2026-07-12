@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ListSearchPanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
+import { ListSearchPanel, ListSidePanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
 import { saleNoKey, saleNoMatches } from "../../sale-number";
 
 export type SaleSideListRow = {
@@ -23,7 +23,7 @@ const COLUMNS: ColumnDef<SaleSideListRow>[] = [
 export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]; currentSaleNo: string }) {
   const controls = useListControls(rows, COLUMNS);
   return (
-    <aside className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)]">
+    <ListSidePanel className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col">
       <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Sales</h3>
@@ -31,7 +31,7 @@ export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]
         </div>
       </div>
       <ListSearchPanel columns={COLUMNS} controls={controls} label="Search" variant="popover" />
-      <div className="max-h-[28rem] overflow-y-auto xl:max-h-[calc(100vh-12rem)]">
+      <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">
         {controls.rows.map((sale) => {
           const active = saleNoMatches(sale.saleNo, currentSaleNo);
           const href = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey(sale.saleNo) || sale.saleNo)}`;
@@ -61,6 +61,6 @@ export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]
           <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">No sales match.</p>
         )}
       </div>
-    </aside>
+    </ListSidePanel>
   );
 }

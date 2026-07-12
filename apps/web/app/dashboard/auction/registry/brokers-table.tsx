@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { deleteBroker, updateBroker } from "../actions";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 
 export type BrokerRow = { id: string; name: string; vat_no: string | null; address: string | null };
 
@@ -70,10 +71,10 @@ export function BrokersTable({ rows, isOwner }: { rows: BrokerRow[]; isOwner: bo
                         <button type="button" onClick={() => setEditingId(b.id)} className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-600">
                           Edit
                         </button>
-                        <form action={deleteBroker.bind(null, b.id)} onSubmit={(event) => { if (!confirm("Delete this broker?")) event.preventDefault(); }}>
-                          <button className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
+                        <form action={deleteBroker.bind(null, b.id)}>
+                          <ConfirmSubmitButton title="Delete broker?" description="This broker will be permanently removed. This cannot be undone." className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
                             Delete
-                          </button>
+                          </ConfirmSubmitButton>
                         </form>
                       </div>
                     )}

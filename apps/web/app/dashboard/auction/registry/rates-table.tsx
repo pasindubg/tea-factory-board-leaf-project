@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
 import { deleteBrokerRate, updateBrokerRate } from "../actions";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 
 export type RateRow = {
   id: string;
@@ -110,10 +111,10 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
                           <button type="button" onClick={() => setEditingId(r.id)} className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-600">
                             Edit
                           </button>
-                          <form action={deleteBrokerRate.bind(null, r.id)} onSubmit={(event) => { if (!confirm("Delete this rate card?")) event.preventDefault(); }}>
-                            <button className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
+                          <form action={deleteBrokerRate.bind(null, r.id)}>
+                            <ConfirmSubmitButton title="Delete rate card?" description="This rate card will be permanently removed. This cannot be undone." className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
                               Delete
-                            </button>
+                            </ConfirmSubmitButton>
                           </form>
                         </div>
                       </td>
