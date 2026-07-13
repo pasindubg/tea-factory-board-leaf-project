@@ -125,7 +125,7 @@ Auction identifiers are similar but not interchangeable.
 - **Dispatch no.** uses four digits: `0001`, `0004`, `0123`.
 - **Invoice no.** and **lot no.** use four digits when numeric: `0951`, `0058`.
 - **Auction sale no. / target sale no.** uses three digits: `019`, `023`.
-- Code should use `formatFourDigitNo` only for dispatch, invoice, and lot numbers. Use `formatSaleNo` for `target_sale_no` and sales overview/detail display.
+- Code should use `formatFourDigitNo` for dispatch, invoice, and lot numbers, and `formatSaleNo` for `target_sale_no` and sales overview/detail display. Both functions render their numeric values as four digits.
 - Multiple brokers can participate in the same auction sale number. Any sale-level overview grouped by sale number must show all participating brokers, not a single overwritten broker.
 
 ## Detail Pages

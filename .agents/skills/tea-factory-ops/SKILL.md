@@ -170,7 +170,7 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - Auction number formatting:
   - dispatch numbers are 4 digits (`0004`);
   - invoice and lot numbers are 4 digits when numeric (`0951`);
-  - auction sale / target sale numbers are 3 digits (`019`);
+  - auction sale / target sale numbers are 4 digits (`0019`);
   - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
     invoice, and lot numbers.
 - Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.

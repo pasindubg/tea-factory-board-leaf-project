@@ -152,7 +152,7 @@ export function DispatchDetailEditor({
   }
 
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
       <DispatchSideList
         rows={dispatches}
         currentId={sale.id}
@@ -342,7 +342,7 @@ function DispatchSideList({
               </div>
               <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.broker}</p>
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {dispatch.target_sale_no ?? "—"}</span>
+                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
                 <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
               </div>
             </Link>

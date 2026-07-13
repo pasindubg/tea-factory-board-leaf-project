@@ -272,7 +272,7 @@ export function DispatchesTable({
                       className="w-24 rounded border border-stone-300 px-2 py-1 text-xs outline-none ring-0 dark:border-stone-600 dark:bg-stone-800"
                     />
                   ) : (
-                    s.target_sale_no ?? <span className="text-stone-300 dark:text-stone-600">—</span>
+                    formatSaleNo(s.target_sale_no) || <span className="text-stone-300 dark:text-stone-600">—</span>
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.dispatch_date ?? "—"}</td>

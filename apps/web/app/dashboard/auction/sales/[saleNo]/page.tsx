@@ -324,7 +324,7 @@ export default async function SaleDetailPage({
   });
 
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
       <SalesSideList rows={saleListRows} currentSaleNo={displaySaleNo} />
       <div className="min-w-0 space-y-6">
       <div>

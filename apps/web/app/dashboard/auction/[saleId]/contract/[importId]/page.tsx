@@ -9,7 +9,7 @@ import {
 } from "@tea/api";
 import { confirmContract, rejectImport } from "../../../actions";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
-import { formatFourDigitNo, saleNoKey } from "../../../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
 import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
 export default async function ContractReviewPage({
@@ -115,7 +115,7 @@ export default async function ContractReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {(sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null) ?? ""}
+          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
