@@ -3,8 +3,9 @@ import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { SubmitButton } from "@/components/submit-button";
 import { assignTier } from "../actions";
+import { TierAssignmentsTable, type TierAssignmentRow } from "./tier-assignments-table";
 
-const input = "mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-green-600 focus:outline-none";
+const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 type Supplier = { id: string; name: string; area: string | null };
@@ -34,19 +35,31 @@ export default async function TiersPage({
   const current = new Map<string, Assignment>();
   for (const a of (assignments ?? []) as unknown as Assignment[]) current.set(a.supplier_id, a);
 
+  const tableRows: TierAssignmentRow[] = supplierRows.map((sp) => {
+    const a = current.get(sp.id);
+    return {
+      id: sp.id,
+      supplierName: sp.name,
+      area: sp.area,
+      tierName: a?.quality_tiers?.name ?? null,
+      effectiveFrom: a?.effective_from ?? null,
+      source: a?.source ?? null,
+    };
+  });
+
   return (
     <div className="space-y-6">
-      {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
-      {notice && <p className="rounded-md bg-green-50 p-3 text-sm text-green-800" role="status">{notice}</p>}
+      {error && <p className="rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">{error}</p>}
+      {notice && <p className="rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-800 dark:text-green-400" role="status">{notice}</p>}
 
       {tierRows.length === 0 ? (
-        <p className="rounded-md bg-amber-50 p-4 text-sm text-amber-800">
+        <p className="rounded-md bg-amber-50 dark:bg-amber-950 p-4 text-sm text-amber-800 dark:text-amber-400">
           No active quality tiers yet. Add them under <Link href="/dashboard/payments/settings" className="underline">Settings</Link> first.
         </p>
       ) : (
-        <section className="rounded-xl border border-stone-200 bg-white p-6">
-          <h2 className="text-sm font-semibold text-stone-800">Assign a supplier to a tier</h2>
-          <p className="mt-1 text-sm text-stone-500">
+        <section className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-6">
+          <h2 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Assign a supplier to a tier</h2>
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
             Effective-dated, so it only affects weighings from that date forward. Assigning closes the supplier&apos;s
             previous tier automatically. (M7/M8 will add evidence-based auto-scoring; for now this is your call.)
           </p>
@@ -77,43 +90,14 @@ export default async function TiersPage({
               Note
               <input name="note" placeholder="optional" className={`${input} w-44`} />
             </label>
-            <SubmitButton pendingText="Assigning…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">
+            <SubmitButton pendingText="Assigning…" className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700">
               Assign
             </SubmitButton>
           </form>
         </section>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3">Area</th>
-              <th className="px-4 py-3">Current tier</th>
-              <th className="px-4 py-3">Since</th>
-              <th className="px-4 py-3">Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            {supplierRows.map((sp) => {
-              const a = current.get(sp.id);
-              return (
-                <tr key={sp.id} className="border-b border-stone-100 last:border-0">
-                  <td className="px-4 py-3 font-medium">{sp.name}</td>
-                  <td className="px-4 py-3 text-stone-500">{sp.area ?? "—"}</td>
-                  <td className="px-4 py-3">{a?.quality_tiers?.name ?? <span className="text-stone-400">Standard (none)</span>}</td>
-                  <td className="px-4 py-3 text-stone-500">{a?.effective_from ?? "—"}</td>
-                  <td className="px-4 py-3 text-stone-500">{a?.source ?? "—"}</td>
-                </tr>
-              );
-            })}
-            {supplierRows.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-stone-400">No active suppliers.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <TierAssignmentsTable rows={tableRows} />
     </div>
   );
 }

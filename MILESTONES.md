@@ -111,6 +111,156 @@ rather than full tRPC transport (App Router idiom; engine stays testable).
 a mid-month tier change produce hand-calculated totals to the cent. Run a real
 month in parallel with the factory's books and reconcile.
 
+---
+
+# Phase 1 (re-sequenced June 2026) — Auction & Settlement is the new wedge
+
+> **Auction-first pivot (June 2026, customer zero).** The factory already runs
+> leaf collection, supplier records and payments on an existing system, but has
+> **no system at all** for the Colombo auction flow — today it's broker PDFs
+> (Acknowledgement, Valuation, Sellers Contract) landing in email plus a bank
+> statement CSV, reconciled by hand. So the **auction & settlement flow ships
+> first (A1–A3)** as the new wedge, with **accounting + bank/cheque reconciliation
+> as Priority 2 (A4)**. The previously-planned ERP-domain milestones
+> (production/out-turn, sifting & grades, lots/deliveries, accounting close,
+> deploy) are **deferred to M7–M11** and built when we move to replace the
+> factory's existing leaf-collection system, once the auction product is stable
+> and validated. Phase 2 marketplace is unchanged in intent.
+>
+> Specified against real customer data — Sale **2026-023**, sold 17 Jun 2026,
+> broker **BPML Produce Marketing**, marks **MF1530 KUMUDU / MF1530A ITTAPANA**.
+
+The flow: **factory invoice → dispatch to warehouse → broker acknowledgement &
+cataloguing → valuation → auction sale (VAT paid up-front, or deferred on a bank
+guarantee) → account-sales settlement → cash in the bank.** Four reconciliations
+are the product:
+1. **Invoice ↔ Acknowledgement** — every invoiced lot is catalogued (matching net
+   weight) or flagged shutout/violation (stock left at the warehouse, rolls to the
+   next sale).
+2. **Valuation ↔ Sale** — actual price/kg vs the broker's valuation range, per lot
+   and per grade (Sale 023: valued avg 1,518.35 → sold 1,656.70, +9.1%).
+3. **VAT split & remittance** — per sold lot, VAT (18% of proceeds) is either
+   received in cash up-front (`Bank Guarantee = NO`) or deferred on a bank
+   guarantee (`Bank Guarantee = YES`). Track cash-vs-guaranteed balance, guarantee
+   realisation, and net VAT payable to govt (output VAT − input VAT incl. the
+   broker's VAT on charges). Sale 023: 885,672 total VAT; 166,860 on guarantee
+   (lots 0481, 0670); 718,812 cash.
+4. **Settlement ↔ Bank** — broker pays Total Net Proceeds on the prompt date
+   (Sale 023: 6,032,945.83 due 24 Jun across both contracts); match it to a bank
+   credit from the CSV.
+
+Ingestion: the three broker documents arrive as **email PDFs with a clean text
+layer** (parse directly, no OCR); the bank statement is a **CSV** downloaded from
+the factory's bank. All ingestion uses the same **parse → staging table → review
+screen → confirm** pattern so a mis-parse never writes silently. The full feature
+spec — state machine, data model, ingestion design, contract math, and the four
+reconciliations worked to the cent — lives in **[docs/AUCTION.md](docs/AUCTION.md)**.
+
+## A1 — Auction intake & cataloguing ✅ done & verified  (entitlement `auction`)
+Foundations + reconciliation ①. PDF text via `unpdf`; pure parser + reconciler in
+`packages/api/src/auction/` (`pnpm --dir packages/api test:auction`). Verified
+end-to-end against the real Sale-023 Acknowledgement (fixture tests + a rolled-back
+DB integration: 12 catalogued, 2 shutout `0061`/`0063`, inv `0058`→lot `0477`).
+- Schema: `brokers`, `marks` (estate marks per factory, e.g. MF1530/MF1530A),
+  `sales` (sale no, sale date, prompt date, broker, mark), `lots` (factory invoice
+  no, broker lot no, grade, bags, gross/sample/net wt, store/category, state:
+  `invoiced → catalogued | shutout`), all with `factory_id` + index + RLS policy
+  in the creating migration.
+- Factory-side: record the invoice/dispatch (the lots sent to the warehouse).
+- PDF ingestion of the Acknowledgement: maps invoice no → lot no, asserts net
+  weights, surfaces shutouts/violations.
+- Reconciliation ① report: invoiced vs catalogued vs shutout, weight deltas.
+
+**Verify:** ingest the Sale-023 Acknowledgement PDF; all 12 catalogued lots map to
+their invoice numbers with exact net weights; invoices 0061 and 0063 show as
+shutout; `db:verify-rls` passes.
+
+## A2 — Valuation & auction sale ✅ done & verified  (entitlement `auction`)
+Reconciliation ②. Parsers + reconciler in `packages/api/src/auction/`
+(`pnpm --dir packages/api test:auction2`, 21 checks). Verified end-to-end against
+the real Sale-023 Valuation + Sellers Contract (rolled-back DB integration: 12
+valuations, 12 sale lines, 8 buyers, 2 on bank guarantee; KUMUDU realised premium
++9.11%, 1,518.35 → 1,656.70 /kg). Nav split into Leaf Handling / Sales Handling.
+- Schema: `valuations` (lot, min/max price/kg, projected proceeds, tasting note),
+  `buyers` (name, VAT no.), `sale_lines` (lot, buyer, price/kg, proceeds, vat,
+  guarantee flag).
+- PDF ingestion of the Valuation Report and the Sellers Contract & Account Sales.
+- Reconciliation ② report: actual price/kg vs valuation range (below / within /
+  above) per lot, grade and sale; realised premium/discount; tasting note retained
+  for the future grades link (deferred M8).
+
+**Verify:** ingest Sale-023 Valuation + Contract; each lot's actual price
+classifies against its range; proceeds total 4,920,400 (KUMUDU) + 258,000
+(ITTAPANA); realised-vs-valuation variance renders.
+
+## A3 — VAT, deductions & settlement  (entitlement `auction`)
+Reconciliation ③.
+- Schema: `settlements` (per contract: deduction line-items — insurance, public
+  sale ex., brokerage %, handling/kg, documentation/lot, e-platform/kg, govt relief
+  loan, VAT-on-charges; net proceeds; total net proceeds), `vat_ledger` (per
+  sale_line: VAT amount, mode `cash|guarantee`, realisation date, status, plus a
+  flow/source tag), and `broker_rates` — owner-editable, **per-broker** deduction
+  rate cards (rates are configurable per broker, never hardcoded).
+- Scope: VAT here is **auction-flow only** — output VAT collected from buyers on
+  the factory's behalf (cash vs guarantee) + the broker's VAT-on-charges as auction
+  input VAT. Other flows (supplier payments, non-auction purchases) stay out now;
+  the flow tag lets them join later as separate buckets so the govt return sums
+  across flows deliberately. Clean separation of flows is the rule.
+- Settlement view reconstructs the Account Sales math to the cent from the broker's
+  configured rate card and cross-checks it against the parsed contract values,
+  flagging any drift.
+- Recon ④ matching tolerates either broker VAT-remittance behaviour: it knows both
+  the full Total Net Proceeds and the guaranteed-VAT carve-out, matches the bank
+  credit to whichever lands, and labels it (full VAT vs cash-only, guarantee
+  pending) — the real behaviour is confirmed from the first observed settlement.
+- VAT dashboard: cash VAT collected vs VAT outstanding on guarantee; guarantees
+  due/overdue; net VAT payable to govt for the period.
+
+**Verify:** Sale-023 settlement reproduces Total Net Proceeds 5,733,046.98 /
+299,898.85 from parsed lines; VAT split shows 718,812 cash / 166,860 guaranteed;
+the net VAT-payable figure computes.
+
+> **Dispatch-first redesign + resolvers (28 Jun 2026).** The model was corrected to
+> be **dispatch-first** (the factory dispatches lots to a 3rd-party store; the broker
+> catalogues a *partial* subset): lot state `invoiced`→`dispatched`, new states
+> `pending` (absent from this ack) / `re-print` (unsold→rolls forward) / `missing`
+> (explicit mark); `lot_invoices` child table for 1-lot→many-invoices (migration
+> 0014). Added: **orphan-resolver Compare panel** on recon ① (link a pending invoice
+> to an unexpected catalogue lot, scored + audited), **`auction_audit`** table
+> (migration 0015), the **bank-recon review UI** below, and a **cross-sale
+> dashboard** (`/dashboard/auction/dashboard`). Migration 0012 (settlements etc.) was
+> found missing from the live DB and applied. All verified via DB integration +
+> tests; uncommitted on `pasindu/auction-flow-reconsiliation`.
+
+## A4 — Accounting integration & bank reconciliation  (Priority 2, entitlement `accounts`)
+Reconciliation ④ + the accounting hook.
+- Bank statement CSV import (Commercial Bank format) → `bank_txns` (date,
+  description, debit, credit, running balance, cheque no). ✅ stage→review→confirm
+  (upload on sale detail → review page `[saleId]/bank/[importId]`).
+- Reconciliation ④: match expected Total Net Proceeds (by prompt date) to bank
+  credits; cheque reconciliation (the many CHEQUE debits/credits); flag unmatched.
+  ✅ review UI: per-settlement status (settled / cash-only / under-paid / over-paid /
+  awaiting / unpaid) with a prompt-date grace window, auto-match suggestions, and an
+  unattributed-credit↔unpaid-settlement resolver (scored on amount/date/narration,
+  audited).
+- Seed P&L / cash-flow from auction revenue + settlement deductions; leave the
+  **hook** to absorb supplier payments (M6), production cost and wider expenses
+  when the ERP-domain milestones land — this is where the full accounting system
+  later plugs in (cheque reconciliation and bank validation across all activity).
+
+**Verify:** import the provided bank CSV; reconcile a settlement credit (or
+correctly report it as not-yet-received, since this statement predates the 24 Jun
+prompt date); cheque-matching summary renders; a starter P&L shows auction revenue
+net of deductions.
+
+---
+
+# Phase 1 (deferred) — ERP-domain milestones
+
+> Resume after the auction product (A1–A4) is stable and validated — these
+> replace the factory's existing leaf-collection system. M9/M10 below now build
+> *on top of* the auction & accounting modules shipped in the A-track.
+
 ## M7 — Production & out-turn tracking
 The factory's manufacturing pipeline (see PRODUCT.md domain walkthrough):
 production batches through withering → rolling → fermentation → drying; weigh
@@ -138,7 +288,10 @@ trends down in the quality signal.
 grade-mix report renders per period.
 
 ## M9 — Lots, deliveries & sales (auction / buyers)
-The made tea leaves the factory and becomes revenue:
+The made tea leaves the factory and becomes revenue. **The auction sale + lot
+records already exist from the A-track**; this milestone wires production → grades
+→ lots into them (so a lot is composed from real graded out-turn, not entered by
+hand) and adds direct-buyer (non-auction) sales:
 
 - Lots: pack graded tea into lots, status transitions (open → processing →
   graded → sold), lot ↔ grade-output composition
@@ -151,8 +304,9 @@ The made tea leaves the factory and becomes revenue:
 **Verify:** a lot is built from grade outputs, dispatched, and sold; lot totals
 reconcile to the grade outputs that went in; sale proceeds compute correctly.
 
-## M10 — Accounting
-Books on top of the operational data, closing the ERP loop:
+## M10 — Accounting (full close)
+Extends the A4 accounting/bank-reconciliation base into the full books once
+supplier payments and production costs exist — closing the ERP loop:
 
 - Expenses (wages, fuel/firewood for the dryer, transport, packing, overheads)
   with categories; supplier payments (M6) and sales proceeds (M9) flow in
@@ -187,6 +341,49 @@ purchased modules, and `db:verify-rls` proves the new tenant is isolated.
 ## Backlog (Phase 1.x, unscheduled)
 - Photo/ML leaf-quality research spike (prototype against rated delivery photos
   once Phase 2 collects them)
+
+---
+
+# Phase 1.5 — AI Insights track (AI1–AI4, entitlement `insights`)
+
+Money-denominated, evidence-backed suggestions computed from the ERP's own
+data. Architecture spec: [docs/AI_INSIGHTS.md](docs/AI_INSIGHTS.md);
+task-level plan: [docs/AI_INSIGHTS_IMPLEMENTATION.md](docs/AI_INSIGHTS_IMPLEMENTATION.md)
+(T1–T23 with exit gates); playbook: `.claude/skills/ai-insights`. Design
+principle: deterministic analyzers + rules first (zero LLM tokens); the LLM
+only narrates curated evidence packs and synthesizes the weekly digest, under
+a per-factory budget with a citation validator blocking invented figures.
+
+## AI1 — Deterministic insight engine (no LLM)
+Insights/insight_runs/metric_snapshots/insight_feedback tables (+RLS), analyzer
+& rule registries in `packages/api/src/insights`, event hooks after the confirm
+actions, 8 launch rules (settlement aging, min-kg/shutout risk, weight
+shrinkage, valuation premium by grade, deduction leakage, supply drop, water
+penalty repeat, advance overexposure), insights inbox page, row flags + AI note
+on Suppliers and Dispatches Overview.
+
+**Verify:** each rule fires on its fixture and stays silent on clean data;
+impact LKR matches hand-computed values; ack/dismiss persists; `db:verify-rls`
+covers the new tables.
+
+## AI2 — LLM notes + weekly owner digest
+Haiku notes for flagged entities; Sonnet weekly digest + cash-flow-week-ahead;
+evidence-hash caching; per-factory token budget (cap degrades to rules-only).
+
+**Verify:** digest cites only numbers present in evidence packs; re-run with
+unchanged data spends 0 tokens; budget cap halts L3 but never L1/L2.
+
+## AI3 — Agentic drill-down & feedback
+Analyzer registry exposed as Claude tools; guarded read-only SQL tool
+(SELECT-only role, allowlist, timeouts, caps, full audit); "Analyze now" and
+"Ask the analyst"; usefulness feedback + dismiss-rate tuning report.
+
+**Verify:** agent answers scripted owner questions on fixtures with correct
+figures; SQL tool refuses writes/oversized/other-tenant queries in tests.
+
+## AI4 — Forecasts & benchmarks (post-M7/M8; Phase-2 synergy)
+Grade-price and intake forecasts; leaf→auction quality thread with out-turn
+data; consent-gated anonymized cross-factory benchmarks (premium tier).
 
 ---
 

@@ -54,7 +54,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-center justify-between print:hidden">
-        <a href={`/dashboard/payments?year=${p.period_year}&month=${p.period_month}`} className="text-sm text-green-700 hover:underline">
+        <a href={`/dashboard/payments?year=${p.period_year}&month=${p.period_month}`} className="text-sm text-green-700 dark:text-green-400 hover:underline">
           ← Back to statements
         </a>
         <div className="flex gap-3">
@@ -62,7 +62,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
             <input type="hidden" name="payment_id" value={p.id} />
             <input type="hidden" name="paid" value={paid ? "false" : "true"} />
             <input type="hidden" name="return_to" value={`/dashboard/payments/${p.id}`} />
-            <SubmitButton pendingText="…" className="rounded-md border border-stone-300 px-4 py-2 text-sm hover:bg-stone-100">
+            <SubmitButton pendingText="…" className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
               {paid ? "Mark pending" : "Mark paid"}
             </SubmitButton>
           </form>
@@ -70,16 +70,16 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
-      <div className="rounded-xl border border-stone-200 bg-white p-8">
-        <div className="flex items-start justify-between border-b border-stone-200 pb-4">
+      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8">
+        <div className="flex items-start justify-between border-b border-stone-200 dark:border-stone-700 pb-4">
           <div>
-            <h2 className="text-lg font-semibold text-green-800">{f?.name ?? "Tea Factory"}</h2>
-            {f?.location && <p className="text-sm text-stone-500">{f.location}</p>}
+            <h2 className="text-lg font-semibold text-green-800 dark:text-green-400">{f?.name ?? "Tea Factory"}</h2>
+            {f?.location && <p className="text-sm text-stone-500 dark:text-stone-400">{f.location}</p>}
             <p className="mt-2 text-sm font-medium">Green-leaf payment statement</p>
           </div>
           <div className="text-right text-sm">
             <p className="font-medium">{MONTHS[p.period_month - 1]} {p.period_year}</p>
-            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${paid ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
+            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${paid ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"}`}>
               {p.status}
             </span>
           </div>
@@ -87,19 +87,19 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
 
         <div className="flex justify-between py-4 text-sm">
           <div>
-            <p className="text-stone-500">Supplier</p>
+            <p className="text-stone-500 dark:text-stone-400">Supplier</p>
             <p className="font-medium">{p.suppliers?.name ?? "—"}</p>
-            {p.suppliers?.area && <p className="text-stone-500">{p.suppliers.area}</p>}
+            {p.suppliers?.area && <p className="text-stone-500 dark:text-stone-400">{p.suppliers.area}</p>}
           </div>
           <div className="text-right">
-            <p className="text-stone-500">Total green leaf</p>
+            <p className="text-stone-500 dark:text-stone-400">Total green leaf</p>
             <p className="font-medium">{Number(p.total_kg).toFixed(2)} kg</p>
           </div>
         </div>
 
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-y border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
+            <tr className="border-y border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
               <th className="py-2">Description</th>
               <th className="py-2 text-right">Kg</th>
               <th className="py-2 text-right">Rate</th>
@@ -110,11 +110,11 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
             {lineRows.map((l) => {
               const amt = Number(l.amount);
               return (
-                <tr key={l.id} className="border-b border-stone-100">
+                <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800">
                   <td className="py-2">{l.label ?? l.line_type}</td>
-                  <td className="py-2 text-right tabular-nums text-stone-500">{l.quantity ? Number(l.quantity).toFixed(2) : ""}</td>
-                  <td className="py-2 text-right tabular-nums text-stone-500">{l.rate ? Number(l.rate).toFixed(2) : ""}</td>
-                  <td className={`py-2 text-right tabular-nums ${amt < 0 ? "text-red-700" : ""}`}>{lkr(amt)}</td>
+                  <td className="py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{l.quantity ? Number(l.quantity).toFixed(2) : ""}</td>
+                  <td className="py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{l.rate ? Number(l.rate).toFixed(2) : ""}</td>
+                  <td className={`py-2 text-right tabular-nums ${amt < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{lkr(amt)}</td>
                 </tr>
               );
             })}
@@ -122,20 +122,20 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
         </table>
 
         <div className="mt-4 space-y-1 text-sm">
-          <div className="flex justify-between"><span className="text-stone-500">Gross (leaf + bonus)</span><span className="tabular-nums">{lkr(p.gross_amount)}</span></div>
-          <div className="flex justify-between"><span className="text-stone-500">Deductions</span><span className="tabular-nums">−{lkr(p.deduction_amount)}</span></div>
-          <div className="flex justify-between border-t border-stone-200 pt-2 text-base font-semibold">
+          <div className="flex justify-between"><span className="text-stone-500 dark:text-stone-400">Gross (leaf + bonus)</span><span className="tabular-nums">{lkr(p.gross_amount)}</span></div>
+          <div className="flex justify-between"><span className="text-stone-500 dark:text-stone-400">Deductions</span><span className="tabular-nums">−{lkr(p.deduction_amount)}</span></div>
+          <div className="flex justify-between border-t border-stone-200 dark:border-stone-700 pt-2 text-base font-semibold">
             <span>Net payable</span><span className="tabular-nums">{lkr(p.total_amount)}</span>
           </div>
         </div>
 
         {bonusMissed > 0 && (
-          <p className="mt-4 rounded-md bg-green-50 p-3 text-sm text-green-800">
+          <p className="mt-4 rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-800 dark:text-green-400">
             💡 Reaching the top quality tier would have earned an extra <span className="font-semibold">{lkr(bonusMissed)}</span> this month.
           </p>
         )}
 
-        <p className="mt-6 text-xs text-stone-400">
+        <p className="mt-6 text-xs text-stone-400 dark:text-stone-500">
           Generated {new Date(p.generated_at).toLocaleString()}{p.paid_at ? ` · Paid ${new Date(p.paid_at).toLocaleString()}` : ""}
         </p>
       </div>

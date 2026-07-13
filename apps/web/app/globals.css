@@ -1,1 +1,213 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --md-primary: #386a20;
+  --md-on-primary: #ffffff;
+  --md-primary-container: #b8f397;
+  --md-on-primary-container: #0c2005;
+  --md-surface: #f8faf3;
+  --md-surface-container: #eef2e9;
+  --md-surface-container-high: #e8ece3;
+  --md-surface-bright: #ffffff;
+  --md-on-surface: #191d17;
+  --md-on-surface-variant: #42493f;
+  --md-outline: #72796e;
+  --md-outline-variant: #c2c9bc;
+  --md-error-container: #ffdad6;
+  --md-shadow: 0 1px 2px rgb(25 29 23 / 0.06), 0 8px 24px rgb(25 29 23 / 0.05);
+}
+
+.dark {
+  color-scheme: dark;
+  --md-primary: #9dd67d;
+  --md-on-primary: #123800;
+  --md-primary-container: #24520d;
+  --md-on-primary-container: #b8f397;
+  --md-surface: #10140e;
+  --md-surface-container: #191d17;
+  --md-surface-container-high: #232820;
+  --md-surface-bright: #2e332b;
+  --md-on-surface: #e1e4dc;
+  --md-on-surface-variant: #c2c9bc;
+  --md-outline: #8c9387;
+  --md-outline-variant: #42493f;
+  --md-error-container: #93000a;
+  --md-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px rgb(0 0 0 / 0.18);
+}
+
+html {
+  background: var(--md-surface);
+}
+
+body {
+  font-family: Roboto, "Noto Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--md-surface);
+  color: var(--md-on-surface);
+}
+
+::selection {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);
+  outline-offset: 2px;
+}
+
+:where(button, a) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(input, select, textarea) {
+  accent-color: var(--md-primary);
+}
+
+.dashboard-app {
+  background:
+    radial-gradient(circle at 85% -10%, color-mix(in srgb, var(--md-primary-container) 30%, transparent), transparent 30rem),
+    var(--md-surface);
+}
+
+.dashboard-content {
+  width: 100%;
+}
+
+/* Material 3 surface treatment for the existing page primitives. */
+.dashboard-content :is(.rounded-xl, .rounded-lg).border {
+  border-color: color-mix(in srgb, var(--md-outline-variant) 72%, transparent) !important;
+}
+
+.dashboard-content :is(.rounded-xl, .rounded-lg).border.bg-white,
+.dashboard-content :is(.rounded-xl, .rounded-lg).border[class*="dark:bg-stone"] {
+  background: color-mix(in srgb, var(--md-surface-bright) 96%, var(--md-primary) 4%) !important;
+  box-shadow: var(--md-shadow);
+}
+
+.dashboard-content table {
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-content thead {
+  background: color-mix(in srgb, var(--md-surface-container) 86%, transparent);
+}
+
+.dashboard-content tbody tr {
+  transition: background-color 140ms ease;
+}
+
+.dashboard-content tbody tr:hover {
+  background: color-mix(in srgb, var(--md-primary-container) 16%, transparent);
+}
+
+.dashboard-content tbody tr:has(input[name="selected_ids"]:checked) {
+  background: color-mix(in srgb, var(--md-primary-container) 38%, transparent);
+}
+
+/* Selection must remain obvious in both themes. `aria-selected` is emitted by
+   the shared list framework for row-click, radio, and checkbox selection. */
+.dashboard-content tbody tr[aria-selected="true"] {
+  background: color-mix(in srgb, var(--md-primary) 28%, var(--md-surface-bright)) !important;
+  box-shadow: inset 4px 0 0 var(--md-primary);
+}
+
+.dashboard-content :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  min-height: 2.75rem;
+  border-radius: 0.75rem !important;
+  border-color: var(--md-outline-variant) !important;
+  background: color-mix(in srgb, var(--md-surface-bright) 94%, transparent) !important;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+/* Larger, modern checkboxes for dashboard lists */
+.dashboard-content input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.375rem;
+  border-color: var(--md-outline-variant);
+  background: color-mix(in srgb, var(--md-surface-bright) 94%, transparent);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  accent-color: var(--md-primary);
+}
+.dashboard-content input[type="checkbox"]:checked {
+  background-color: var(--md-primary);
+  border-color: var(--md-primary);
+}
+.dashboard-content input[type="checkbox"]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);
+  outline-offset: 2px;
+}
+.dashboard-content input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dashboard-content input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  cursor: pointer;
+  accent-color: var(--md-primary);
+}
+.dashboard-content input[type="radio"]:checked {
+  accent-color: var(--md-primary);
+  filter: saturate(1.45) contrast(1.25);
+}
+
+@keyframes navigation-gradient {
+  from { background-position: 0% 50%; }
+  to { background-position: 200% 50%; }
+}
+
+.navigation-progress {
+  background: linear-gradient(90deg, #047857, #34d399, #047857);
+  background-size: 200% 100%;
+  box-shadow: 0 1px 6px color-mix(in srgb, #16a34a 38%, transparent);
+  animation: navigation-gradient 1.6s ease-in-out infinite;
+}
+
+/* The action itself is the loading indicator. Links and navigation buttons
+   retain this animated tonal state until the destination route settles. */
+.dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
+  background-image: linear-gradient(110deg, #ecfdf5, #d1fae5, #ecfdf5) !important;
+  background-size: 180% 100% !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+  box-shadow: 0 1px 5px color-mix(in srgb, #16a34a 22%, transparent) !important;
+  animation: navigation-gradient 1.8s ease-in-out infinite;
+}
+
+.dark .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
+  background-image: linear-gradient(110deg, #14532d, #166534, #14532d) !important;
+  border-color: #22c55e !important;
+  color: #dcfce7 !important;
+}
+.dashboard-content input[type="radio"]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.dashboard-content :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus {
+  border-color: var(--md-primary) !important;
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+
+.dashboard-content :where(button, [role="button"]) {
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 100ms ease;
+}
+
+.dashboard-content :where(button, [role="button"]):active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,10 +1,10 @@
 import { requireProfile } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
-import { lkr } from "@/lib/money";
 import { SubmitButton } from "@/components/submit-button";
-import { addAdjustment, deleteAdjustment } from "../actions";
+import { addAdjustment } from "../actions";
+import { AdjustmentsTable, type AdjustmentRow } from "./adjustments-table";
 
-const input = "mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-green-600 focus:outline-none";
+const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 const KIND_LABELS: Record<string, string> = {
@@ -47,14 +47,24 @@ export default async function AdjustmentsPage({
   const adjRows = (adjustments ?? []) as unknown as Adj[];
   const waterDefault = (settings as { default_water_penalty_pct: string } | null)?.default_water_penalty_pct ?? "0";
 
+  const tableRows: AdjustmentRow[] = adjRows.map((a) => ({
+    id: a.id,
+    occurredOn: a.occurred_on,
+    supplierName: a.suppliers?.name ?? "—",
+    kind: a.kind,
+    label: a.label,
+    amount: a.amount,
+    percent: a.percent,
+  }));
+
   return (
     <div className="space-y-6">
-      {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
-      {notice && <p className="rounded-md bg-green-50 p-3 text-sm text-green-800" role="status">{notice}</p>}
+      {error && <p className="rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">{error}</p>}
+      {notice && <p className="rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-800 dark:text-green-400" role="status">{notice}</p>}
 
-      <section className="rounded-xl border border-stone-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-stone-800">Add an advance or deduction</h2>
-        <p className="mt-1 text-sm text-stone-500">
+      <section className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-6">
+        <h2 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Add an advance or deduction</h2>
+        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
           Applied to the supplier&apos;s statement for the month of the date below. Use a percentage for a water penalty
           (a % of that month&apos;s leaf value); use an amount for advances, transport, or other cuts. A one-off bonus
           adds to the payment.
@@ -96,49 +106,14 @@ export default async function AdjustmentsPage({
             Date
             <input name="occurred_on" type="date" defaultValue={todayStr()} required className={`${input} w-44`} />
           </label>
-          <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">
+          <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700">
             Add
           </SubmitButton>
         </form>
-        <p className="mt-2 text-xs text-stone-500">Default water penalty (from Settings): {waterDefault}%</p>
+        <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">Default water penalty (from Settings): {waterDefault}%</p>
       </section>
 
-      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500">
-              <th className="px-4 py-3">Date</th>
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3">Kind</th>
-              <th className="px-4 py-3">Detail</th>
-              <th className="px-4 py-3 text-right">Value</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {adjRows.map((a) => (
-              <tr key={a.id} className="border-b border-stone-100 last:border-0">
-                <td className="px-4 py-3 text-stone-500">{a.occurred_on}</td>
-                <td className="px-4 py-3 font-medium">{a.suppliers?.name ?? "—"}</td>
-                <td className="px-4 py-3">{KIND_LABELS[a.kind] ?? a.kind}</td>
-                <td className="px-4 py-3 text-stone-500">{a.label ?? "—"}</td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {a.percent != null ? `${Number(a.percent).toFixed(2)}%` : lkr(a.amount)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <form action={deleteAdjustment}>
-                    <input type="hidden" name="id" value={a.id} />
-                    <SubmitButton pendingText="…" className="text-sm text-red-700 hover:underline">Remove</SubmitButton>
-                  </form>
-                </td>
-              </tr>
-            ))}
-            {adjRows.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-stone-400">No advances or deductions recorded.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <AdjustmentsTable rows={tableRows} />
     </div>
   );
 }

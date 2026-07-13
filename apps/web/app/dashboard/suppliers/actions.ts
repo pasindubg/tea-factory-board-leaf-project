@@ -46,3 +46,21 @@ export async function setSupplierActive(id: string, active: boolean) {
   await supabase.from("suppliers").update({ active }).eq("id", id);
   revalidatePath("/dashboard/suppliers");
 }
+
+function selectedIds(formData: FormData) {
+  return [...new Set(formData.getAll("selected_ids").map(String).filter(Boolean))];
+}
+
+export async function editSelectedSupplier(formData: FormData) {
+  const ids = selectedIds(formData);
+  if (ids.length !== 1) redirect("/dashboard/suppliers?error=Select%20exactly%20one%20supplier%20to%20edit");
+  redirect(`/dashboard/suppliers/${ids[0]}/edit`);
+}
+
+export async function setSelectedSuppliersActive(active: boolean, formData: FormData) {
+  const { supabase, profile } = await requireProfile(getDefaultRoles("suppliers"));
+  const ids = selectedIds(formData);
+  if (ids.length === 0) redirect("/dashboard/suppliers?error=Select%20at%20least%20one%20supplier");
+  await supabase.from("suppliers").update({ active }).in("id", ids).eq("factory_id", profile.factory_id);
+  revalidatePath("/dashboard/suppliers");
+}

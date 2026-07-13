@@ -40,9 +40,18 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
   disagree, PRODUCT.md wins** (and fix the skill).
 - **[MILESTONES.md](../../../MILESTONES.md)** — the live build plan with a concrete
   verification gate per milestone. **Check it for current status before building.**
+- **[docs/AUCTION.md](../../../docs/AUCTION.md)** — full spec for the Auction &
+  Settlement track: state machine, data model, PDF ingestion,
+  contract math, the four reconciliations. **Read before building any A-track work.**
+- **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational detail
+  pages, list search, and auction number formatting. Follow it when creating or
+  changing list/detail pages and in-record workflows.
+- **[docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md)** — install,
+  dependency, and migration change log. **Update whenever a task changes packages,
+  scripts, environment assumptions, or database migrations.**
 
-This skill is the *operational* layer (how to work here); those two are the
-*what/why*. Keep all three consistent when you change scope.
+This skill is the *operational* layer (how to work here); the linked docs are the
+*what/why/UI*. Keep them consistent when you change scope or interaction patterns.
 
 ## Status & what to build next
 
@@ -58,14 +67,26 @@ tier assignment, deductions (advances/transport/water/ad-hoc), the pure
 printable per-supplier statements with "bonus missed". Real LKR values still need
 calibrating with the factory.
 
-**Phase 1 priority order (finish all before Phase 2):**
-M6 payments + superleaf ✅ → M7 production/out-turn → M8 sifting & grades →
-M9 lots/deliveries/auction sales → M10 accounting/P&L → M11 deploy & self-serve
-onboarding. Then Phase 2 = M12–M17 (supplier identity, field app + offline, geo,
-listings, quality/trust, monetization). Always confirm exact status in MILESTONES.md.
+**Auction-first pivot (June 2026).** The factory has no system for the Colombo
+auction flow (broker PDFs + a bank CSV, reconciled by hand), but already runs leaf
+collection/payments elsewhere — so the **Auction & Settlement track is now the
+wedge and ships first**, ahead of the production/grades ERP milestones, which are
+deferred. The A-track is anchored on real data: Sale **2026-023**, broker BPML,
+marks MF1530 KUMUDU / MF1530A ITTAPANA (see the `ktf-auc-fll` sample docs).
 
-The user triggers a build phase by typing the milestone code (e.g. `m6`). **Wait
-for that go-ahead** before starting a milestone's implementation.
+**Priority order:**
+M6 payments + superleaf ✅ → **A1 auction intake & cataloguing → A2 valuation &
+sale → A3 VAT/deductions/settlement → A4 accounting + bank/cheque reconciliation
+(Priority 2)** → then the *deferred* ERP milestones: M7 production/out-turn →
+M8 sifting & grades → M9 lots/deliveries (wires into the A-track) → M10 accounting
+close → M11 deploy & self-serve onboarding. Then Phase 2 = M12–M17 (supplier
+identity, field app + offline, geo, listings, quality/trust, monetization). The
+four A-track reconciliations: ① invoice↔acknowledgement (shutouts), ② valuation↔
+sale price, ③ VAT cash-vs-guarantee + remit to govt, ④ settlement↔bank credit.
+Always confirm exact status in MILESTONES.md.
+
+The user triggers a build phase by typing the milestone code (e.g. `a1`, `m6`).
+**Wait for that go-ahead** before starting a milestone's implementation.
 
 ## Repo map
 
@@ -146,6 +167,98 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - **Client-generated UUIDs** for anything that can be created offline/on mobile
   (weighings already do this; it's the idempotency key for future offline sync).
 - After any schema/policy change, the RLS and auth gates must still pass (below).
+- Auction number formatting:
+  - dispatch numbers are 4 digits (`0004`);
+  - invoice and lot numbers are 4 digits when numeric (`0951`);
+  - auction sale / target sale numbers are 3 digits (`019`);
+  - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
+    invoice, and lot numbers.
+- Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.
+  Broker documents may spell a factory grade differently (`PEK` vs `PEKO`), so ACK,
+  valuation, and sellers contract import/review paths must canonicalize through the
+  alias map before reconciliation or persistence.
+- Valuation parsing is broker-format aware. Preserve both BPML `Valuation Report`
+  and ASIA SIYAKA `VALUATION & MUSTER REPORT` support. ASIA SIYAKA rows are lot,
+  invoice, grade, net weight, last-sale average, value/kg and value/lot; reconcile
+  by normalized four-digit invoice number across the broker's sale dispatches.
+- Seller-contract parsing is broker-format aware. ASIA SIYAKA may include several
+  contract/mark pages in one PDF. Capture `*** NOT SOLD ***` rows for review with
+  an explicit not-sold state. On confirmation, transition those lots to `re-print`,
+  add one additional sampling cycle to cumulative sample allowance, recalculate
+  remaining net kg, and audit the change. Exclude them from reconciliation,
+  `sale_lines`, settlement totals, and transitions to `sold`; a later ACK creates
+  the linked re-print child and restarts acknowledgement/valuation/contract stages.
+- Treat `auction_lots.reprint_source_lot_id` as the normalized re-print history
+  chain; do not add a duplicate history table. ACK and manual dispatch children
+  inherit cumulative sample/net quantities. Re-print Overview summarizes all
+  chain sales, eventual sold sale, total sample kg, and actual sold kg. Automatic
+  and manual transitions must enforce the same behavior.
+
+**UI conventions:**
+- Shared React primitives live in `apps/web/components/ui`: `AppButton`,
+  `AppNavLink`, and `AppDrawer`. Domain pages compose these primitives rather
+  than copying button/navigation/drawer class strings. Confirmation, feedback,
+  and list primitives remain in their dedicated shared components.
+- Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
+  inline filter rows under table headers.
+- Search panels expose all meaningful columns and keep advanced search available.
+- All operational lists use the shared list framework in
+  `apps/web/components/list-controls.tsx`: declare columns, `selectionMode`,
+  editability, and command actions in one list definition; compose
+  `ListSurface`, `ListCommandToolbar`, `ListSelectionHeader`/
+  `ListSelectionCell`, and `ListSidePanel` instead of inventing page-specific
+  list controls. Non-control clicks on a row select it and keyboard Enter/Space
+  must provide the same behavior with `aria-selected` for feedback.
+- Sale overviews grouped by `target_sale_no` must show all brokers participating
+  in that auction sale, because multiple brokers can sell tea in the same sale.
+- The dashboard sidebar uses drill-in sections, not expanding dropdown trees:
+  root shows standalone destinations plus handling sections; selecting a section
+  shows only its emphasized destination rows and a compact `Overview` back link.
+  Remove generic sidebar labels such as `SECTION`, and keep the section name
+  visually subordinate to its destinations. Use Next.js `Link`
+  for destinations and buttons only for local section/menu state.
+- Every non-overview page gets the shared linked breadcrumb `Overview / section /
+  current page`; do not duplicate it with page-specific back links.
+- Dashboard pages are top-left oriented and use the full available viewport width;
+  never reintroduce a centered global max-width. Desktop selector/record side
+  panels float inside page padding with rounded corners/elevation, stretch through
+  the available viewport height without hitting the bottom, and scroll only their
+  inner list body.
+- List headers expose an always-visible LOV select for every `ColumnDef` with an
+  accessor; omit the accessor only when an attribute is explicitly non-searchable.
+  Do not use a Google-style general search box. Advanced syntax appears only after
+  selecting `Advanced`, in a fixed viewport panel with its own max-height/scroll so
+  table overflow containers cannot clip it. List Search panels use the native
+  Popover API so Search/Clear and outside-click dismissal are consistent.
+- Search criteria stay collapsed by default and LOV changes do not filter until
+  the explicit `Search` action is selected.
+- Editable operational lists default to multi-select: leading row checkboxes plus
+  top-toolbar Edit and domain actions, never repeated row text actions. Edit accepts
+  exactly one selected row; compatible state actions may accept many. When framework
+  config explicitly sets `selectionMode: "single"`, omit checkboxes/bulk controls
+  and show edit only for the current row.
+- Related list work surfaces use the shared `TabbedListSurface` top tab bar
+  rather than stacking dense tables. Each tab preserves its own list controls;
+  top tabs are keyboard navigable with arrows and Home/End.
+- Appearance lives in the bottom `Settings` menu with explicit System, Light, and
+  Dark choices. New user preferences should extend this menu rather than adding
+  scattered shell buttons.
+- Every interactive action needs immediate acknowledgement through the shared
+  dashboard action-feedback layer: navigation shows Opening, forms/server
+  actions show Working, settings show Updating, and route completion shows Page
+  ready. Do not add silent new buttons or links; opt out only for decorative
+  controls with `data-action-feedback-ignore`.
+- Completed work/notices use green bottom-right toasts and failures use red
+  bottom-right toasts. Browser alerts and confirms are forbidden: consequential
+  actions use the shared `ConfirmationDialog` or `ConfirmSubmitButton` instead.
+- Navigation must also trigger the shared animated gradient progress bar. Links
+  are automatic; call `startNavigationFeedback()` before any direct
+  `router.push` or `router.replace` implementation.
+- The navigation control itself carries the shared animated gradient pending
+  state until its destination is ready; keep the top-right status message as
+  secondary confirmation rather than the primary loading indicator.
+- Dashboard charts must use `resolvedTheme`, remain legible in light and dark
+  modes, and show an explicit zero-data message instead of an empty plot.
 
 ## Domain cheat-sheet
 
@@ -210,10 +323,85 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
 - **Commit/PR only when the user asks.** Branch per change (e.g. `feat/m6-payments`);
   the user reviews via PR. `gh` CLI isn't installed — use the GitHub API with stored
   git credentials, or ask the user.
-- **Verify before claiming done:** type-check + the relevant `db:verify-*` gate +,
-  for UI, a `preview_*` walk-through. Clean up any test rows you create in the real
-  Supabase DB.
+- **Verify before claiming done:** type-check + lint + the relevant `db:verify-*`
+  gate +, for UI, a `preview_*` walk-through. Clean up any test rows you create in the
+  real Supabase DB.
 - **Keep the docs in lockstep.** A scope/ordering change means editing MILESTONES.md
   and PRODUCT.md (and this skill) in the same breath, plus the project memory file.
 - Known open items: confirm the real **payment formula** with the factory before M6;
   dashboard timestamps currently render in UTC, not Asia/Colombo (tracked separately).
+
+## Common gotchas & lessons learned
+
+These are mistakes that have burned us in PRs/CI. Read them before writing code.
+
+### Next.js App Router — client components
+
+- **`usePathname()` returns `string | null`.** It can be `null` during SSR or in
+  loading boundaries. Always write `usePathname() ?? ""` before calling
+  `.startsWith()` or other string methods — a null pathname will throw.
+- **Never use raw `<a>` for internal navigation.** Next.js lint
+  (`@next/next/no-html-link-for-pages`) forbids `<a href="/dashboard/...">`.
+  Always use `<Link>` from `next/link` instead. The CI `pnpm turbo lint` step is a
+  hard gate — raw `<a>` tags will fail the build.
+- **Server→client props are new references.** When a server component filters
+  `MODULES.filter(...)` and passes the result to a client component, that array is
+  a fresh reference on every SSR render. Never put it directly in a `useEffect`
+  dependency array — extract the derived value you actually care about via
+  `useMemo` and depend on that. Otherwise you get infinite re-render loops.
+- **`usePathname()` for section highlighting in sidebars:** compute active groups
+  with `useMemo`, sync expanded state with `useEffect` depending only on that
+  memoized value. The `useState` initializer should mirror the same logic so the
+  first render is correct (no flash of closed sections).
+
+### Supabase / Postgres — RPC & migrations
+
+- **RPC: TABLE returns an array.** When a Postgres function uses
+  `RETURNS TABLE(col type, ...)`, `supabase.rpc()` puts the rows in `data` as an
+  **array**. Access `data[0]` for a single-row result. Treating `data` as the
+  object directly (e.g., `data.approved`) will be `undefined` and cause silent
+  failures or "Cannot read properties of undefined".
+- **Hand-written migrations need manual tracking.** If you author a `.sql` file
+  by hand (not via `drizzle-kit generate`), you must also:
+  1. Add an entry to `packages/db/drizzle/meta/_journal.json` (increment `idx`,
+     set a `when` timestamp, and the `tag` matching the filename).
+  2. After applying the migration, insert a record into
+     `drizzle.__drizzle_migrations` so drizzle-kit doesn't try to re-apply it.
+     The `created_at` column is `bigint` (epoch ms), not a timestamp.
+  3. Use the `postgres` npm package (already a dependency of `packages/db`) to
+     run the SQL — `pg` is not installed separately.
+- **`pnpm install` before `db:migrate`.** If `packages/db/node_modules` is
+  missing, `db:migrate` will exit code 1 without a clear error. Run
+  `pnpm install` from the repo root first.
+- **`db:migrate` needs `.env` sourced:**
+  ```bash
+  cd ~/Desktop/board-leaf-project && set -a; . ./.env; set +a
+  ```
+
+### PostgreSQL functions — state machines & atomicity
+
+- **Always enforce state machines at the DB level.** A `CHECK` constraint only
+  validates the *domain* of values, not valid *transitions*. Add a `BEFORE UPDATE`
+  trigger that compares `OLD.status` with `NEW.status` and raises on invalid
+  transitions. This is defense-in-depth — even admin-client writes (bypassing RLS)
+  cannot skip the state machine.
+- **Atomic approve/update flows should live in a PG function.** Multi-step
+  app-code flows (read → check → insert → update) have TOCTOU race conditions
+  even with `.eq("status", "pending")` guards because the read and write aren't
+  in the same transaction. Wrap them in a single `LANGUAGE plpgsql` function
+  using `SELECT ... FOR UPDATE` to lock the row. Call it via `supabase.rpc()`.
+- **`SECURITY DEFINER` functions need `SET search_path = public`.** Otherwise
+  they're vulnerable to search-path injection. Every `SECURITY DEFINER` function
+  in this repo already follows this pattern — copy the existing ones.
+
+### CI pipeline
+
+- The CI runs **`pnpm turbo lint`** and **`pnpm turbo typecheck`** as hard gates.
+  Both must pass. Lint uses `next lint` which enforces `<Link>` usage, unused
+  variable checks, and other Next.js-specific rules.
+- **Run both locally before pushing:**
+  ```bash
+  pnpm turbo lint && pnpm turbo typecheck
+  ```
+- If `apps/web/.next` has stale type caches after deleting route folders, clear
+  it: `rm -rf apps/web/.next`.

@@ -40,9 +40,18 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
   disagree, PRODUCT.md wins** (and fix the skill).
 - **[MILESTONES.md](../../../MILESTONES.md)** — the live build plan with a concrete
   verification gate per milestone. **Check it for current status before building.**
+- **[docs/AUCTION.md](../../../docs/AUCTION.md)** — full spec for the Auction &
+  Settlement track (current wedge): state machine, data model, PDF ingestion,
+  contract math, the four reconciliations. **Read before building any A-track work.**
+- **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational tables,
+  search panels, detail pages, and auction number formatting. **Read before changing
+  list/search/detail page UI.**
+- **[docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md)** — install,
+  dependency, and migration change log. **Update whenever a task changes packages,
+  scripts, environment assumptions, or database migrations.**
 
-This skill is the *operational* layer (how to work here); those two are the
-*what/why*. Keep all three consistent when you change scope.
+This skill is the *operational* layer (how to work here); the linked docs are the
+*what/why/UI/deploy*. Keep them consistent when you change scope or interaction patterns.
 
 ## Status & what to build next
 
@@ -58,14 +67,26 @@ tier assignment, deductions (advances/transport/water/ad-hoc), the pure
 printable per-supplier statements with "bonus missed". Real LKR values still need
 calibrating with the factory.
 
-**Phase 1 priority order (finish all before Phase 2):**
-M6 payments + superleaf ✅ → M7 production/out-turn → M8 sifting & grades →
-M9 lots/deliveries/auction sales → M10 accounting/P&L → M11 deploy & self-serve
-onboarding. Then Phase 2 = M12–M17 (supplier identity, field app + offline, geo,
-listings, quality/trust, monetization). Always confirm exact status in MILESTONES.md.
+**Auction-first pivot (June 2026).** The factory has no system for the Colombo
+auction flow (broker PDFs + a bank CSV, reconciled by hand), but already runs leaf
+collection/payments elsewhere — so the **Auction & Settlement track is now the
+wedge and ships first**, ahead of the production/grades ERP milestones, which are
+deferred. The A-track is anchored on real data: Sale **2026-023**, broker BPML,
+marks MF1530 KUMUDU / MF1530A ITTAPANA (see the `ktf-auc-fll` sample docs).
 
-The user triggers a build phase by typing the milestone code (e.g. `m6`). **Wait
-for that go-ahead** before starting a milestone's implementation.
+**Phase 1 priority order (re-sequenced):**
+M6 payments + superleaf ✅ → **A1 auction intake & cataloguing → A2 valuation &
+sale → A3 VAT/deductions/settlement → A4 accounting + bank/cheque reconciliation
+(Priority 2)** → then the *deferred* ERP milestones: M7 production/out-turn →
+M8 sifting & grades → M9 lots/deliveries (wires into the A-track) → M10 accounting
+close → M11 deploy & self-serve onboarding. Then Phase 2 = M12–M17 (supplier
+identity, field app + offline, geo, listings, quality/trust, monetization). The
+four A-track reconciliations: ① invoice↔acknowledgement (shutouts), ② valuation↔
+sale price, ③ VAT cash-vs-guarantee + remit to govt, ④ settlement↔bank credit.
+Always confirm exact status in MILESTONES.md.
+
+The user triggers a build phase by typing the milestone code (e.g. `a1`, `m6`).
+**Wait for that go-ahead** before starting a milestone's implementation.
 
 ## Repo map
 
@@ -146,6 +167,39 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - **Client-generated UUIDs** for anything that can be created offline/on mobile
   (weighings already do this; it's the idempotency key for future offline sync).
 - After any schema/policy change, the RLS and auth gates must still pass (below).
+- Auction number formatting:
+  - dispatch numbers are 4 digits (`0004`);
+  - invoice and lot numbers are 4 digits when numeric (`0951`);
+  - auction sale / target sale numbers are 3 digits (`019`);
+  - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
+    invoice, and lot numbers.
+- Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.
+  Broker documents may spell a factory grade differently (`PEK` vs `PEKO`), so ACK,
+  valuation, and sellers contract import/review paths must canonicalize through the
+  alias map before reconciliation or persistence.
+- Valuation parsing is broker-format aware. Preserve both BPML `Valuation Report`
+  and ASIA SIYAKA `VALUATION & MUSTER REPORT` support. ASIA SIYAKA rows are lot,
+  invoice, grade, net weight, last-sale average, value/kg and value/lot; reconcile
+  by normalized four-digit invoice number across the broker's sale dispatches.
+- Seller-contract parsing is broker-format aware. ASIA SIYAKA may include several
+  contract/mark pages in one PDF. Capture `*** NOT SOLD ***` rows for review with
+  an explicit not-sold state. On confirmation, transition those lots to `re-print`,
+  add one additional sampling cycle to cumulative sample allowance, recalculate
+  remaining net kg, and audit the change. Exclude them from reconciliation,
+  `sale_lines`, settlement totals, and transitions to `sold`; a later ACK creates
+  the linked re-print child and restarts acknowledgement/valuation/contract stages.
+- Treat `auction_lots.reprint_source_lot_id` as the normalized re-print history
+  chain; do not add a duplicate history table. ACK and manual dispatch children
+  inherit cumulative sample/net quantities. Re-print Overview summarizes all
+  chain sales, eventual sold sale, total sample kg, and actual sold kg. Automatic
+  and manual transitions must enforce the same behavior.
+
+**UI conventions:**
+- Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
+  inline filter rows under table headers.
+- Search panels expose all meaningful columns and keep advanced search available.
+- Sale overviews grouped by `target_sale_no` must show all brokers participating
+  in that auction sale, because multiple brokers can sell tea in the same sale.
 
 ## Domain cheat-sheet
 

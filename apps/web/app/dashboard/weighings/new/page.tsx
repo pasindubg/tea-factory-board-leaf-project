@@ -28,7 +28,7 @@ export default async function NewWeighingPage({
     return (
       <div>
         <h1 className="text-2xl font-semibold">Record weighing</h1>
-        <p className="mt-6 max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <p className="mt-6 max-w-lg rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 p-4 text-sm text-amber-800 dark:text-amber-400">
           Your login has no collector record yet, so weighings can&apos;t be attributed to you. Ask the
           factory owner to link one on the Collectors page.
         </p>
@@ -40,7 +40,7 @@ export default async function NewWeighingPage({
     return (
       <div>
         <h1 className="text-2xl font-semibold">Record weighing</h1>
-        <p className="mt-6 max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <p className="mt-6 max-w-lg rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 p-4 text-sm text-amber-800 dark:text-amber-400">
           No collectors are set up yet. Every weighing must be attributed to a collector.{" "}
           <a href="/dashboard/collectors/new" className="font-medium underline">
             Add a collector
