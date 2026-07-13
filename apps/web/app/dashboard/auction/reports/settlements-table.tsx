@@ -22,7 +22,7 @@ const fmt = (n: number) => n.toLocaleString("en-LK", { minimumFractionDigits: 2 
 
 const COLUMNS: ColumnDef<SettlementRow>[] = [
   { key: "contractNo", label: "Contract", accessor: (r) => r.contractNo, sortable: true, filter: "text" },
-  { key: "dispatchNo", label: "Dispatch", accessor: (r) => r.dispatchNo, sortable: true, filter: "text" },
+  { key: "dispatchNo", label: "Broker invoice", accessor: (r) => r.dispatchNo, sortable: true, filter: "text" },
   { key: "saleNo", label: "Sale", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.broker, sortable: true, filter: "select" },
   { key: "proceeds", label: "Proceeds", accessor: (r) => r.proceeds, sortable: true },

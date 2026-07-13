@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Children, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
 // Shared column-sort + column-filter primitives for the app's hand-rolled
 // tables. Deliberately headless: each table keeps its own <table> markup,
@@ -38,6 +38,14 @@ export type ListSelectionMode = "multi" | "single";
 export type ListDefinition<T> = {
   columns: ColumnDef<T>[];
   selectionMode?: ListSelectionMode;
+  /** CRUD commands are independently opt-in. A disabled command is not rendered. */
+  add?: boolean;
+  edit?: boolean;
+  delete?: boolean;
+  /** Header-level actions. Row-level edit/delete controls are intentionally not supported. */
+  enableEdit?: boolean;
+  enableDelete?: boolean;
+  /** @deprecated Use enableEdit. Kept temporarily for existing list definitions. */
   editable?: boolean;
   commands?: { id: string; label: string; requiresSelection?: boolean; destructive?: boolean }[];
 };
@@ -200,8 +208,106 @@ export function ListSelectionSummary({ mode, count = 0 }: { mode: ListSelectionM
   return <p className="text-sm font-medium text-stone-500 dark:text-stone-400" aria-live="polite">{count > 0 ? `${count} selected` : mode === "multi" ? "Select rows to manage records" : "Select one row to manage the record"}</p>;
 }
 
-export function ListCommandToolbar({ mode, count = 0, children }: { mode: ListSelectionMode; count?: number; children: React.ReactNode }) {
-  return <div className="flex items-center justify-between gap-3 border-b border-stone-100 px-4 py-3 dark:border-stone-800"><ListSelectionSummary mode={mode} count={count} /><div className="flex flex-wrap justify-end gap-2">{children}</div></div>;
+type ListHeaderAction = {
+  label?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+};
+
+/** The one action presentation for operational lists. Consumers declare which
+ * header actions are enabled; individual row action columns are not needed. */
+export function ListCommandToolbar({
+  mode,
+  count = 0,
+  enableAdd = false,
+  enableEdit = false,
+  enableDelete = false,
+  onAdd,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  mode: ListSelectionMode;
+  count?: number;
+  enableAdd?: boolean;
+  enableEdit?: boolean;
+  enableDelete?: boolean;
+  onAdd?: ListHeaderAction;
+  onEdit?: ListHeaderAction;
+  onDelete?: ListHeaderAction;
+  children?: React.ReactNode;
+}) {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [hasSearch, setHasSearch] = useState(false);
+
+  useEffect(() => {
+    const surface = toolbarRef.current?.closest("[data-list-surface]");
+    setHasSearch(Boolean(surface?.querySelector("[data-list-search-trigger]")));
+  }, []);
+
+  function openSearch() {
+    const surface = toolbarRef.current?.closest("[data-list-surface]");
+    (surface?.querySelector("[data-list-search-trigger]") as HTMLButtonElement | null)?.click();
+  }
+
+  return (
+    <div ref={toolbarRef} className="flex min-h-16 items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
+      <ListSelectionSummary mode={mode} count={count} />
+      <div className="flex flex-wrap justify-end gap-2">
+        {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
+        {enableAdd && onAdd && <ListHeaderButton kind="add" action={onAdd} />}
+        {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
+        {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SearchGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><circle cx="8.5" cy="8.5" r="4.75" /><path strokeLinecap="round" d="m12 12 4.25 4.25" /></svg>;
+}
+
+function ListHeaderButton({ kind, action }: { kind: "add" | "edit" | "delete"; action: ListHeaderAction }) {
+  const destructive = kind === "delete";
+  return (
+    <button
+      type="button"
+      onClick={action.onClick}
+      disabled={action.disabled || action.busy}
+      className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+        destructive
+          ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
+          : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+      }`}
+    >
+      {action.busy ? <span className={`h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent`} /> : kind === "add" ? <AddGlyph /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
+      {action.busy ? "Working…" : action.label ?? (kind === "add" ? "Add" : kind === "edit" ? "Edit" : "Delete")}
+    </button>
+  );
+}
+
+function AddGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M10 3.25a.75.75 0 0 1 .75.75v5.25H16a.75.75 0 0 1 0 1.5h-5.25V16a.75.75 0 0 1-1.5 0v-5.25H4a.75.75 0 0 1 0-1.5h5.25V4a.75.75 0 0 1 .75-.75Z" /></svg>;
+}
+
+/** Collapsible creation area owned by a list. It keeps create forms with the
+ * records they affect instead of requiring a persistent adjacent form panel. */
+export function ListCreatePanel({ open, title = "Add record", children }: { open: boolean; title?: string; children: ReactNode }) {
+  if (!open) return null;
+  return <section className="border-b border-stone-100 bg-green-50/50 px-4 py-4 dark:border-stone-800 dark:bg-green-950/10" aria-label={title}>
+    <h3 className="mb-3 text-sm font-semibold text-stone-800 dark:text-stone-100">{title}</h3>
+    {children}
+  </section>;
+}
+
+function EditGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" /><path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" /></svg>;
+}
+
+function DeleteGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" /></svg>;
 }
 
 export function ListSurface({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -351,9 +457,8 @@ export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
         activeColumnSearches.every((c) => {
           const raw = searchableValue(c.accessor!(row));
           const needle = appliedColumnSearches[c.key]!.toLowerCase();
-          // LOV columns: exact match (user picked from a dropdown)
-          if (c.lov !== false) return raw === needle;
-          // Free-text columns: substring match
+          // A column combines an LOV datalist with direct typing, so both
+          // selection and partial manual entry use the same contains match.
           return raw.includes(needle);
         }),
       );
@@ -482,17 +587,12 @@ export function ListSearchPanel<T>({
   if (searchCols.length === 0) return null;
 
   return (
-    <div data-list-search-panel className="border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
-      <div className="flex items-center justify-between gap-3">
-        <button type="button" popoverTarget={searchPanelId} popoverTargetAction="toggle" className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-green-50 hover:text-green-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950">
-            {label}
-            {controls.activeFilterCount > 0 && <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] text-green-800 dark:bg-green-900 dark:text-green-200">{controls.activeFilterCount}</span>}
-            <span aria-hidden="true">⌄</span>
-        </button>
+    <>
+        <button type="button" data-list-search-trigger popoverTarget={searchPanelId} popoverTargetAction="toggle" tabIndex={-1} aria-hidden="true" className="sr-only">{label}</button>
         <div id={searchPanelId} popover="auto" className="fixed left-1/2 top-16 z-[90] m-0 max-h-[calc(100dvh-5rem)] w-[min(58rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-2xl backdrop:bg-stone-950/25 dark:border-stone-700 dark:bg-stone-950">
             <div className="mb-4">
               <h3 className="text-base font-semibold text-stone-900 dark:text-stone-100">{label} criteria</h3>
-              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">Choose LOV values, then select Search to apply them.</p>
+              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">Type a value or choose an LOV suggestion, then select Search to apply it.</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label={`${label} by column`}>
               {searchCols.map((col) => (
@@ -535,42 +635,42 @@ export function ListSearchPanel<T>({
               >Search</button>
             </div>
         </div>
-        {controls.activeFilterCount > 0 && (
-          <button type="button" onClick={controls.clearFilters} className="min-h-9 rounded-full px-3 text-xs text-stone-500 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800">Clear search</button>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
 function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: ListControls<T> }) {
   const value = controls.columnSearches[col.key] ?? "";
-  // Non-LOV columns: render a text input
-  if (col.lov === false) {
-    const inputType = col.searchInput ?? "text";
+  const lovId = useId().replace(/:/g, "");
+  const inputType = col.searchInput ?? "text";
+  // Dates are intentionally picker-only: a date's native picker is the LOV.
+  if (inputType === "date") {
     return (
       <input
-        type={inputType}
+        type="date"
         value={value}
         onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
-        placeholder={inputType === "date" ? undefined : `Search ${col.label.toLowerCase()}`}
         className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
       />
     );
   }
-  // LOV columns (default): render a select dropdown
+  const listId = `list-lov-${lovId}`;
   return (
-    <select
-      data-list-lov
+    <>
+      <input
+      list={listId}
+      type={inputType}
       value={value}
       onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
+      placeholder={`Search ${col.label.toLowerCase()}`}
       className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
-    >
-      <option value="">All {col.label}</option>
+      />
+      <datalist id={listId} data-list-lov>
       {controls.optionsFor(col).map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>
       ))}
-    </select>
+      </datalist>
+    </>
   );
 }
 

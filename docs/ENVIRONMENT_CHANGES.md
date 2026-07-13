@@ -2,6 +2,37 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-07-13 - Bundled Invoice Dispatches
+
+- Added migration `0028_bundled_invoice_dispatches.sql` and the matching Drizzle schema.
+- A physical Dispatch is now a separate Bundled Invoice record: it groups two or more confirmed Broker Invoices with the same invoice date and records the warehouse. Lots remain under their existing Broker Invoice.
+- The new `auction_bundled_dispatches` and `auction_bundled_dispatch_invoices` tables both use tenant RLS and prevent a Broker Invoice from joining more than one bundle.
+- No package dependency was added. Apply migrations through `0028` before using New Dispatch (Bundled Invoice).
+
+## 2026-07-13 - Warehouse Basic Data And Dispatch Date Ranges
+
+- Added migration `0029_auction_warehouses.sql` for the tenant-scoped warehouse LOV, including active/inactive state and tenant RLS.
+- Added migration `0030_bundled_dispatch_date_range.sql`. New Dispatch stores inclusive start and end dates; setting both to the same date records a one-day dispatch.
+- No package dependency was added. Apply migrations through `0030` before using warehouse basic data or date-range dispatches.
+
+## 2026-07-13 - Broker Invoices, Final Sale Assignment, And GRN Storage
+
+- Added migrations `0026_broker_invoice_status.sql` and
+  `0027_invoice_sale_assignment_grn.sql`.
+- Broker Invoice confirmation now enters `invoiced`; GRN is a separate optional
+  upload/manual-proceed state before broker acknowledgement.
+- `auction_lots.provisional_sale_no` retains the expected sale and
+  `auction_lots.final_sale_no` is set only by valuation confirmation, allowing
+  one invoice to move from sale 20 to sale 21 without changing its physical
+  Broker Invoice parent.
+- Added the tenant-private `auction-documents` Storage bucket and folder-based
+  RLS policies. GRN images/PDFs are stored under `<factory>/<broker-invoice>/grn/`.
+- Added the atomic `confirm_auction_valuation` database function. It marks
+  expected-but-absent invoices `not-valued` and reassigns later matches to the
+  valuation report's sale.
+- No package dependency was added. Apply migrations through `0027` before using
+  GRN upload or valuation confirmation.
+
 ## 2026-07-12 - Chain-aware Re-print Lifecycle
 
 - No database migration or package installation is required. The existing

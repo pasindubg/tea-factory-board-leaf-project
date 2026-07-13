@@ -202,13 +202,14 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
   inline filter rows under table headers.
 - Search panels expose all meaningful columns and keep advanced search available.
-- All operational lists use the shared list framework in
+- Every list implementation uses the shared list framework in
   `apps/web/components/list-controls.tsx`: declare columns, `selectionMode`,
   editability, and command actions in one list definition; compose
   `ListSurface`, `ListCommandToolbar`, `ListSelectionHeader`/
   `ListSelectionCell`, and `ListSidePanel` instead of inventing page-specific
-  list controls. Non-control clicks on a row select it and keyboard Enter/Space
-  must provide the same behavior with `aria-selected` for feedback.
+  list controls. This is mandatory even for read-only tables, record selectors,
+  and side panels. Non-control clicks on a row select it and keyboard
+  Enter/Space must provide the same behavior with `aria-selected` for feedback.
 - Sale overviews grouped by `target_sale_no` must show all brokers participating
   in that auction sale, because multiple brokers can sell tea in the same sale.
 - The dashboard sidebar uses drill-in sections, not expanding dropdown trees:

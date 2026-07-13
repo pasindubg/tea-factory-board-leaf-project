@@ -29,7 +29,7 @@ export default async function SaleDetailPage({
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Sale not found.{" "}
         <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-          Back to Dispatches Overview
+          Back to Invoice Overview
         </Link>
       </div>
     );
@@ -42,7 +42,7 @@ export default async function SaleDetailPage({
     supabase
       .from("auction_lots")
       .select(
-        "id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout_reason, lot_source, marks(code), lot_invoices(invoice_no)",
+        "id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout_reason, lot_source, marks(code), lot_invoices(invoice_no)",
       )
       .eq("sale_id", saleId)
       .order("invoice_no"),
@@ -110,6 +110,8 @@ export default async function SaleDetailPage({
           })(),
           id: l.id as string,
           invoice_no: formatFourDigitNo(l.invoice_no as string | null),
+          provisional_sale_no: formatSaleNo((l as { provisional_sale_no?: string | null }).provisional_sale_no),
+          final_sale_no: formatSaleNo((l as { final_sale_no?: string | null }).final_sale_no),
           lot_no: formatFourDigitNo(l.lot_no as string | null),
           grade: l.grade as string | null,
           bags: l.bags as number | null,

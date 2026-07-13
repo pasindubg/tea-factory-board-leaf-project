@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateSaleLotsInline } from "../../actions";
+import { deleteLot } from "../../_actions/lots";
 import { money } from "../../format";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { showAppToast } from "@/components/action-feedback";
 
 export type SaleLineRow = {
   id: string;
@@ -33,7 +36,7 @@ export type SaleLineRow = {
 };
 
 const COLUMNS: ColumnDef<SaleLineRow>[] = [
-  { key: "dispatchSaleNo", label: "Dispatch no.", accessor: (r) => r.dispatchSaleNo ?? null, sortable: true, filter: "text", lov: false },
+  { key: "dispatchSaleNo", label: "Broker invoice no.", accessor: (r) => r.dispatchSaleNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "lotNo", label: "Lot no.", accessor: (r) => r.lotNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (r) => r.invoiceNo, sortable: true, filter: "text", lov: false },
   { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
@@ -52,59 +55,46 @@ const COLUMNS: ColumnDef<SaleLineRow>[] = [
 ];
 
 const RIGHT_ALIGNED = new Set(["bags", "kgPerBag", "sampleKg", "netWt", "pricePerKg", "proceeds", "vatAmount", "reprintCount"]);
-const EDITABLE_STATES = ["acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"];
+const EDITABLE_STATES = ["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"];
 const SOLD_REQUIREMENTS = "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT.";
+
+const LIST: ListDefinition<SaleLineRow> = {
+  columns: COLUMNS,
+  selectionMode: "multi",
+  enableEdit: true,
+  enableDelete: true,
+};
 
 export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: SaleLineRow[]; invoiceEditingLocked?: boolean }) {
   const router = useRouter();
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "multi", getId: (row) => row.id });
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
-  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.has(row.id));
+  const [deleteRequest, setDeleteRequest] = useState<SaleLineRow[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const selectedRows = useMemo(() => rows.filter((row) => selection.selectedIds.has(row.id)), [rows, selection.selectedIds]);
   const actionSaleId = selectedRows[0]?.saleId ?? rows[0]?.saleId ?? "";
   const formId = "sale-lines-inline-edit";
 
-  function showToast(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 4500);
-  }
-
-  function toggleSelected(id: string) {
-    if (invoiceEditingLocked) return;
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleVisible() {
-    if (invoiceEditingLocked) return;
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (allVisibleSelected) {
-        for (const row of visibleRows) next.delete(row.id);
-      } else {
-        for (const row of visibleRows) next.add(row.id);
+  async function confirmDelete() {
+    if (!deleteRequest) return;
+    setDeleting(true);
+    try {
+      for (const row of deleteRequest) {
+        if (!row.dispatchId) throw new Error("This lot is not linked to a broker invoice.");
+        await deleteLot(row.id, row.dispatchId);
       }
-      return next;
-    });
-  }
-
-  function handleRowSelection(event: MouseEvent<HTMLTableRowElement>, id: string) {
-    if ((event.target as HTMLElement).closest("a,button,input,select,textarea")) return;
-    toggleSelected(id);
-  }
-
-  function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, id: string) {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    toggleSelected(id);
+      selection.clear();
+      setDeleteRequest(null);
+      showAppToast(`${deleteRequest.length === 1 ? "Lot" : "Lots"} deleted.`);
+      router.refresh();
+    } catch {
+      showAppToast("Could not delete one or more lots. Please try again.", "error");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function validateSoldRows(formData: FormData) {
@@ -123,71 +113,57 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
       id={formId}
       action={async (formData) => {
         if (!validateSoldRows(formData)) {
-          showToast(SOLD_REQUIREMENTS);
+          showAppToast(SOLD_REQUIREMENTS, "error");
           return;
         }
         setSaving(true);
         try {
           await updateSaleLotsInline(actionSaleId, formData);
           setEditing(false);
-          setSelectedIds(new Set());
+          selection.clear();
           router.refresh();
         } finally {
           setSaving(false);
         }
       }}
-      className="mt-3 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900"
+      className="mt-3"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
-        <p className="text-xs text-stone-500 dark:text-stone-400">
-          {invoiceEditingLocked ? `${rows.length} lots · settled` : editing ? `${selectedIds.size} editing` : selectedIds.size > 0 ? `${selectedIds.size} selected` : `${rows.length} lots`}
-        </p>
-        {editing ? (
-          <div className="flex items-center gap-2">
+      <ListSurface>
+      <ListCommandToolbar
+        mode={LIST.selectionMode ?? "multi"}
+        count={selection.selectedCount}
+        enableEdit={Boolean(LIST.enableEdit && !editing && !invoiceEditingLocked)}
+        onEdit={{ label: "Edit", onClick: () => setEditing(true), disabled: selection.selectedCount === 0 }}
+        enableDelete={Boolean(LIST.enableDelete && !editing && !invoiceEditingLocked)}
+        onDelete={{ label: "Delete", onClick: () => setDeleteRequest(selectedRows), disabled: selection.selectedCount === 0, busy: deleting }}
+      >
+        {editing && (
+          <>
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => { setEditing(false); selection.clear(); }}
               className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={saving || selectedIds.size === 0}
+              disabled={saving || selection.selectedCount === 0}
               className="inline-flex h-8 items-center gap-2 rounded-md bg-green-700 px-3 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-50"
             >
               <span className={`h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent ${saving ? "" : "hidden"}`} />
               {saving ? "Saving..." : "Save"}
             </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            disabled={selectedIds.size === 0 || invoiceEditingLocked}
-            onClick={() => setEditing(true)}
-            className="inline-flex h-8 items-center gap-2 rounded-md border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
-            title={invoiceEditingLocked ? "Invoice editing is locked after settlement." : "Edit selected lots"}
-          >
-            <PencilIcon />
-            Edit
-          </button>
+          </>
         )}
-      </div>
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+      </ListCommandToolbar>
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              <th className="w-10 px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleVisible}
-                  disabled={invoiceEditingLocked}
-                  aria-label="Select visible lots"
-                />
-              </th>
-              {COLUMNS.map((col) => (
+              <ListSelectionHeader mode={LIST.selectionMode ?? "multi"} scope="sale-lots" checked={selection.allVisibleSelected(visibleRows)} onChange={() => selection.toggleVisible(visibleRows)} disabled={invoiceEditingLocked || editing} />
+              {LIST.columns.map((col) => (
                 <th key={col.key} className={`px-4 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
                   {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
                 </th>
@@ -196,27 +172,16 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
           </thead>
           <tbody>
             {visibleRows.map((line) => {
-              const isEditing = editing && selectedIds.has(line.id);
+              const isEditing = editing && selection.isSelected(line.id);
               return (
                 <tr
                   key={line.id}
-                  tabIndex={invoiceEditingLocked ? -1 : 0}
-                  aria-selected={selectedIds.has(line.id)}
-                  onClick={(event) => handleRowSelection(event, line.id)}
-                  onKeyDown={(event) => handleRowKeyDown(event, line.id)}
-                  className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selectedIds.has(line.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                  {...selection.rowProps(line.id, invoiceEditingLocked || editing)}
+                  className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(line.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
                 >
+                  <ListSelectionCell mode={LIST.selectionMode ?? "multi"} scope="sale-lots" id={line.id} label={`invoice ${line.invoiceNo || line.id}`} checked={selection.isSelected(line.id)} onChange={() => selection.toggle(line.id)} disabled={invoiceEditingLocked || editing} />
                   <td className="px-4 py-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(line.id)}
-                      onChange={() => toggleSelected(line.id)}
-                      disabled={invoiceEditingLocked}
-                      aria-label={`Select invoice ${line.invoiceNo || line.id}`}
-                    />
                     {isEditing && <input type="hidden" name="lot_id" value={line.id} />}
-                  </td>
-                  <td className="px-4 py-2">
                     {line.dispatchId ? (
                       <Link href={`/dashboard/auction/${line.dispatchId}`} className="text-green-700 hover:underline dark:text-green-400">
                         {line.dispatchSaleNo}
@@ -316,11 +281,17 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
           </tbody>
         </table>
       </div>
-      {toast && (
-        <div className="fixed bottom-5 left-5 z-[60] max-w-sm rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 shadow-lg dark:border-red-900 dark:bg-red-950 dark:text-red-300" role="alert">
-          {toast}
-        </div>
-      )}
+      <ConfirmationDialog
+        open={deleteRequest !== null}
+        title={`Delete ${deleteRequest?.length === 1 ? "lot" : `${deleteRequest?.length ?? 0} lots`}?`}
+        description="This permanently removes the selected lots and their related acknowledgement, valuation, and sale records. This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onCancel={() => setDeleteRequest(null)}
+        onConfirm={confirmDelete}
+      />
+      </ListSurface>
     </form>
   );
 }
@@ -345,14 +316,5 @@ function NumberInput({ name, defaultValue, width, step = "0.01" }: { name: strin
       defaultValue={defaultValue ?? ""}
       className={`${width} rounded border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100`}
     />
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
-      <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
-    </svg>
   );
 }

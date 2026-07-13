@@ -14,7 +14,7 @@ export type SaleSideListRow = {
 
 const COLUMNS: ColumnDef<SaleSideListRow>[] = [
   { key: "saleNo", label: "Sale", accessor: (row) => row.saleNo, sortable: true, filter: "text" },
-  { key: "dispatchNos", label: "Dispatches", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
+  { key: "dispatchNos", label: "Broker invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
   { key: "brokers", label: "Brokers", accessor: (row) => row.brokers.join(", ") || null, sortable: true, filter: "text" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date" },
   { key: "statuses", label: "Status", accessor: (row) => row.statuses.join(", ") || null, sortable: true, filter: "text" },
@@ -51,7 +51,7 @@ export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]
               </div>
               <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{sale.brokers.join(", ") || "—"}</p>
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">{sale.dispatchNos.length} dispatch{sale.dispatchNos.length === 1 ? "" : "es"}</span>
+                <span className="tabular-nums text-stone-500 dark:text-stone-400">{sale.dispatchNos.length} broker invoice{sale.dispatchNos.length === 1 ? "" : "s"}</span>
                 <span className="text-stone-500 dark:text-stone-400">{sale.saleDate ?? "—"}</span>
               </div>
             </Link>

@@ -20,7 +20,7 @@ async function ensureDispatchEditable(
     .single();
   const status = sale?.status as string | null | undefined;
   if (status !== "draft" && status !== "dispatched") {
-    back(detailPath, "Only the owner can edit this dispatch after it is confirmed.");
+    back(detailPath, "Only the owner can edit this broker invoice after it is confirmed.");
   }
 }
 
@@ -51,11 +51,11 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
 
   const states = (lots ?? []).map((lot) => lot.state as string | null);
   const cataloguedLots = states.filter((state) =>
-    ["acknowledged", "pending", "missing", "shutout", "withdrawn", "re-print", "valued", "sold", "settled"].includes(state ?? ""),
+    ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(state ?? ""),
   ).length;
 
   let nextStatus: string | null = null;
-  if (cataloguedLots > 0 && ["draft", "dispatched", "grn"].includes(current)) {
+  if (cataloguedLots > 0 && ["draft", "dispatched", "invoiced", "grn"].includes(current)) {
     nextStatus = "catalogued";
   }
 
@@ -81,7 +81,7 @@ async function ensureInvoiceNumbersUnused(
     (row) => wanted.has(formatFourDigitNo(row.invoice_no as string)) && (!excludeLotId || row.lot_id !== excludeLotId),
   );
   if (conflict) {
-    back(detailPath, `Invoice ${conflict.invoice_no as string} is already attached to another dispatch lot.`);
+    back(detailPath, `Invoice ${conflict.invoice_no as string} is already attached to another broker invoice.`);
   }
 }
 
@@ -109,7 +109,7 @@ async function reusableReprintSourceForInvoices(
   const blocking = rows.find((lot) => lot.state !== "re-print");
   if (blocking) {
     const conflict = conflicts.find((row) => row.lot_id === blocking.id);
-    back(detailPath, `Invoice ${conflict?.invoice_no as string} is already attached to another active dispatch lot.`);
+    back(detailPath, `Invoice ${conflict?.invoice_no as string} is already attached to another active broker invoice.`);
   }
 
   return rows
@@ -280,10 +280,17 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
   if (sampleKg >= bags * kgPerBag) back(detail, "Sample weight must be less than the gross lot weight.");
   const netWt = netWeight(bags, kgPerBag, sampleKg);
   const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+  const { data: brokerInvoice } = await supabase
+    .from("auction_sales")
+    .select("target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .single();
   const isBelowAppliedThreshold = threshold != null && threshold > 0 && netWt < threshold;
   const { data: createdLot, error } = await supabase.from("auction_lots").insert({
     factory_id: profile.factory_id, sale_id: saleId, mark_id: str(formData.get("mark_id")) || null,
     invoice_no: invoiceNo, lot_no: formatFourDigitNo(str(formData.get("lot_no"))) || null,
+    provisional_sale_no: (brokerInvoice?.target_sale_no as string | null) ?? null,
     grade,
     bags,
     kg_per_bag: kgPerBag,
@@ -308,8 +315,8 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
 }
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).
-// Lots on a draft dispatch can be removed by any auction role, but only while
-// still invoiced/pending (fixing entry mistakes). Once the dispatch is
+// Lots on a draft broker invoice can be removed by any auction role, but only while
+// still invoiced/pending (fixing entry mistakes). Once the broker invoice is
 // confirmed, deletion is OWNER-ONLY and works at any lot lifecycle stage —
 // the delete cascades the lot's dependent records (VAT ledger + sale line,
 // valuation, invoice records, audit rows) so a wrongly imported lot can be
@@ -328,7 +335,7 @@ export async function deleteLot(id: string, saleId: string) {
   const isDraft = saleStatus === "draft" || saleStatus === "dispatched";
   const isOwner = profile.role === "owner";
   if (!isDraft && !isOwner) {
-    back(detail, "Only the owner can delete lots after the dispatch is confirmed.");
+    back(detail, "Only the owner can delete lots after the broker invoice is confirmed.");
   }
   if (!isOwner && !["invoiced", "pending"].includes(lot.state as string)) {
     back(detail, "Only invoiced/pending lots can be removed.");

@@ -19,7 +19,7 @@ export type BySaleRow = {
 const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { maximumFractionDigits: 0 });
 
 const COLUMNS: ColumnDef<BySaleRow>[] = [
-  { key: "saleNo", label: "Dispatch", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
+  { key: "saleNo", label: "Broker invoice", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
   { key: "targetSaleNo", label: "Sale", accessor: (r) => r.targetSaleNo ?? null, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.broker, sortable: true, filter: "select" },
   { key: "status", label: "Status", accessor: (r) => r.status, sortable: true, filter: "select" },

@@ -12,10 +12,14 @@ export type ValuationTableRow = {
   projectedProceeds: number;
   tastingNote: string;
   matched: boolean;
+  currentSaleNo: string;
+  outcome: string;
 };
 
 const COLUMNS: ColumnDef<ValuationTableRow>[] = [
   { key: "invoiceNo", label: "Invoice", accessor: (r) => r.invoiceNo, sortable: true, filter: "text" },
+  { key: "currentSaleNo", label: "Current sale", accessor: (r) => r.currentSaleNo || null, sortable: true, filter: "text" },
+  { key: "outcome", label: "On confirm", accessor: (r) => r.outcome, sortable: true, filter: "select" },
   { key: "lotNo", label: "Lot", accessor: (r) => r.lotNo, sortable: true, filter: "text" },
   { key: "grade", label: "Grade", accessor: (r) => r.grade, sortable: true, filter: "select" },
   { key: "netWt", label: "Net kg", accessor: (r) => r.netWt, sortable: true },
@@ -48,6 +52,8 @@ export function ValuationTable({ rows }: { rows: ValuationTableRow[] }) {
           {visibleRows.map((l) => (
             <tr key={l.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0 align-top">
               <td className="px-3 py-2 font-medium">{l.invoiceNo}</td>
+              <td className="px-3 py-2">{l.currentSaleNo || "—"}</td>
+              <td className="px-3 py-2 text-xs">{l.outcome}</td>
               <td className="px-3 py-2">{l.lotNo}</td>
               <td className="px-3 py-2">{l.grade}</td>
               <td className="px-3 py-2 text-right">{l.netWt.toFixed(2)}</td>
@@ -67,7 +73,7 @@ export function ValuationTable({ rows }: { rows: ValuationTableRow[] }) {
           ))}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={8} className="px-3 py-8 text-center text-stone-400 dark:text-stone-500">
+              <td colSpan={10} className="px-3 py-8 text-center text-stone-400 dark:text-stone-500">
                 No rows match these filters.
               </td>
             </tr>

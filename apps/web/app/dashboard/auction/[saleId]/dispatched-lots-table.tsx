@@ -5,13 +5,14 @@ import { updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
 import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
-import { formatFourDigitNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { LOT_STATES } from "../lot-states";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { showAppToast } from "@/components/action-feedback";
 
 const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
+  { key: "sale_no", label: "Sale", accessor: (r) => r.final_sale_no ?? r.provisional_sale_no ?? null, sortable: true, filter: "text" },
   { key: "lot_no", label: "Lot no.", accessor: (r) => r.lot_no ?? null, sortable: true, filter: "text" },
   { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
   { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true },
@@ -24,8 +25,8 @@ const COLUMNS: ColumnDef<LotRow>[] = [
 const LIST: ListDefinition<LotRow> = {
   columns: COLUMNS,
   selectionMode: "single",
-  editable: true,
-  commands: [{ id: "edit", label: "Edit selected lot", requiresSelection: true }],
+  enableEdit: true,
+  enableDelete: true,
 };
 
 export function DispatchedLotsTable({
@@ -51,6 +52,7 @@ export function DispatchedLotsTable({
   const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
   const visibleRows = controls.rows;
   const selectedLot = rows.find((row) => row.id === selection.selectedId) ?? null;
+  const selectedLotCanDelete = Boolean(selectedLot && (isOwner || selectedLot.state === "invoiced" || selectedLot.state === "pending"));
 
   useEffect(() => {
     setEditingId(null);
@@ -80,18 +82,14 @@ export function DispatchedLotsTable({
 
   return (
     <ListSurface>
-      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount}>
-        {canEdit && isOwner && (
-          <button
-            type="button"
-            disabled={!selectedLot || pendingIds.has(selectedLot.id)}
-            onClick={() => selectedLot && setEditingId(selectedLot.id)}
-            className="inline-flex min-h-9 items-center rounded-full bg-green-700 px-4 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-green-600 dark:hover:bg-green-500"
-          >
-            Edit selected lot
-          </button>
-        )}
-      </ListCommandToolbar>
+      <ListCommandToolbar
+        mode={LIST.selectionMode ?? "single"}
+        count={selection.selectedCount}
+        enableEdit={Boolean(canEdit && isOwner && LIST.enableEdit)}
+        onEdit={{ label: "Edit", onClick: () => selectedLot && setEditingId(selectedLot.id), disabled: !selectedLot || pendingIds.has(selectedLot?.id ?? "") }}
+        enableDelete={Boolean(canEdit && isOwner && LIST.enableDelete)}
+        onDelete={{ label: "Delete", onClick: () => selectedLot && setLotToDelete({ id: selectedLot.id, cascade: !["invoiced", "pending"].includes(selectedLot.state ?? "") }), disabled: !selectedLotCanDelete || pendingIds.has(selectedLot?.id ?? "") }}
+      />
       <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -117,11 +115,6 @@ export function DispatchedLotsTable({
             const minNetKg = l.threshold_min_net_kg ?? 0;
             const hasMinimumWeightIssue = l.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
             const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`;
-            const removable = l.state === "invoiced" || l.state === "pending";
-            // The owner may delete a lot at ANY lifecycle stage (e.g. cleaning up a
-            // wrongly imported ack lot after the dispatch is confirmed) — the server
-            // cascades the lot's dependent records. Non-owners keep the old rule.
-            const deletable = removable || isOwner;
             const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
 
             return (
@@ -170,11 +163,19 @@ export function DispatchedLotsTable({
                       {l.lot_source === "acknowledgement" && (
                         <span
                           className="ml-1 rounded-full bg-purple-100 dark:bg-purple-900 px-1.5 py-0.5 text-xs text-purple-800 dark:text-purple-300"
-                          title="This lot was not in the factory-entered dispatch — it was added from the broker's acknowledgement PDF."
+                          title="This lot was not in the factory-entered broker invoice — it was added from the broker's acknowledgement PDF."
                         >
                           From ack
                         </span>
                       )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="tabular-nums">{formatSaleNo(l.final_sale_no ?? l.provisional_sale_no) || "—"}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${l.final_sale_no ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
+                          {l.final_sale_no ? "Final" : "Temporary"}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-3 py-2">{l.lot_no ?? "—"}</td>
                     <td className="px-3 py-2">{l.grade}</td>
@@ -205,32 +206,6 @@ export function DispatchedLotsTable({
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {canEdit && isOwner && deletable && (
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => setEditingId(l.id)}
-                            disabled={pendingIds.has(l.id)}
-                            className="rounded p-1 text-stone-400 hover:text-stone-600 hover:bg-stone-100 dark:text-stone-500 dark:hover:text-stone-300 dark:hover:bg-stone-800 disabled:opacity-40"
-                            title="Edit"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                              <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
-                              <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={pendingIds.has(l.id)}
-                            onClick={() => setLotToDelete({ id: l.id, cascade: !removable })}
-                            className="rounded p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-40"
-                            title="Delete"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        </div>
-                      )}
                       {canEdit && isOwner && reprintable && (
                         <div className="text-right">
                           {reprintId === l.id ? (
@@ -272,7 +247,7 @@ export function DispatchedLotsTable({
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={9} className="px-6 py-12 text-center">
+              <td colSpan={10} className="px-6 py-12 text-center">
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots match these filters.</p>
                 <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
                   Clear filters
@@ -282,10 +257,10 @@ export function DispatchedLotsTable({
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={9} className="px-6 py-12 text-center">
+              <td colSpan={10} className="px-6 py-12 text-center">
                 <p className="text-2xl mb-2">📦</p>
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots yet.</p>
-                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Click + Add lot above to enter the lots you dispatched.</p>
+                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Click + Add lot above to enter the specific invoices under this broker invoice.</p>
               </td>
             </tr>
           )}
@@ -342,6 +317,10 @@ export function EditRow({
             {invoices.length} inv
           </span>
         )}
+      </td>
+      <td className="px-3 py-2 text-xs">
+        <span className="tabular-nums">{formatSaleNo(lot.final_sale_no ?? lot.provisional_sale_no) || "—"}</span>
+        <span className="ml-1 text-stone-400">{lot.final_sale_no ? "Final" : "Temporary"}</span>
       </td>
       <td className="px-3 py-2">
         <input

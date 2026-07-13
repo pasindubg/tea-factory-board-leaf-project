@@ -3,7 +3,7 @@ import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import type { ParsedValuation } from "@tea/api";
 import { confirmValuation, rejectImport } from "../../../actions";
-import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
+import { canonicalGrade, gradeAliasMap } from "../../../_actions/_shared";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
 import { ValuationTable, type ValuationTableRow } from "./valuation-table";
 
@@ -32,17 +32,25 @@ export default async function ValuationReviewPage({
     );
   }
 
-  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no").eq("id", saleId).single();
+  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no, broker_id").eq("id", saleId).single();
   const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
-  // The valuation covers the broker's whole sale — match against lots on every
-  // dispatch in this sale's group.
-  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase.from("auction_lots").select("invoice_no, lot_invoices(invoice_no)").in("sale_id", groupIds);
-  const known = new Set<string>();
-  for (const lot of (lotRows ?? []) as { invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
-    if (lot.invoice_no) known.add(formatFourDigitNo(lot.invoice_no));
+  // Match broker-wide: a Not Valued invoice may reappear in a later sale's
+  // valuation while remaining attached to its original Broker Invoice.
+  const { data: brokerInvoices } = await supabase
+    .from("auction_sales")
+    .select("id")
+    .eq("factory_id", profile.factory_id)
+    .eq("broker_id", sale?.broker_id as string);
+  const brokerInvoiceIds = (brokerInvoices ?? []).map((invoice) => invoice.id as string);
+  const { data: lotRows } = brokerInvoiceIds.length > 0
+    ? await supabase.from("auction_lots").select("invoice_no, provisional_sale_no, final_sale_no, lot_invoices(invoice_no)").in("sale_id", brokerInvoiceIds)
+    : { data: [] };
+  const known = new Map<string, { provisionalSaleNo: string | null; finalSaleNo: string | null }>();
+  for (const lot of (lotRows ?? []) as { invoice_no: string | null; provisional_sale_no: string | null; final_sale_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
+    const assignment = { provisionalSaleNo: lot.provisional_sale_no, finalSaleNo: lot.final_sale_no };
+    if (lot.invoice_no) known.set(formatFourDigitNo(lot.invoice_no), assignment);
     for (const invoice of lot.lot_invoices ?? []) {
-      if (invoice.invoice_no) known.add(formatFourDigitNo(invoice.invoice_no));
+      if (invoice.invoice_no) known.set(formatFourDigitNo(invoice.invoice_no), assignment);
     }
   }
 
@@ -53,8 +61,14 @@ export default async function ValuationReviewPage({
     lots: rawParsed.lots.map((lot) => ({ ...lot, grade: canonicalGrade(lot.grade, aliases) })),
   };
   const confirmed = imp.status === "confirmed";
+  const reportSaleNo = formatSaleNo(parsed.saleNo);
   const matched = parsed.lots.filter((l) => known.has(formatFourDigitNo(l.invoiceNo))).length;
   const tableRows: ValuationTableRow[] = parsed.lots.map((l) => ({
+    ...(() => {
+      const assignment = known.get(formatFourDigitNo(l.invoiceNo));
+      const currentSaleNo = formatSaleNo(assignment?.finalSaleNo ?? assignment?.provisionalSaleNo);
+      return { currentSaleNo, outcome: assignment ? (saleNoKey(currentSaleNo) === saleNoKey(reportSaleNo) ? "Confirm sale" : `Move to ${reportSaleNo}`) : "No invoice" };
+    })(),
     invoiceNo: l.invoiceNo,
     lotNo: l.lotNo,
     grade: l.grade,

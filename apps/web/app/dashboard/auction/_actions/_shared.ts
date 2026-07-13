@@ -16,7 +16,7 @@ export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
 export type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
-export type DocType = "acknowledgement" | "valuation" | "contract" | "bank_csv";
+export type DocType = "grn" | "acknowledgement" | "valuation" | "contract" | "bank_csv";
 
 export const gradeAliasKey = (value: string | null | undefined) =>
   String(value ?? "").toUpperCase().replace(/\s+/g, "");
@@ -76,6 +76,7 @@ export async function stageImport(
   docType: DocType,
   file: File,
   parsed: unknown,
+  storagePath?: string | null,
 ): Promise<string | null> {
   const filename = file.name;
   const contentHash = createHash("sha256")
@@ -90,7 +91,7 @@ export async function stageImport(
   if (existing?.id) {
     await supabase
       .from("doc_imports")
-      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: filename, doc_type: docType })
+      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: filename, storage_path: storagePath ?? null, doc_type: docType })
       .eq("id", existing.id);
     return existing.id as string;
   }
@@ -100,6 +101,7 @@ export async function stageImport(
       factory_id: factoryId,
       doc_type: docType,
       source_filename: filename,
+      storage_path: storagePath ?? null,
       content_hash: contentHash,
       parsed_json: parsed,
       status: "parsed",

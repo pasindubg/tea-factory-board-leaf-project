@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ListSearchPanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSearchPanel, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 export type ReprintOverviewRow = {
   id: string;
@@ -29,7 +29,7 @@ export type ReprintOverviewRow = {
 };
 
 const COLUMNS: ColumnDef<ReprintOverviewRow>[] = [
-  { key: "dispatchNo", label: "Dispatch", accessor: (r) => r.dispatchNo ?? null, sortable: true, filter: "text" },
+  { key: "dispatchNo", label: "Broker invoice", accessor: (r) => r.dispatchNo ?? null, sortable: true, filter: "text" },
   { key: "saleNo", label: "Sale", accessor: (r) => r.saleNo ?? null, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.broker, sortable: true, filter: "select" },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (r) => r.invoiceNo, sortable: true, filter: "text" },
@@ -43,7 +43,7 @@ const COLUMNS: ColumnDef<ReprintOverviewRow>[] = [
   { key: "remainingNetKg", label: "Remaining kg", accessor: (r) => r.remainingNetKg, sortable: true },
   { key: "actualSoldKg", label: "Actual sold kg", accessor: (r) => r.actualSoldKg ?? null, sortable: true },
   { key: "history", label: "History", accessor: (r) => r.history, sortable: false, filter: "text" },
-  { key: "dispatchDate", label: "Dispatched", accessor: (r) => r.dispatchDate ?? null, sortable: true, searchInput: "date" },
+  { key: "dispatchDate", label: "Invoice date", accessor: (r) => r.dispatchDate ?? null, sortable: true, searchInput: "date" },
   { key: "saleDate", label: "Sale date", accessor: (r) => r.saleDate ?? null, sortable: true, searchInput: "date" },
   { key: "source", label: "Source", accessor: (r) => r.source ?? null, sortable: true, filter: "select" },
   { key: "stateLabel", label: "State", accessor: (r) => r.stateLabel, sortable: true, filter: "select" },
@@ -51,18 +51,22 @@ const COLUMNS: ColumnDef<ReprintOverviewRow>[] = [
 ];
 
 const RIGHT_ALIGNED = new Set(["bags", "kgPerBag", "totalSampleKg", "remainingNetKg", "actualSoldKg", "reprintCount"]);
+const LIST: ListDefinition<ReprintOverviewRow> = { columns: COLUMNS, selectionMode: "single" };
 
 export function ReprintOverviewTable({ rows }: { rows: ReprintOverviewRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
+  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
   const visibleRows = controls.rows;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface>
+      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount} />
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-            {COLUMNS.map((col) => (
+            {LIST.columns.map((col) => (
               <th key={col.key} className={`px-4 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
@@ -71,7 +75,7 @@ export function ReprintOverviewTable({ rows }: { rows: ReprintOverviewRow[] }) {
         </thead>
         <tbody>
           {visibleRows.map((row) => (
-            <tr key={row.id} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
+            <tr key={row.id} {...selection.rowProps(row.id)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(row.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
               <td className="px-4 py-2">
                 <Link href={`/dashboard/auction/${row.dispatchId}`} className="font-medium text-green-700 hover:underline dark:text-green-400">
                   {row.dispatchNo ?? "—"}
@@ -115,6 +119,7 @@ export function ReprintOverviewTable({ rows }: { rows: ReprintOverviewRow[] }) {
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </ListSurface>
   );
 }

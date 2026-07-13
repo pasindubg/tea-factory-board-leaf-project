@@ -103,7 +103,7 @@ export default async function ReprintOverviewPage() {
       <div>
         <h2 className="text-xl font-semibold">Re-print Overview</h2>
         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-          Dispatch invoices marked as re-print, with original lot attributes and forward re-print counts.
+          Broker-invoice lots marked as re-print, with original lot attributes and forward re-print counts.
         </p>
       </div>
       <ReprintOverviewTable rows={rows} />

@@ -12,9 +12,10 @@ export const docImports = pgTable(
       .references(() => factories.id)
       .notNull(),
     docType: text("doc_type", {
-      enum: ["acknowledgement", "valuation", "contract", "bank_csv"],
+      enum: ["grn", "acknowledgement", "valuation", "contract", "bank_csv"],
     }).notNull(),
     sourceFilename: text("source_filename"),
+    storagePath: text("storage_path"),
     contentHash: text("content_hash").notNull(),
     parsedJson: jsonb("parsed_json"),
     status: text("status", { enum: ["parsed", "reviewed", "confirmed", "rejected"] })

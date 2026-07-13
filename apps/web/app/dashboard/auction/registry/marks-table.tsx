@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
-import { deleteMark, updateMark } from "../actions";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSurface, SortButton, useListControls, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { createMark, deleteMark, updateMark } from "../actions";
+import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 
 export type MarkRow = { id: string; code: string; name: string; address: string | null };
@@ -12,17 +13,21 @@ const COLUMNS: ColumnDef<MarkRow>[] = [
   { key: "name", label: "Name", accessor: (r) => r.name, sortable: true, filter: "text" },
   { key: "address", label: "Address", accessor: (r) => r.address ?? null, sortable: true, filter: "text" },
 ];
+const LIST: ListDefinition<MarkRow> = { columns: COLUMNS, selectionMode: "single", add: true, edit: true, delete: true };
 
 const input = "w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800";
 
 export function MarksTable({ rows, isOwner }: { rows: MarkRow[]; isOwner: boolean }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const controls = useListControls(rows, COLUMNS);
+  const [adding, setAdding] = useState(false);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface>
+      <ListCommandToolbar mode="single" enableAdd={isOwner && Boolean(LIST.add)} onAdd={{ label: "Add mark", onClick: () => setAdding((value) => !value), disabled: Boolean(editingId) }} />
+      <ListCreatePanel open={adding} title="Add estate mark"><form action={createMark} className="grid gap-3 sm:grid-cols-3"><input name="code" required placeholder="MF1530" className={input} /><input name="name" required placeholder="KUMUDU" className={input} /><div className="flex gap-2"><input name="address" placeholder="Address" className={input} /><SubmitButton pendingText="Adding…" className="shrink-0 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">Add</SubmitButton></div></form></ListCreatePanel>
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -96,6 +101,6 @@ export function MarksTable({ rows, isOwner }: { rows: MarkRow[]; isOwner: boolea
         </tbody>
       </table>
       </div>
-    </div>
+    </ListSurface>
   );
 }

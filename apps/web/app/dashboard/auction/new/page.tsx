@@ -16,10 +16,10 @@ export default async function NewDispatchPage({
 
   return (
     <div className="max-w-lg">
-      <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New dispatch</h2>
+      <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">New broker invoice</h2>
       <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-        Pick the broker and sale details. The dispatch number is assigned by the
-        system, and you&apos;ll add the lots (invoice no., grade, bags) on the
+        Pick the broker and sale details. The broker invoice number is assigned by the
+        system, and you&apos;ll add the lot invoices (invoice no., grade, bags) on the
         next screen.
       </p>
       {error && (
@@ -51,7 +51,7 @@ export default async function NewDispatchPage({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Dispatch number</label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Broker invoice number</label>
             <div className="mt-1 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -75,7 +75,7 @@ export default async function NewDispatchPage({
           </div>
           <div>
             <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
-              Dispatch date <span className="text-red-500">*</span>
+              Invoice date <span className="text-red-500">*</span>
             </label>
             <input
               type="date"
@@ -101,7 +101,7 @@ export default async function NewDispatchPage({
               pendingText="Creating…"
               className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
-              Create dispatch
+              Create broker invoice
             </SubmitButton>
             <Link
               href="/dashboard/auction"

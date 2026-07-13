@@ -111,7 +111,7 @@ export default async function ReportsPage() {
       {/* Upload blocks */}
       <section>
         <h3 className="text-lg font-medium text-stone-700 dark:text-stone-300">Upload &amp; auto-detect</h3>
-        <p className="text-sm text-stone-500 dark:text-stone-400">Drop a broker PDF or bank CSV — the system parses the sale number and links it to the right dispatch automatically.</p>
+        <p className="text-sm text-stone-500 dark:text-stone-400">Drop a broker PDF or bank CSV — the system parses the sale number and links it to the right broker invoice automatically.</p>
       </section>
 
       <AutoIngestSection

@@ -1,12 +1,13 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
-import { AUC, str, num, back, nextDispatchNo, saleDetailPath, writeAudit } from "./_shared";
+import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
-// ---------- Sales (dispatches) ----------
+// ---------- Broker invoices ----------
 export async function createSale(formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const np = `${AUC}/new`;
@@ -82,6 +83,14 @@ export async function updateSale(id: string, formData: FormData) {
   if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
   if (Object.keys(updates).length > 0) {
     await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
+    if (updates.target_sale_no) {
+      await supabase
+        .from("auction_lots")
+        .update({ provisional_sale_no: updates.target_sale_no })
+        .eq("sale_id", id)
+        .eq("factory_id", profile.factory_id)
+        .is("final_sale_no", null);
+    }
   }
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
@@ -91,12 +100,69 @@ export async function confirmDispatchDraft(id: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
   await supabase
     .from("auction_sales")
-    .update({ status: "grn" })
+    .update({ status: "invoiced" })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .in("status", ["draft", "dispatched"]);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
+}
+
+export async function completeGrn(id: string, formData: FormData) {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const detail = `${AUC}/${id}`;
+  const { data: invoice } = await supabase
+    .from("auction_sales")
+    .select("id, status")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (!invoice) back(detail, "Broker Invoice not found.");
+  if (!["invoiced", "grn"].includes(invoice?.status as string)) {
+    back(detail, "Confirm the Broker Invoice before proceeding to GRN.");
+  }
+
+  const entry = formData.get("grn_file");
+  let uploaded = false;
+  if (entry instanceof File && entry.size > 0) {
+    const allowed = entry.type === "application/pdf" || entry.type.startsWith("image/");
+    if (!allowed) back(detail, "GRN must be an image or PDF.");
+    const safeName = entry.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const storagePath = `${profile.factory_id}/${id}/grn/${randomUUID()}-${safeName}`;
+    const bytes = new Uint8Array(await entry.arrayBuffer());
+    const { error: uploadError } = await supabase.storage
+      .from("auction-documents")
+      .upload(storagePath, bytes, { contentType: entry.type || "application/octet-stream", upsert: false });
+    if (uploadError) back(detail, `Could not upload GRN: ${uploadError.message}`);
+    const importId = await stageImport(
+      supabase,
+      profile.factory_id,
+      id,
+      "grn",
+      entry,
+      { parserStatus: "pending", mimeType: entry.type, size: entry.size },
+      storagePath,
+    );
+    if (!importId) {
+      await supabase.storage.from("auction-documents").remove([storagePath]);
+      back(detail, "Could not record the uploaded GRN.");
+    }
+    await supabase
+      .from("doc_imports")
+      .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+      .eq("id", importId);
+    uploaded = true;
+  }
+
+  await supabase
+    .from("auction_sales")
+    .update({ status: "grn" })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .in("status", ["invoiced", "grn"]);
+  revalidatePath(AUC);
+  revalidatePath(detail);
+  redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);
 }
 
 export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
@@ -109,7 +175,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
   if (lotIds.length === 0) back(detail, "Select at least one lot to edit.");
 
   const requestedState = str(formData.get("state"));
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
   const state = validStates.has(requestedState) ? requestedState : "";
   const invoiceText = str(formData.get("invoice_no"));
   const invoiceList = invoiceText
@@ -278,7 +344,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
 export async function updateSaleLotsInline(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireProfile(["owner"]);
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
   const lotIds = formData.getAll("lot_id").map((value) => str(value)).filter(Boolean);
   if (lotIds.length === 0) back(detail, "Select at least one lot to edit.");
 

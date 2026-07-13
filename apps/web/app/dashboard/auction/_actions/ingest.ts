@@ -30,7 +30,7 @@ import {
   writeAudit,
 } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
-import { formatFourDigitNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 type CarryForwardLot = {
   id: string;
@@ -172,6 +172,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         sale_id: targetSaleId,
         mark_id: markByCode.get(ackLot.markCode.toUpperCase()) ?? null,
         invoice_no: formatFourDigitNo(ackLot.invoiceNo),
+        provisional_sale_no: formatSaleNo(parsed.saleNo),
         lot_no: formatFourDigitNo(ackLot.lotNo) || null,
         grade: ackLot.grade,
         bags: ackLot.bags,
@@ -243,7 +244,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       if (matchingCarryForwardLots.length > 0) {
         const blocked = matchingCarryForwardLots[0];
         const blockedDispatch = formatFourDigitNo(blocked.auction_sales?.sale_no) || "—";
-        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on dispatch ${blockedDispatch}; it cannot be rolled forward automatically.`);
+        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on broker invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
       }
       rowsToCreate.push(row);
       continue;
@@ -300,7 +301,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       saleId: row.sale_id,
       lotId: candidate.id,
       action: "Rolled forward",
-      detail: `Invoice ${row.invoice_no} moved from dispatch ${fromDispatch} to ${toDispatch} by later acknowledgement.`,
+      detail: `Invoice ${row.invoice_no} moved from broker invoice ${fromDispatch} to ${toDispatch} by later acknowledgement.`,
       reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice again${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
       actor: profile.name,
     });
@@ -353,7 +354,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .from("auction_sales")
       .update({ status: "catalogued" })
       .in("id", [...affectedSales])
-      .in("status", ["draft", "dispatched", "grn"]);
+    .in("status", ["draft", "dispatched", "invoiced", "grn"]);
   }
   revalidatePath(detail);
   const movedNotice = movedLotsFromAck.length > 0 ? ` ${movedLotsFromAck.length} lot(s) rolled forward.` : "";
@@ -402,36 +403,26 @@ export async function confirmValuation(importId: string, saleId: string) {
     })),
   };
 
-  // The valuation covers the broker's whole sale — match lots across all
-  // dispatches in the sale group, not just the one it was uploaded to.
-  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase.from("auction_lots").select("id, sale_id, invoice_no, lot_invoices(invoice_no)").in("sale_id", groupIds);
-  const lotByInv = new Map<string, string>();
-  for (const lot of (lotRows ?? []) as { id: string; invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
-    for (const invoiceNo of invoiceKeys(lot)) lotByInv.set(invoiceNo, lot.id);
-  }
-
-  // One valuation per lot (last line wins, as the sequential upsert did); flip
-  // matched lots to "valued" in a single statement.
-  const valued = parsed.lots.filter((v) => lotByInv.has(v.invoiceNo));
-  const applied = valued.length;
-  const valuationByLot = new Map<string, Record<string, unknown>>();
-  for (const v of valued) {
-    const lotId = lotByInv.get(v.invoiceNo)!;
-    valuationByLot.set(lotId, {
-      factory_id: profile.factory_id, lot_id: lotId,
-      price_min: v.priceMin, price_max: v.priceMax,
-      projected_proceeds: v.projectedProceeds, tasting_note: v.tastingNote,
-    });
-  }
-  if (valuationByLot.size > 0) {
-    await supabase.from("valuations").upsert([...valuationByLot.values()], { onConflict: "lot_id" });
-    await supabase.from("auction_lots").update({ state: "valued" }).in("id", [...valuationByLot.keys()]).neq("state", "shutout");
-  }
-  await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
-  // Dispatch status stops at catalogued; valuation state now lives on lots and sales detail.
+  const reportSaleNo = formatSaleNo(parsed.saleNo);
+  if (!reportSaleNo) return back(detail, "The valuation report does not contain a sale number.");
+  const { data: resultRows, error } = await supabase.rpc("confirm_auction_valuation", {
+    p_import_id: importId,
+    p_broker_invoice_id: saleId,
+    p_sale_no: reportSaleNo,
+    p_parsed: parsed,
+  });
+  if (error) return back(detail, `Could not confirm valuation: ${error.message}`);
+  const result = (Array.isArray(resultRows) ? resultRows[0] : resultRows) as {
+    matched_count?: number;
+    not_valued_count?: number;
+    reassigned_count?: number;
+  } | null;
+  const applied = Number(result?.matched_count ?? 0);
+  const notValued = Number(result?.not_valued_count ?? 0);
+  const reassigned = Number(result?.reassigned_count ?? 0);
   revalidatePath(detail);
-  redirect(`${detail}?notice=${encodeURIComponent(`Recorded valuations for ${applied} lot(s).`)}`);
+  revalidatePath(`${AUC}/sales`);
+  redirect(`${detail}?notice=${encodeURIComponent(`Recorded ${applied} valuation(s); ${notValued} invoice(s) marked Not Valued; ${reassigned} reassigned to sale ${reportSaleNo}.`)}`);
 }
 
 // ---------- Sellers Contract (sale lines, settlements, VAT — A3) ----------

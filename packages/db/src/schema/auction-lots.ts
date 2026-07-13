@@ -19,6 +19,11 @@ export const auctionLots = pgTable(
       .notNull(),
     markId: uuid("mark_id").references(() => marks.id),
     invoiceNo: text("invoice_no").notNull(), // factory ref, e.g. 0058
+    // A lot keeps its physical Broker Invoice parent in sale_id. Its expected
+    // auction sale is provisional until a broker valuation confirms the final
+    // sale independently for this specific invoice.
+    provisionalSaleNo: text("provisional_sale_no"),
+    finalSaleNo: text("final_sale_no"),
     lotNo: text("lot_no"), // broker catalogue no, e.g. 0477 — null until catalogued
     grade: text("grade").notNull(),
     bags: integer("bags"),
@@ -45,6 +50,7 @@ export const auctionLots = pgTable(
         "pending",
         "missing", // explicit human decision: expected & overdue, no catalogue counterpart
         "shutout",
+        "not-valued",
         "valued",
         "sold",
         "re-print",
@@ -61,5 +67,7 @@ export const auctionLots = pgTable(
   (t) => [
     index("idx_auction_lots_factory").on(t.factoryId),
     index("idx_auction_lots_sale").on(t.saleId),
+    index("idx_auction_lots_factory_provisional_sale").on(t.factoryId, t.provisionalSaleNo),
+    index("idx_auction_lots_factory_final_sale").on(t.factoryId, t.finalSaleNo),
   ],
 );

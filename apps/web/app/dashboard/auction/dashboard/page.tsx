@@ -103,7 +103,7 @@ export default async function AuctionDashboardPage() {
   const pendingKg = byState.get("pending")?.kg ?? 0;
 
   const cards: { label: string; value: string; sub?: string }[] = [
-    { label: "Dispatched lots", value: String(totalLots), sub: KG(totalKg) + " net" },
+    { label: "Lot invoices", value: String(totalLots), sub: KG(totalKg) + " net" },
     { label: "Sold", value: `${soldLots} lots`, sub: LKR(proceeds) + " proceeds" },
     {
       label: "VAT collected",

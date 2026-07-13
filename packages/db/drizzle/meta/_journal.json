@@ -183,6 +183,41 @@
       "when": 1784100000000,
       "tag": "0025_auction_grade_aliases",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784101000000,
+      "tag": "0026_broker_invoice_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1784102000000,
+      "tag": "0027_invoice_sale_assignment_grn",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1784103000000,
+      "tag": "0028_bundled_invoice_dispatches",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784104000000,
+      "tag": "0029_auction_warehouses",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784105000000,
+      "tag": "0030_bundled_dispatch_date_range",
+      "breakpoints": true
     }
   ]
 }

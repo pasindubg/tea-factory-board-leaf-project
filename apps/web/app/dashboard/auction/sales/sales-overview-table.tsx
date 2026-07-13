@@ -19,7 +19,7 @@ export type SaleOverviewRow = {
 
 const COLUMNS: ColumnDef<SaleOverviewRow>[] = [
   { key: "saleNo", label: "Sale no.", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
-  { key: "dispatchNos", label: "Dispatches", accessor: (r) => r.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
+  { key: "dispatchNos", label: "Broker invoices", accessor: (r) => r.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
   { key: "brokers", label: "Brokers", accessor: (r) => r.brokers.join(", ") || null, sortable: true, filter: "text" },
   { key: "saleDate", label: "Sale date", accessor: (r) => r.saleDate ?? null, sortable: true, searchInput: "date" },
   { key: "lotsSold", label: "Lots sold", accessor: (r) => r.lotsSold, sortable: true },

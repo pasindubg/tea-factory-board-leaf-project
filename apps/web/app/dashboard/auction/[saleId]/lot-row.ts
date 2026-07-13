@@ -4,6 +4,8 @@
 export type LotRow = {
   id: string;
   invoice_no: string | null;
+  provisional_sale_no: string | null;
+  final_sale_no: string | null;
   lot_no: string | null;
   grade: string | null;
   bags: number | null;

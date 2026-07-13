@@ -71,15 +71,16 @@
 ## Lists And Search
 
 The shared list framework in `apps/web/components/list-controls.tsx` is the
-contract for every operational list, including tables, record selectors, and
-side panels. Define columns once, declare `selectionMode` (`"multi"` or
-`"single"`), and expose actions through `ListCommandToolbar` rather than
-duplicating row-specific controls. Use `ListSurface` for bordered table
-surfaces and `ListSidePanel` for persistent selectors. Rows must be selectable
-from any non-control area of the row and expose `aria-selected`; keyboard
-Enter/Space should perform the same selection. A list marked non-editable may
-still use the same search, sorting, and selection primitives without exposing
-edit commands.
+mandatory contract for every list implementation, including tables, record
+selectors, and side panels. Define columns once, declare `selectionMode`
+(`"multi"` or `"single"`), and expose actions through
+`ListCommandToolbar` rather than duplicating row-specific controls. Use
+`ListSurface` for bordered table surfaces and `ListSidePanel` for persistent
+selectors. Rows must be selectable from any non-control area of the row and
+expose `aria-selected`; keyboard Enter/Space should perform the same
+selection. A list marked non-editable may still use the same search, sorting,
+and selection primitives without exposing edit commands. Do not create an
+ad-hoc list outside this framework.
 
 List pages and list sections must use one consistent search pattern.
 

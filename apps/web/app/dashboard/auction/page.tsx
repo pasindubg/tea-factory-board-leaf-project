@@ -19,7 +19,7 @@ export default async function AuctionSalesPage() {
   return (
     <div>
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Dispatches Overview</h2>
+        <h2 className="text-lg font-medium text-stone-700 dark:text-stone-300">Invoice Overview</h2>
         <NewDispatchForm
           brokers={brokers ?? []}
           nextDispatchNo={await nextDispatchNo(supabase)}

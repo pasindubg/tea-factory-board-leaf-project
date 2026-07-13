@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
-import { deleteBrokerRate, updateBrokerRate } from "../actions";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSurface, SortButton, useListControls, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { createBrokerRate, deleteBrokerRate, updateBrokerRate } from "../actions";
+import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 
 export type RateRow = {
@@ -30,18 +31,22 @@ const COLUMNS: ColumnDef<RateRow>[] = [
   { key: "insurancePerKg", label: "Ins./kg", accessor: (r) => r.insurancePerKg, sortable: true },
   { key: "chargesVatPct", label: "Charges VAT", accessor: (r) => r.chargesVatPct, sortable: true },
 ];
+const LIST: ListDefinition<RateRow> = { columns: COLUMNS, selectionMode: "single", add: true, edit: true, delete: true };
 
 const input = "w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800";
 const fieldClass = "grid gap-1 text-[11px] font-medium text-stone-500 dark:text-stone-400";
 
 export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; brokers: BrokerOption[]; isOwner: boolean }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const controls = useListControls(rows, COLUMNS);
+  const [adding, setAdding] = useState(false);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface>
+      <ListCommandToolbar mode="single" enableAdd={isOwner && Boolean(LIST.add)} onAdd={{ label: "Add rate card", onClick: () => setAdding((value) => !value), disabled: Boolean(editingId) }} />
+      <ListCreatePanel open={adding} title="Add broker rate card"><form action={createBrokerRate} className="grid gap-3"><div className="grid gap-3 sm:grid-cols-2"><select name="broker_id" required defaultValue="" className={input}><option value="" disabled>Pick a broker…</option>{brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.name}</option>)}</select><input type="date" name="effective_from" required defaultValue={new Date().toISOString().slice(0, 10)} className={input} /></div><div className="grid gap-3 sm:grid-cols-3">{RATE_INPUTS.map((field) => <input key={field.name} name={field.name} type="number" step="any" min="0" defaultValue={field.defaultValue} placeholder={field.label} className={input} />)}</div><div><SubmitButton pendingText="Adding…" className="rounded-full bg-green-700 px-4 text-sm font-semibold text-white">Add rate card</SubmitButton></div></form></ListCreatePanel>
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -137,9 +142,13 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
         </tbody>
       </table>
       </div>
-    </div>
+    </ListSurface>
   );
 }
+
+const RATE_INPUTS = [
+  { name: "brokerage_pct", label: "Brokerage %", defaultValue: "1" }, { name: "insurance_per_kg", label: "Insurance /kg", defaultValue: "0" }, { name: "handling_per_kg", label: "Handling /kg", defaultValue: "0" }, { name: "eplatform_per_kg", label: "e-Platform /kg", defaultValue: "0" }, { name: "public_sale_ex_per_lot", label: "Public sale ex. /lot", defaultValue: "0" }, { name: "documentation_per_lot", label: "Documentation /lot", defaultValue: "0" }, { name: "govt_relief_loan", label: "Govt relief loan", defaultValue: "0" }, { name: "charges_vat_pct", label: "Charges VAT %", defaultValue: "18" }, { name: "proceeds_vat_pct", label: "Proceeds VAT %", defaultValue: "18" },
+];
 
 function RateInput({ name, label, value, decimals = 2 }: { name: string; label: string; value: number; decimals?: number }) {
   return (

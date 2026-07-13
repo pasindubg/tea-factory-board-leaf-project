@@ -20,16 +20,15 @@ export const auctionSales = pgTable(
       .notNull(),
     parentSaleId: uuid("parent_sale_id"),
     reprintNo: text("reprint_no"),
-    saleNo: text("sale_no").notNull(), // dispatch number, e.g. DSP-001
-    dispatchDate: date("dispatch_date").notNull().default("now()"), // when dispatched physically
-    targetSaleNo: text("target_sale_no"), // the auction sale this dispatch targets (e.g. 2026-023)
+    saleNo: text("sale_no").notNull(), // broker invoice number, e.g. 0001
+    dispatchDate: date("dispatch_date").notNull().default("now()"), // broker invoice date (physical dispatch date)
+    targetSaleNo: text("target_sale_no"), // the auction sale this broker invoice targets (e.g. 2026-023)
     saleDate: date("sale_date"), // auction date (~3 weeks after dispatch)
     promptDate: date("prompt_date"), // settlement prompt date, filled from the contract (A3)
-    // A dispatch starts as draft after the factory records the target auction
-    // sale number/date. GRN is the store good-receive notice (PDF automation
-    // lands later); broker_statement is the post-settlement broker statement.
+    // A broker invoice starts as a draft. Once confirmed it is invoiced; the
+    // later statuses are driven by the broker documents and settlement flow.
     status: text("status", {
-      enum: ["dispatched", "draft", "grn", "catalogued", "valued", "sold", "settled", "broker_statement"],
+      enum: ["dispatched", "draft", "invoiced", "catalogued", "valued", "sold", "settled", "broker_statement"],
     })
       .default("draft")
       .notNull(),

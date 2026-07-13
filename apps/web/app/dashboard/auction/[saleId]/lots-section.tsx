@@ -16,7 +16,7 @@ export function LotsSection({
   canEdit,
   canAdd,
   soldLotIds,
-  title = "Dispatched lots",
+  title = "Lot invoices",
 }: {
   rows: LotRow[];
   saleId: string;
@@ -49,6 +49,8 @@ export function LotsSection({
     const optimisticRow: LotRow = {
       id: tempId,
       invoice_no: formatFourDigitNo(formData.get("invoice_no") as string | null) || null,
+      provisional_sale_no: null,
+      final_sale_no: null,
       lot_no: formatFourDigitNo(formData.get("lot_no") as string | null) || null,
       grade: formData.get("grade") as string | null,
       bags,

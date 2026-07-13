@@ -273,6 +273,38 @@ export async function updateAuctionGrade(id: string, formData: FormData) {
   redirect(settings);
 }
 
+export async function createAuctionWarehouse(formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const warehousesPath = `${AUC}/warehouses`;
+  const name = str(formData.get("name"));
+  if (!name) back(warehousesPath, "Warehouse name is required.");
+  const { error } = await supabase.from("auction_warehouses").insert({
+    factory_id: profile.factory_id,
+    name,
+    active: true,
+  });
+  if (error) back(warehousesPath, error.message);
+  revalidatePath(warehousesPath);
+  revalidatePath(`${AUC}/dispatches/new`);
+  redirect(warehousesPath);
+}
+
+export async function updateAuctionWarehouse(id: string, formData: FormData) {
+  const { supabase, profile } = await requireProfile(["owner"]);
+  const warehousesPath = `${AUC}/warehouses`;
+  const name = str(formData.get("name"));
+  if (!name) back(warehousesPath, "Warehouse name is required.");
+  const { error } = await supabase
+    .from("auction_warehouses")
+    .update({ name, active: formData.get("active") === "on" })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (error) back(warehousesPath, error.message);
+  revalidatePath(warehousesPath);
+  revalidatePath(`${AUC}/dispatches/new`);
+  redirect(warehousesPath);
+}
+
 function parseGradeAliases(formData: FormData, code: string, name: string): string[] {
   const canonical = new Set([gradeAliasKey(code), gradeAliasKey(name)].filter(Boolean));
   return [

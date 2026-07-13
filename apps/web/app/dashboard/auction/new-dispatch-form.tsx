@@ -64,7 +64,7 @@ export function NewDispatchForm({
         onClick={() => setOpen((o) => !o)}
         className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
       >
-        New dispatch
+        New broker invoice
       </button>
       <form
         ref={ref}
@@ -80,7 +80,7 @@ export function NewDispatchForm({
           </select>
         </div>
         <div>
-          <label className={label}>Dispatch number</label>
+          <label className={label}>Broker invoice number</label>
           <div className="mt-1 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -107,7 +107,7 @@ export function NewDispatchForm({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className={label}>Dispatch date <span className="text-red-500">*</span></label>
+            <label className={label}>Invoice date <span className="text-red-500">*</span></label>
             <input
               type="date"
               name="dispatch_date"
@@ -133,7 +133,7 @@ export function NewDispatchForm({
           pendingText="Creating…"
           className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
-          Create dispatch
+          Create broker invoice
         </SubmitButton>
       </form>
     </div>

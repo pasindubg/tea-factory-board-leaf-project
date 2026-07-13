@@ -30,6 +30,8 @@
 | **Buyer** | Exporter/trader who buys lots at auction. Has a VAT number. |
 | **Sale** | A weekly auction event, identified by a **sale no.** (e.g. `2026-023`). |
 | **Contract** | One settlement document per mark within a sale, identified by a **contract no.** (e.g. `2026/023/0110`). |
+| **Broker invoice** | The factory's parent record for one broker and target sale. It groups the specific lot invoices sent to that broker. |
+| **Dispatch (Bundled Invoice)** | The physical outbound dispatch. It bundles two or more confirmed Broker Invoices that share an invoice date and warehouse; lots remain owned by their original Broker Invoice. |
 | **Lot** | A parcel of one grade offered as a unit — N bags × kg/bag. The central object; it moves through the state machine. |
 | **Invoice no.** | The factory's own reference for a lot when it dispatches it (e.g. `0058`). |
 | **Lot no.** | The catalogue number the broker assigns to a lot for the sale (e.g. `0477`). |
@@ -87,52 +89,64 @@ factory's bank.
 A **lot** is the spine. Each document advances its state and asserts one
 reconciliation.
 
-> **Dispatch-first model.** The factory does **not** create a sale. It
-> **dispatches** lots to a 3rd-party store first; the broker later catalogues a
-> **subset** (acknowledgements are *partial*). Dispatch detail stops after GRN /
-> acknowledgement at `catalogued`; valuation, sale, settlement, withdrawal, and
-> re-print handling live in Sales Detail. Acknowledgement, valuation, and
-> sellers contract documents are uploaded per sale and broker, then matched by
-> invoice number across every dispatch in that broker/sale group. A dispatched lot absent from the
-> *current* ack is `pending` (not an error — may roll forward), and an unsold lot
+> **Broker-invoice model.** The factory does **not** create a sale. It creates a
+> **Broker Invoice** for one broker and target sale, then enters the specific lot
+> invoices beneath it. Confirming the Broker Invoice moves the parent record from
+> `draft` to `invoiced`. The user may then upload a physical GRN image/PDF or
+> proceed manually through `grn`; parsing is intentionally deferred. The broker
+> later catalogues a **subset** (acknowledgements are *partial*). Broker Invoice detail stops after acknowledgement at
+> `catalogued`; valuation, sale, settlement, withdrawal, and re-print handling
+> live in Sales Detail. Acknowledgement, valuation, and sellers contract documents
+> are uploaded per sale and broker, then matched by invoice number across every
+> Broker Invoice in that broker/sale group. A lot invoice absent from the *current*
+> ack is `pending` (not an error — may roll forward), and an unsold lot
 > becomes `re-print`. `missing` is only ever set by an explicit human decision in
 > the orphan resolver, never by the reconciliation.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Dispatched: factory invoices & dispatches lot to the store
-    Dispatched --> GRN: store sends good-receive notice (PDF automation later)
-    GRN --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
-    Dispatched --> Catalogued: Acknowledgement confirmed before GRN is recorded
-    Dispatched --> Pending: dispatched but absent from this (partial) ack  [Recon ①]
-    Dispatched --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
+    [*] --> Invoiced: specific lot invoice entered under a Broker Invoice
+    Invoiced --> GRN: physical GRN uploaded or user proceeds manually
+    GRN --> Catalogued: Acknowledgement confirmed
+    Invoiced --> Catalogued: Acknowledgement confirmed — lot_no assigned, net wt matches  [Recon ①]
+    Invoiced --> Pending: absent from this (partial) ack  [Recon ①]
+    Invoiced --> Shutout: Acknowledgement lists shutout / violation  [Recon ①]
     Pending --> Catalogued: catalogued by a later ack
     Pending --> Missing: explicit human decision — expected & overdue, no counterpart
-    Catalogued --> SalesDetail: dispatch workflow ends; sales workflow owns next steps
+    Catalogued --> SalesDetail: Broker Invoice workflow ends; sales workflow owns next steps
     SalesDetail --> Valued: Valuation Report confirmed
+    SalesDetail --> NotValued: invoice absent from its temporary sale valuation
+    NotValued --> Valued: invoice appears in a later valuation; final sale reassigned
     Valued --> Sold: Sellers Contract confirmed — buyer + actual price  [Recon ②, ③]
     Valued --> Reprint: unsold — keep original as history
     Valued --> Withdrawn: catalogued & valued but absent from the contract
     Sold --> Settled: Total Net Proceeds matched to a bank credit  [Recon ④]
     Settled --> BrokerStatement: broker statement received after settlement
-    Reprint --> Dispatched: same invoice entered on a later dispatch, linked by reprint_source_lot_id
-    Shutout --> [*]: rolls to next sale (re-dispatched)
+    Reprint --> Invoiced: same invoice entered on a later Broker Invoice, linked by reprint_source_lot_id
+    Shutout --> [*]: rolls to the next sale on a new Broker Invoice
     Withdrawn --> [*]
     BrokerStatement --> [*]
 ```
 
 | From | To | Trigger (document) | Guard / assertion | Recon | Notes |
 |---|---|---|---|---|---|
-| — | `invoiced` | Factory action | invoice_no, grade, bags, kg/bag recorded | — | Lot dispatched to warehouse; surface entry-time warnings such as below-minimum net kg |
-| `draft` | `grn` | Store GRN | Good-receive notice received | — | Dispatch-level stage; PDF parsing and automatic transition land later |
+| — | `invoiced` | Factory action | invoice_no, grade, bags, kg/bag recorded | — | Specific lot invoice entered under a Broker Invoice; surface entry-time warnings such as below-minimum net kg |
 | `invoiced` | `catalogued` | Acknowledgement | invoice_no found in catalogue; `net_wt` matches invoice | ① | `lot_no` assigned |
 | `invoiced` | `shutout` | Acknowledgement | invoice_no found in shutout/violation section | ① | Records `shutout_reason`, net wt; un-realized stock |
 | `catalogued` | `valued` | Valuation | lot_no found; `price_min ≤ price_max`; projected proceeds present | — | Tasting note stored |
+| `catalogued` / `pending` | `not-valued` | Valuation (absence) | invoice was temporarily assigned to this sale but is absent from the broker valuation | — | Keeps its Broker Invoice parent and may appear in a later sale |
+| `not-valued` | `valued` | Later valuation | invoice_no found in a later sale's report | — | `final_sale_no` changes to the report sale; old temporary sale is no longer the effective assignment |
 | `valued` | `sold` | Sellers Contract | lot_no found; buyer resolved; `proceeds == round(net_wt × price_per_kg, 2)` | ②, ③ | Creates `sale_line` + VAT ledger entry |
 | `valued` | `withdrawn` | Sellers Contract (absence) | lot catalogued/valued but no contract line | — | Unsold / withdrawn at auction |
 | `valued` / `sold` / `withdrawn` | `re-print` | Owner action or Sellers Contract `NOT SOLD` | Original lot remains visible as history; contract-driven transition deducts one additional sample cycle | — | Later reuse of the same invoice is allowed only when the new lot links to this re-print source |
 | `sold` | `settled` | Bank CSV | contract's Total Net Proceeds matched to a credit (full or ex-guarantee) | ④ | Guarantee-VAT may settle later |
-| `settled` | `broker_statement` | Broker statement | Final broker statement received | — | Dispatch-level post-settlement stage |
+| `settled` | `broker_statement` | Broker statement | Final broker statement received | — | Broker-invoice post-settlement stage |
+
+The parent Broker Invoice has its own short lifecycle: `draft` → `invoiced` →
+`grn` when the factory confirms it and handles the optional GRN, then
+`catalogued` once acknowledgement processing
+has advanced one or more of its lot invoices. The `invoiced` state on a lot is
+unchanged: it remains the state of each specific invoice beneath the parent.
 
 **Invariant:** a lot is in exactly one state. Allowed transitions are only those
 above; anything else is a bug. Re-ingesting a document is idempotent (§6) and must
@@ -236,13 +250,14 @@ marks             id, factory_id, code, name, address          -- MF1530 KUMUDU
 buyers            id, factory_id, name, vat_no
 auction_sales     id, factory_id, broker_id, sale_no, sale_date, prompt_date,
                   status                                         -- one row per (broker, sale_no)
-auction_lots      id, factory_id, sale_id, mark_id, invoice_no, lot_no, grade(text),
+auction_lots      id, factory_id, sale_id, mark_id, invoice_no,
+                  provisional_sale_no, final_sale_no, lot_no, grade(text),
                   bags(int), kg_per_bag, gross_wt, sample_allowance, net_wt,
                   store, category, state, shutout_reason
                   -- invoice_no is the denormalized PRIMARY; lot_invoices is the
                   --   source of truth (a lot rarely carries >1 invoice). lot_no is
                   --   optional at dispatch (usually assigned at cataloguing).
-                  -- state ∈ dispatched|catalogued|pending|missing|shutout|valued|
+                  -- state ∈ invoiced|acknowledged|pending|missing|shutout|not-valued|valued|
                   --         sold|re-print|withdrawn|settled
 lot_invoices      id, factory_id, lot_id, invoice_no       -- 1 lot → 1..n invoices
 auction_audit     id, factory_id, sale_id?, lot_id?, action, detail, reason, actor,
@@ -268,9 +283,9 @@ vat_ledger        id, factory_id, sale_line_id, flow, vat_amount, mode,
 bank_txns         id, factory_id, txn_date, description, debit, credit,
                   running_balance, cheque_no, raw_line, import_batch_id,
                   matched_settlement_id, match_status
-doc_imports       id, factory_id, doc_type, source_filename, content_hash,
-                  parsed_json, status, parsed_at, confirmed_at
-                  -- doc_type ∈ acknowledgement|valuation|contract|bank_csv
+doc_imports       id, factory_id, doc_type, source_filename, storage_path,
+                  content_hash, parsed_json, status, parsed_at, confirmed_at
+                  -- doc_type ∈ grn|acknowledgement|valuation|contract|bank_csv
                   -- status ∈ parsed|reviewed|confirmed|rejected
 ```
 

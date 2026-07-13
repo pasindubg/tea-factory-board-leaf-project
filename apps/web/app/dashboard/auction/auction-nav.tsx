@@ -12,7 +12,7 @@ const tabs = [
   },
   {
     href: "/dashboard/auction",
-    label: "Dispatch Handling",
+    label: "Invoice Overview",
     match: (p: string) =>
       p === "/dashboard/auction" ||
       (p.startsWith("/dashboard/auction/") &&
