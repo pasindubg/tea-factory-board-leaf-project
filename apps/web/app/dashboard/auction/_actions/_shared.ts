@@ -15,6 +15,20 @@ export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
+/** Today's calendar date at the factory, independent of the browser's timezone. */
+export function colomboToday(now = new Date()): string {
+  const values = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now).reduce<Record<string, string>>((parts, part) => {
+    parts[part.type] = part.value;
+    return parts;
+  }, {});
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 export type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
 export type DocType = "grn" | "acknowledgement" | "valuation" | "contract" | "bank_csv";
 

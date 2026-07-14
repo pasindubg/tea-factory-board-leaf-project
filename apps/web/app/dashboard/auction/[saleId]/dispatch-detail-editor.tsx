@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { ListSearchPanel, ListSidePanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
 import { completeGrn, confirmDispatchDraft, updateSale } from "../actions";
@@ -20,9 +20,14 @@ type SaleDetail = {
   sale_date: string | null;
   prompt_date: string | null;
   status: string | null;
+  selling_mark_id: string | null;
+  selling_mark: string | null;
+  broker_lorry_no: string | null;
+  driver_name: string | null;
+  bundle_dispatch_no: string | null;
 };
 
-type MarkOption = { id: string; code: string; name: string };
+type MarkOption = { id: string; code: string; name: string | null };
 type GradeOption = { code: string; name: string };
 type DispatchListItem = {
   id: string;
@@ -101,6 +106,7 @@ export function DispatchDetailEditor({
   isOwner,
   addAction,
   soldLotIds,
+  newInvoiceAction,
 }: {
   sale: SaleDetail;
   dispatches: DispatchListItem[];
@@ -111,6 +117,7 @@ export function DispatchDetailEditor({
   isOwner: boolean;
   addAction: (formData: FormData) => Promise<string | null>;
   soldLotIds: string[];
+  newInvoiceAction: ReactNode;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -182,6 +189,7 @@ export function DispatchDetailEditor({
         </div>
 
         <div className="w-full max-w-md lg:ml-auto lg:w-[26rem]">
+          <div className="mb-3 flex justify-end">{newInvoiceAction}</div>
           <ol className="grid grid-cols-4 gap-1.5">
             {DISPATCH_STEPS.map((step, index) => {
               const selected = index === currentStatusIndex;
@@ -239,7 +247,6 @@ export function DispatchDetailEditor({
             rows={rows}
             saleId={sale.id}
             isOwner={isOwner}
-            marks={marks}
             grades={grades}
             addAction={addAction}
             canEdit={isEditing}
@@ -278,8 +285,12 @@ export function DispatchDetailEditor({
             <div className="mt-4 space-y-2 text-sm">
               <DetailRow label="Broker" value={broker} />
               <DetailRow label="Broker invoice" value={sale.sale_no ?? "—"} />
+              <DetailRow label="Bundle dispatch" value={sale.bundle_dispatch_no ?? "—"} />
+              <DetailRow label="Dispatch date" value={sale.dispatch_date ?? "—"} />
+              <SellingMarkField marks={marks} defaultValue={sale.selling_mark_id ?? ""} displayValue={sale.selling_mark ?? "—"} disabled={!isEditing} />
+              <CompactField label="Lorry no." name="broker_lorry_no" defaultValue={sale.broker_lorry_no ?? ""} disabled={!isEditing} />
+              <CompactField label="Driver" name="driver_name" defaultValue={sale.driver_name ?? ""} disabled={!isEditing} />
               <CompactField label="Sale no." name="target_sale_no" defaultValue={sale.target_sale_no ?? ""} format="sale-no" disabled={!isEditing} />
-              <CompactField label="Invoice date" name="dispatch_date" type="date" defaultValue={sale.dispatch_date ?? ""} disabled={!isEditing} />
               <CompactField label="Sale date" name="sale_date" type="date" defaultValue={sale.sale_date ?? ""} disabled={!isEditing} />
               <DetailRow label="Issues" value={`${issueLots} lots`} />
               <DetailRow label="Re-print" value={`${reprintLots} lots`} />
@@ -414,6 +425,29 @@ function CompactField({
         }}
         className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
       />
+    </div>
+  );
+}
+
+function SellingMarkField({
+  marks,
+  defaultValue,
+  displayValue,
+  disabled,
+}: {
+  marks: MarkOption[];
+  defaultValue: string;
+  displayValue: string;
+  disabled: boolean;
+}) {
+  if (disabled) return <DetailRow label="Selling mark" value={displayValue} />;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
+      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
+        <option value="" disabled>Select selling mark</option>
+        {marks.map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
+      </select>
     </div>
   );
 }

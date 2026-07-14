@@ -10,6 +10,7 @@ export default async function NewBundledDispatchPage({ searchParams }: { searchP
       .from("auction_sales")
       .select("id, sale_no, dispatch_date, status, brokers(name), auction_lots(id)")
       .eq("sale_kind", "dispatch")
+      .is("bundled_dispatch_id", null)
       .order("dispatch_date", { ascending: false })
       .order("sale_no", { ascending: false }),
     supabase.from("auction_warehouses").select("id, name, active").order("name"),

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
-import type { ParsedValuation } from "@tea/api";
+import { validateValuationProceeds, type ParsedValuation } from "@tea/api";
 import { confirmValuation, rejectImport } from "../../../actions";
 import { canonicalGrade, gradeAliasMap } from "../../../_actions/_shared";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
@@ -62,6 +62,8 @@ export default async function ValuationReviewPage({
   };
   const confirmed = imp.status === "confirmed";
   const reportSaleNo = formatSaleNo(parsed.saleNo);
+  const proceedsValidation = validateValuationProceeds(parsed.lots);
+  const proceedsByInvoice = new Map(proceedsValidation.rows.map((row) => [`${row.invoiceNo}:${row.lotNo}`, row]));
   const matched = parsed.lots.filter((l) => known.has(formatFourDigitNo(l.invoiceNo))).length;
   const tableRows: ValuationTableRow[] = parsed.lots.map((l) => ({
     ...(() => {
@@ -69,6 +71,7 @@ export default async function ValuationReviewPage({
       const currentSaleNo = formatSaleNo(assignment?.finalSaleNo ?? assignment?.provisionalSaleNo);
       return { currentSaleNo, outcome: assignment ? (saleNoKey(currentSaleNo) === saleNoKey(reportSaleNo) ? "Confirm sale" : `Move to ${reportSaleNo}`) : "No invoice" };
     })(),
+    id: `${l.invoiceNo}:${l.lotNo}`,
     invoiceNo: l.invoiceNo,
     lotNo: l.lotNo,
     grade: l.grade,
@@ -76,6 +79,9 @@ export default async function ValuationReviewPage({
     priceMin: l.priceMin,
     priceMax: l.priceMax,
     projectedProceeds: l.projectedProceeds,
+    expectedProceeds: proceedsByInvoice.get(`${l.invoiceNo}:${l.lotNo}`)?.expectedProceeds ?? l.netWt * l.priceMin,
+    proceedsVariance: proceedsByInvoice.get(`${l.invoiceNo}:${l.lotNo}`)?.variance ?? 0,
+    proceedsTallies: proceedsByInvoice.get(`${l.invoiceNo}:${l.lotNo}`)?.tallies ?? false,
     tastingNote: l.tastingNote,
     matched: known.has(formatFourDigitNo(l.invoiceNo)),
   }));
@@ -107,6 +113,22 @@ export default async function ValuationReviewPage({
           </ul>
         </div>
       )}
+
+      <section className={`rounded-xl border p-4 ${proceedsValidation.summary.tallies ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/40" : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40"}`} aria-label="Valuation proceeds validation">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-stone-800 dark:text-stone-100">Valuation proceeds validation</h3>
+            <p className="mt-1 text-sm text-stone-600 dark:text-stone-300">Each row: net weight × lower valuation per kg. The report totals compare Σ(net weight × lower valuation) with Σ(reported proceeds).</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${proceedsValidation.summary.tallies ? "bg-green-200 text-green-900 dark:bg-green-900 dark:text-green-100" : "bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}`}>{proceedsValidation.summary.tallies ? "Tallies" : "Does not tally"}</span>
+        </div>
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div><dt className="text-xs text-stone-500 dark:text-stone-400">Tallying lots</dt><dd className="mt-1 font-semibold text-stone-800 dark:text-stone-100">{proceedsValidation.summary.tallyingLots} / {parsed.lots.length}</dd></div>
+          <div><dt className="text-xs text-stone-500 dark:text-stone-400">Σ(net kg × lower Rs/kg)</dt><dd className="mt-1 font-semibold tabular-nums text-stone-800 dark:text-stone-100">Rs. {proceedsValidation.summary.expectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>
+          <div><dt className="text-xs text-stone-500 dark:text-stone-400">Σ(reported proceeds)</dt><dd className="mt-1 font-semibold tabular-nums text-stone-800 dark:text-stone-100">Rs. {proceedsValidation.summary.reportedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>
+          <div><dt className="text-xs text-stone-500 dark:text-stone-400">Difference</dt><dd className={`mt-1 font-semibold tabular-nums ${proceedsValidation.summary.tallies ? "text-green-800 dark:text-green-300" : "text-amber-800 dark:text-amber-300"}`}>Rs. {proceedsValidation.summary.variance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd></div>
+        </dl>
+      </section>
 
       <ValuationTable rows={tableRows} />
 

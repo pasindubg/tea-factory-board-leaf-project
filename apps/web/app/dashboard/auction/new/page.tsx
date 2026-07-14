@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { createDispatch } from "../actions";
-import { nextDispatchNo } from "../_actions/_shared";
+import { colomboToday, nextDispatchNo } from "../_actions/_shared";
 
 export default async function NewDispatchPage({
   searchParams,
@@ -11,7 +11,10 @@ export default async function NewDispatchPage({
 }) {
   const { supabase } = await requireModuleAccess("auction");
   const { error } = await searchParams;
-  const { data: brokers } = await supabase.from("brokers").select("id, name").order("name");
+  const [{ data: brokers }, { data: marks }] = await Promise.all([
+    supabase.from("brokers").select("id, name").order("name"),
+    supabase.from("marks").select("id, code, name").order("code"),
+  ]);
   const dispatchNo = await nextDispatchNo(supabase);
 
   return (
@@ -26,9 +29,9 @@ export default async function NewDispatchPage({
         <p className="mt-3 rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>
       )}
 
-      {(brokers ?? []).length === 0 ? (
+      {(brokers ?? []).length === 0 || (marks ?? []).length === 0 ? (
         <p className="mt-4 rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-3 text-sm text-amber-800 dark:text-amber-400">
-          Add a broker first under{" "}
+          Add a broker and selling mark first under{" "}
           <Link href="/dashboard/auction/registry" className="font-medium underline">
             Brokers &amp; marks
           </Link>
@@ -49,6 +52,23 @@ export default async function NewDispatchPage({
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Selling mark</label>
+            <select name="selling_mark_id" required defaultValue="" className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm">
+              <option value="" disabled>Select selling mark</option>
+              {(marks ?? []).map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
+              <input name="broker_lorry_no" className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Driver <span className="font-normal text-stone-400">(optional)</span></label>
+              <input name="driver_name" className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm" />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Broker invoice number</label>
@@ -74,14 +94,12 @@ export default async function NewDispatchPage({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">
-              Invoice date <span className="text-red-500">*</span>
-            </label>
+            <label className="block text-sm font-medium text-stone-600 dark:text-stone-400">Dispatch date <span className="text-red-500">*</span></label>
             <input
               type="date"
               name="dispatch_date"
               required
-              defaultValue={new Date().toISOString().split("T")[0]}
+              defaultValue={colomboToday()}
               className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
             />
           </div>

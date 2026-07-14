@@ -11,18 +11,21 @@ const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export function NewDispatchForm({
   brokers,
+  marks,
+  invoiceDate,
   nextDispatchNo,
   dispatchHistory,
 }: {
   brokers: { id: string; name: string }[];
+  marks: { id: string; code: string; name: string | null }[];
+  invoiceDate: string;
   nextDispatchNo: string;
   dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
 }) {
   const [open, setOpen] = useState(false);
-  const today = new Date().toISOString().split("T")[0];
+  const [dispatchDate, setDispatchDate] = useState(invoiceDate);
   const [targetSaleNo, setTargetSaleNo] = useState("");
-  const [dispatchDate, setDispatchDate] = useState(today);
-  const [saleDate, setSaleDate] = useState(addDays(today, 14));
+  const [saleDate, setSaleDate] = useState(addDays(invoiceDate, 14));
   const ref = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -43,16 +46,16 @@ export function NewDispatchForm({
       )
     );
     if (previousSameSale && targetSaleNo !== formattedSaleNo) setTargetSaleNo(formattedSaleNo);
-    setSaleDate(previousSameSale?.saleDate ?? addDays(dispatchDate, 14));
-  }, [dispatchDate, dispatchHistory, targetSaleNo]);
+    setSaleDate(previousSameSale?.saleDate ?? addDays(invoiceDate, 14));
+  }, [dispatchHistory, invoiceDate, targetSaleNo]);
 
-  if (brokers.length === 0) {
+  if (brokers.length === 0 || marks.length === 0) {
     return (
       <Link
         href="/dashboard/auction/registry"
         className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
       >
-        Add a broker first
+        Add a broker and selling mark first
       </Link>
     );
   }
@@ -78,6 +81,25 @@ export function NewDispatchForm({
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className={label}>Selling mark</label>
+          <select name="selling_mark_id" required defaultValue="" className={input}>
+            <option value="" disabled>Select selling mark</option>
+            {marks.map((mark) => (
+              <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={label}>Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
+            <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
+          </div>
+          <div>
+            <label className={label}>Driver <span className="font-normal text-stone-400">(optional)</span></label>
+            <input name="driver_name" placeholder="Driver name" className={input} />
+          </div>
         </div>
         <div>
           <label className={label}>Broker invoice number</label>
@@ -107,7 +129,7 @@ export function NewDispatchForm({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className={label}>Invoice date <span className="text-red-500">*</span></label>
+            <label className={label}>Dispatch date <span className="text-red-500">*</span></label>
             <input
               type="date"
               name="dispatch_date"

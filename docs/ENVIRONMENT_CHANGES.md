@@ -2,6 +2,13 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-07-14 - Broker Invoice Transport Attributes And Daily Bundles
+
+- Added migration `0031_broker_invoice_dispatch_attributes.sql` for the Broker Invoice selling mark, broker lorry number, driver, and normalized physical Dispatch link.
+- New Broker Invoices use the factory's Asia/Colombo calendar date automatically and create or reuse exactly one same-day automatic bundled Dispatch.
+- The database prevents the same broker and selling mark from appearing more than once in one physical Dispatch. Create at least one active warehouse before creating a new Broker Invoice; `Main warehouse` is preferred when present.
+- No package dependency was added. Apply migrations through `0031` before using the new invoice fields.
+
 ## 2026-07-13 - Bundled Invoice Dispatches
 
 - Added migration `0028_bundled_invoice_dispatches.sql` and the matching Drizzle schema.

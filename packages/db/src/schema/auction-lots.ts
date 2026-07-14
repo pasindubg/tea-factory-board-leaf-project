@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, numeric, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, numeric, timestamp, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
 import { marks } from "./marks";
@@ -61,7 +61,7 @@ export const auctionLots = pgTable(
       .default("invoiced")
       .notNull(),
     shutoutReason: text("shutout_reason"),
-    reprintSourceLotId: uuid("reprint_source_lot_id"),
+    reprintSourceLotId: uuid("reprint_source_lot_id").references((): AnyPgColumn => auctionLots.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

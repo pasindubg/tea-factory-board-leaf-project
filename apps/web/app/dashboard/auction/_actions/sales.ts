@@ -7,6 +7,68 @@ import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
+async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
+  const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
+  const maximum = (data ?? []).reduce((max, row) => {
+    const suffix = String(row.dispatch_no ?? "").match(/\d+$/)?.[0];
+    return suffix ? Math.max(max, Number(suffix)) : max;
+  }, 0);
+  return formatFourDigitNo(maximum + 1);
+}
+
+/** Creates one physical bundle for a factory calendar day, or returns the existing one. */
+async function ensureDailyBundledDispatch(
+  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  factoryId: string,
+  dispatchDate: string,
+) {
+  const findExisting = () => supabase
+    .from("auction_bundled_dispatches")
+    .select("id")
+    .eq("factory_id", factoryId)
+    .eq("auto_created", true)
+    .eq("dispatch_date_from", dispatchDate)
+    .eq("dispatch_date_to", dispatchDate)
+    .maybeSingle();
+  const { data: existing } = await findExisting();
+  if (existing?.id) return existing.id as string;
+
+  const { data: warehouses } = await supabase
+    .from("auction_warehouses")
+    .select("name")
+    .eq("factory_id", factoryId)
+    .eq("active", true)
+    .order("name");
+  const warehouseRows = (warehouses ?? []) as { name: string }[];
+  const warehouse = warehouseRows.find((row) => row.name.toLowerCase() === "main warehouse") ?? warehouseRows[0];
+  if (!warehouse) throw new Error("Add an active warehouse before creating a Broker Invoice.");
+
+  const dispatchNo = await nextBundledDispatchNo(supabase);
+  const { data: created, error } = await supabase
+    .from("auction_bundled_dispatches")
+    .insert({
+      factory_id: factoryId,
+      dispatch_no: dispatchNo,
+      dispatch_date: dispatchDate,
+      dispatch_date_from: dispatchDate,
+      dispatch_date_to: dispatchDate,
+      warehouse: warehouse.name,
+      auto_created: true,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+  if (created?.id) return created.id as string;
+
+  // The partial unique index makes simultaneous first invoices safe: the loser
+  // simply reads the dispatch created by the other request.
+  if (error?.code === "23505") {
+    const { data: concurrent } = await findExisting();
+    if (concurrent?.id) return concurrent.id as string;
+  }
+  throw new Error(error?.message ?? "Could not create the bundled dispatch.");
+}
+
 // ---------- Broker invoices ----------
 export async function createSale(formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
@@ -15,9 +77,29 @@ export async function createSale(formData: FormData) {
   const saleNo = await nextDispatchNo(supabase);
   const targetSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
+  const dispatchDate = str(formData.get("dispatch_date"));
+  const sellingMarkId = str(formData.get("selling_mark_id"));
+  const brokerLorryNo = str(formData.get("broker_lorry_no"));
+  const driverName = str(formData.get("driver_name"));
   if (!brokerId) back(np, "Pick a broker.");
   if (!targetSaleNo) back(np, "Sale number is required.");
   if (!saleDate) back(np, "Sale date is required.");
+  if (!dispatchDate) back(np, "Dispatch date is required.");
+  if (!sellingMarkId) back(np, "Pick a selling mark.");
+  const { data: mark } = await supabase
+    .from("marks")
+    .select("id")
+    .eq("id", sellingMarkId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (!mark) back(np, "Unknown selling mark.");
+  let bundleId = "";
+  try {
+    bundleId = await ensureDailyBundledDispatch(supabase, profile.factory_id, dispatchDate);
+  } catch (error) {
+    back(np, error instanceof Error ? error.message : "Could not create the bundled dispatch.");
+  }
+  if (!bundleId) back(np, "Could not create the bundled dispatch.");
   const { data, error } = await supabase
     .from("auction_sales")
     .insert({
@@ -26,13 +108,29 @@ export async function createSale(formData: FormData) {
       sale_no: saleNo,
       sale_date: saleDate,
       target_sale_no: targetSaleNo,
-      dispatch_date: str(formData.get("dispatch_date")) || new Date().toISOString().slice(0, 10),
+      dispatch_date: dispatchDate,
+      selling_mark_id: sellingMarkId,
+      broker_lorry_no: brokerLorryNo || null,
+      driver_name: driverName || null,
+      bundled_dispatch_id: bundleId,
       status: "draft",
     })
     .select("id")
     .single();
+  if (error?.code === "23505") back(np, "This broker and selling mark already have a Broker Invoice in this bundled dispatch.");
   if (error || !data) return back(np, error?.message ?? "Could not create the sale.");
+  const { error: linkError } = await supabase.from("auction_bundled_dispatch_invoices").insert({
+    factory_id: profile.factory_id,
+    bundled_dispatch_id: bundleId,
+    broker_invoice_id: data.id,
+  });
+  if (linkError) {
+    await supabase.from("auction_sales").delete().eq("id", data.id).eq("factory_id", profile.factory_id);
+    back(np, linkError.message);
+  }
   revalidatePath(AUC);
+  revalidatePath(`${AUC}/dispatches`);
+  revalidatePath(`${AUC}/dispatches/details`);
   redirect(`${AUC}/${data.id}`);
 }
 
@@ -75,14 +173,34 @@ export async function updateSale(id: string, formData: FormData) {
   const updates: Record<string, string | null> = {};
   const target = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
-  const dispatchDate = str(formData.get("dispatch_date"));
   const promptDate = str(formData.get("prompt_date"));
   if (formData.has("target_sale_no")) updates.target_sale_no = target || null;
   if (formData.has("sale_date")) updates.sale_date = saleDate || null;
-  if (dispatchDate) updates.dispatch_date = dispatchDate;
   if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
+  if (formData.has("selling_mark_id")) {
+    const sellingMarkId = str(formData.get("selling_mark_id"));
+    if (!sellingMarkId) back(`${AUC}/${id}`, "Selling mark is required.");
+    const { data: mark } = await supabase
+      .from("marks")
+      .select("id")
+      .eq("id", sellingMarkId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (!mark) back(`${AUC}/${id}`, "Unknown selling mark.");
+    updates.selling_mark_id = sellingMarkId;
+  }
+  if (formData.has("broker_lorry_no")) {
+    const brokerLorryNo = str(formData.get("broker_lorry_no"));
+    updates.broker_lorry_no = brokerLorryNo || null;
+  }
+  if (formData.has("driver_name")) {
+    const driverName = str(formData.get("driver_name"));
+    updates.driver_name = driverName || null;
+  }
   if (Object.keys(updates).length > 0) {
-    await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
+    const { error } = await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
+    if (error?.code === "23505") back(`${AUC}/${id}`, "This broker and selling mark are already used in this bundled dispatch.");
+    if (error) back(`${AUC}/${id}`, error.message);
     if (updates.target_sale_no) {
       await supabase
         .from("auction_lots")

@@ -282,15 +282,18 @@ export async function addDispatchedLot(saleId: string, formData: FormData) {
   const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
   const { data: brokerInvoice } = await supabase
     .from("auction_sales")
-    .select("target_sale_no")
+    .select("target_sale_no, selling_mark_id")
     .eq("id", saleId)
     .eq("factory_id", profile.factory_id)
-    .single();
+    .maybeSingle();
+  if (!brokerInvoice) return back(detail, "Broker Invoice not found.");
+  const sellingMarkId = brokerInvoice.selling_mark_id as string | null;
+  if (!sellingMarkId) return back(detail, "Assign a selling mark to the Broker Invoice before adding lots.");
   const isBelowAppliedThreshold = threshold != null && threshold > 0 && netWt < threshold;
   const { data: createdLot, error } = await supabase.from("auction_lots").insert({
-    factory_id: profile.factory_id, sale_id: saleId, mark_id: str(formData.get("mark_id")) || null,
+    factory_id: profile.factory_id, sale_id: saleId, mark_id: sellingMarkId,
     invoice_no: invoiceNo, lot_no: formatFourDigitNo(str(formData.get("lot_no"))) || null,
-    provisional_sale_no: (brokerInvoice?.target_sale_no as string | null) ?? null,
+    provisional_sale_no: (brokerInvoice.target_sale_no as string | null) ?? null,
     grade,
     bags,
     kg_per_bag: kgPerBag,

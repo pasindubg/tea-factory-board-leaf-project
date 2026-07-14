@@ -1,7 +1,7 @@
 // A2 verification gate: parse the real Sale-023 Valuation + Sellers Contract and
 // reconcile ② (valuation ↔ sale price). Run: pnpm --dir packages/api test:auction2
 import { readFileSync } from "node:fs";
-import { parseValuation } from "./parse-valuation";
+import { parseValuation, validateValuationProceeds } from "./parse-valuation";
 import { parseContract } from "./parse-contract";
 import { reconcileValuation, type ValuationInput, type SaleInput } from "./reconcile-valuation";
 
@@ -27,6 +27,10 @@ ok("val 0059 → range 1350-1400, projected 324000", !!v("0059") && v("0059")!.p
 ok("val 0044 → range 1900-1950 (PEK1)", !!v("0044") && v("0044")!.priceMin === 1900 && v("0044")!.priceMax === 1950 && v("0044")!.grade === "PEK1");
 ok("val 0074 → BM 740-760 ITTAPANA", !!v("0074") && v("0074")!.priceMin === 740 && v("0074")!.priceMax === 760 && v("0074")!.markCode === "MF1530A");
 ok("val 0480 tasting note captured", (v("0038")?.tastingNote ?? "").includes("Not black enough"));
+const bpmlProceeds = validateValuationProceeds(val.lots);
+ok("BPML valuation proceeds: each row and total tally", bpmlProceeds.summary.tallies && bpmlProceeds.summary.tallyingLots === 12 && bpmlProceeds.summary.expectedTotal === bpmlProceeds.summary.reportedTotal, JSON.stringify(bpmlProceeds.summary));
+const bpmlMismatch = validateValuationProceeds([{ ...val.lots[0]!, projectedProceeds: val.lots[0]!.projectedProceeds + 25 }, ...val.lots.slice(1)]);
+ok("valuation proceeds: mismatch is flagged", !bpmlMismatch.summary.tallies && bpmlMismatch.summary.nonTallyingLots === 1 && bpmlMismatch.summary.variance === 25, JSON.stringify(bpmlMismatch.summary));
 
 // ---- ASIA SIYAKA Valuation & Muster Report ----
 const asia = parseValuation(asiaText);
@@ -36,6 +40,8 @@ ok("ASIA valuation: 6 lots, no issues", asia.lots.length === 6 && asia.issues.le
 ok("ASIA 0012: lot 1263, FBOPF1, 1500-1550", !!av("0012") && av("0012")!.lotNo === "1263" && av("0012")!.grade === "FBOPF1" && av("0012")!.priceMin === 1500 && av("0012")!.priceMax === 1550);
 ok("ASIA 0018: BM, 830-850, projected 249000", !!av("0018") && av("0018")!.priceMin === 830 && av("0018")!.priceMax === 850 && av("0018")!.projectedProceeds === 249000);
 ok("ASIA 0014: point valuation 780", !!av("0014") && av("0014")!.priceMin === 780 && av("0014")!.priceMax === 780 && av("0014")!.markCode === "MF1530A");
+const asiaProceeds = validateValuationProceeds(asia.lots);
+ok("ASIA valuation proceeds: each row and total tally", asiaProceeds.summary.tallies && asiaProceeds.summary.tallyingLots === 6 && asiaProceeds.summary.expectedTotal === asiaProceeds.summary.reportedTotal, JSON.stringify(asiaProceeds.summary));
 
 // ---- Contract ----
 const con = parseContract(conText);

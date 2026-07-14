@@ -15,6 +15,10 @@ type SaleRow = {
   dispatch_date?: string;
   sale_date?: string;
   prompt_date?: string;
+  selling_mark: string | null;
+  broker_lorry_no: string | null;
+  driver_name: string | null;
+  bundle_dispatch_no: string | null;
   status: string;
   brokers: { name: string } | null;
 };
@@ -43,6 +47,10 @@ function dispatchDisplayStatus(status: string | null | undefined) {
 const COLUMNS: ColumnDef<SaleRow>[] = [
   { key: "sale_no", label: "Broker invoice no.", accessor: (r) => r.sale_no, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.brokers?.name ?? null, sortable: true, filter: "select" },
+  { key: "selling_mark", label: "Selling mark", accessor: (r) => r.selling_mark, sortable: true, filter: "text" },
+  { key: "broker_lorry_no", label: "Lorry no.", accessor: (r) => r.broker_lorry_no, sortable: true, filter: "text" },
+  { key: "driver_name", label: "Driver", accessor: (r) => r.driver_name, sortable: true, filter: "text" },
+  { key: "bundle_dispatch_no", label: "Dispatch no.", accessor: (r) => r.bundle_dispatch_no, sortable: true, filter: "text" },
   { key: "target_sale_no", label: "Target sale", accessor: (r) => r.target_sale_no ?? null, sortable: true, filter: "text" },
   { key: "dispatch_date", label: "Invoice date", accessor: (r) => r.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true, searchInput: "date" },
@@ -241,6 +249,10 @@ export function DispatchesTable({
                   </Link>
                 </td>
                 <td className="px-4 py-2.5 text-stone-600 dark:text-stone-400">{broker}</td>
+                <td className="px-4 py-2.5 text-stone-600 dark:text-stone-400">{s.selling_mark ?? "—"}</td>
+                <td className="px-4 py-2.5 text-stone-600 dark:text-stone-400">{s.broker_lorry_no ?? "—"}</td>
+                <td className="px-4 py-2.5 text-stone-600 dark:text-stone-400">{s.driver_name ?? "—"}</td>
+                <td className="px-4 py-2.5 font-mono text-stone-600 dark:text-stone-400">{s.bundle_dispatch_no ?? "—"}</td>
                 <td className="px-4 py-2.5">
                   {isEditing ? (
                     <input
@@ -267,7 +279,7 @@ export function DispatchesTable({
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={isOwner ? 8 : 7} className="px-6 py-12 text-center">
+              <td colSpan={isOwner ? 12 : 11} className="px-6 py-12 text-center">
                 <p className="text-sm text-stone-400 dark:text-stone-500">No broker invoices match these filters.</p>
                 <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
                   Clear filters
@@ -277,7 +289,7 @@ export function DispatchesTable({
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={isOwner ? 8 : 7} className="px-6 py-12 text-center">
+              <td colSpan={isOwner ? 12 : 11} className="px-6 py-12 text-center">
                 <p className="text-2xl mb-2">📋</p>
                 <p className="text-sm text-stone-400 dark:text-stone-500">No broker invoices yet.</p>
                 <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Create your first broker invoice to start tracking its lot invoices.</p>

@@ -9,11 +9,9 @@ const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export function DispatchLotForm({
   action,
-  marks,
   grades,
 }: {
   action: (formData: FormData) => void | Promise<void>;
-  marks: { id: string; code: string; name: string }[];
   grades: { code: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
@@ -65,27 +63,16 @@ export function DispatchLotForm({
             + add another invoice
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className={label}>Lot no.</label>
-            <input
-              name="lot_no"
-              placeholder="optional"
-              onBlur={(event) => {
-                event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
-              }}
-              className={input}
-            />
-          </div>
-          <div>
-            <label className={label}>Mark</label>
-            <select name="mark_id" className={`${input} appearance-none`} defaultValue="">
-              <option value="">Choose mark</option>
-              {marks.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({m.code})</option>
-              ))}
-            </select>
-          </div>
+        <div>
+          <label className={label}>Lot no.</label>
+          <input
+            name="lot_no"
+            placeholder="optional"
+            onBlur={(event) => {
+              event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+            }}
+            className={input}
+          />
         </div>
         <div>
           <label className={label}>Grade</label>

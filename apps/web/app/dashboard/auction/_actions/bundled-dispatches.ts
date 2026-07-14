@@ -33,7 +33,7 @@ export async function createBundledDispatch(formData: FormData) {
   // eligible, unbundled, and dated within this physical dispatch range.
   const { data: invoices, error: invoiceError } = await supabase
     .from("auction_sales")
-    .select("id, dispatch_date, status")
+    .select("id, dispatch_date, status, bundled_dispatch_id")
     .eq("factory_id", profile.factory_id)
     .in("id", invoiceIds);
   if (invoiceError || invoices?.length !== invoiceIds.length) {
@@ -41,6 +41,9 @@ export async function createBundledDispatch(formData: FormData) {
   }
   if ((invoices ?? []).some((invoice) => !invoice.dispatch_date || invoice.dispatch_date < dispatchDateFrom || invoice.dispatch_date > dispatchDateTo)) {
     back(BUNDLED_DISPATCH_PATH, "Every selected Broker Invoice must fall within the dispatch date range.");
+  }
+  if ((invoices ?? []).some((invoice) => invoice.bundled_dispatch_id)) {
+    back(BUNDLED_DISPATCH_PATH, "A selected Broker Invoice already belongs to another bundled dispatch.");
   }
 
   // The value posted by the LOV is still untrusted. Resolve it within this
@@ -82,6 +85,19 @@ export async function createBundledDispatch(formData: FormData) {
   const bundleId = bundle?.id as string | undefined;
   if (bundleError || !bundleId) back(BUNDLED_DISPATCH_PATH, bundleError?.message ?? "Could not create the bundled dispatch.");
 
+  const { error: invoiceUpdateError } = await supabase
+    .from("auction_sales")
+    .update({ bundled_dispatch_id: bundleId })
+    .eq("factory_id", profile.factory_id)
+    .in("id", invoiceIds);
+  if (invoiceUpdateError) {
+    await supabase.from("auction_bundled_dispatches").delete().eq("id", bundleId);
+    if (invoiceUpdateError.code === "23505") {
+      back(BUNDLED_DISPATCH_PATH, "A broker and selling mark combination may only occur once in a bundled dispatch.");
+    }
+    back(BUNDLED_DISPATCH_PATH, invoiceUpdateError.message);
+  }
+
   const { error: linksError } = await supabase.from("auction_bundled_dispatch_invoices").insert(
     invoiceIds.map((brokerInvoiceId) => ({
       factory_id: profile.factory_id,
@@ -90,6 +106,7 @@ export async function createBundledDispatch(formData: FormData) {
     })),
   );
   if (linksError) {
+    await supabase.from("auction_sales").update({ bundled_dispatch_id: null }).eq("bundled_dispatch_id", bundleId);
     await supabase.from("auction_bundled_dispatches").delete().eq("id", bundleId);
     back(BUNDLED_DISPATCH_PATH, linksError.message);
   }

@@ -4,6 +4,8 @@ import {
   addDispatchedLot,
 } from "../actions";
 import { DispatchDetailEditor } from "./dispatch-detail-editor";
+import { NewDispatchForm } from "../new-dispatch-form";
+import { colomboToday, nextDispatchNo } from "../_actions/_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 export default async function SaleDetailPage({
@@ -20,7 +22,7 @@ export default async function SaleDetailPage({
 
   const { data: sale } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, bundled_dispatch_id, brokers(name)")
     .eq("id", saleId)
     .single();
 
@@ -36,7 +38,7 @@ export default async function SaleDetailPage({
   }
 
   const broker = (sale.brokers as unknown as { name: string } | null)?.name ?? "—";
-  const [{ data: marks }, { data: grades }, { data: lots }, { data: saleLines }, { data: thresholds }, { data: dispatches }] = await Promise.all([
+  const [{ data: marks }, { data: grades }, { data: lots }, { data: saleLines }, { data: thresholds }, { data: dispatches }, { data: bundles }, { data: brokers }, nextInvoiceNo] = await Promise.all([
     supabase.from("marks").select("id, code, name").order("code"),
     supabase.from("auction_grades").select("id, code, name").eq("active", true).order("sort_order").order("code"),
     supabase
@@ -56,7 +58,12 @@ export default async function SaleDetailPage({
       .select("id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name)")
       .eq("sale_kind", "dispatch")
       .order("sale_no", { ascending: false }),
+    supabase.from("auction_bundled_dispatches").select("id, dispatch_no"),
+    supabase.from("brokers").select("id, name").order("name"),
+    nextDispatchNo(supabase),
   ]);
+  const sellingMark = (marks ?? []).find((mark) => mark.id === (sale as { selling_mark_id?: string | null }).selling_mark_id);
+  const bundleDispatchNo = (bundles ?? []).find((bundle) => bundle.id === (sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id)?.dispatch_no;
 
   const rows = lots ?? [];
   const soldLotIds = (saleLines ?? []).map((line) => line.lot_id as string).filter(Boolean);
@@ -89,6 +96,11 @@ export default async function SaleDetailPage({
           sale_date: sale.sale_date as string | null,
           prompt_date: sale.prompt_date as string | null,
           status: sale.status as string | null,
+          selling_mark_id: (sale as { selling_mark_id?: string | null }).selling_mark_id ?? null,
+          selling_mark: sellingMark ? `${sellingMark.code as string}${sellingMark.name ? ` — ${sellingMark.name as string}` : ""}` : null,
+          broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
+          driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
+          bundle_dispatch_no: bundleDispatchNo ? formatFourDigitNo(bundleDispatchNo as string) : null,
         }}
         dispatches={(dispatches ?? []).map((dispatch) => ({
           id: dispatch.id as string,
@@ -129,10 +141,24 @@ export default async function SaleDetailPage({
           })) ?? null,
         }))}
         isOwner={isOwner}
-        marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string }))}
+        marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string | null }))}
         grades={(grades ?? []).map((grade) => ({ code: grade.code as string, name: grade.name as string }))}
         addAction={addDispatchedLot.bind(null, sale.id)}
         soldLotIds={soldLotIds}
+        newInvoiceAction={(
+          <NewDispatchForm
+            brokers={(brokers ?? []).map((item) => ({ id: item.id as string, name: item.name as string }))}
+            marks={(marks ?? []).map((item) => ({ id: item.id as string, code: item.code as string, name: item.name as string | null }))}
+            invoiceDate={colomboToday()}
+            nextDispatchNo={nextInvoiceNo}
+            dispatchHistory={(dispatches ?? []).map((dispatch) => ({
+              saleNo: formatFourDigitNo(dispatch.sale_no as string | null),
+              targetSaleNo: formatSaleNo((dispatch as { target_sale_no?: string | null }).target_sale_no),
+              dispatchDate: dispatch.dispatch_date as string | null,
+              saleDate: dispatch.sale_date as string | null,
+            }))}
+          />
+        )}
       />
     </div>
   );

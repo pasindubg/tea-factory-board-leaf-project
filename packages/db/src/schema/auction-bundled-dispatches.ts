@@ -1,4 +1,4 @@
-import { date, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
 
@@ -17,6 +17,9 @@ export const auctionBundledDispatches = pgTable(
     dispatchDateFrom: date("dispatch_date_from").notNull(),
     dispatchDateTo: date("dispatch_date_to").notNull(),
     warehouse: text("warehouse").notNull(),
+    // Daily bundles are created automatically when a Broker Invoice is made.
+    // Manual date-range bundles remain supported for legacy records.
+    autoCreated: boolean("auto_created").default(false).notNull(),
     status: text("status", { enum: ["draft", "dispatched"] }).default("draft").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

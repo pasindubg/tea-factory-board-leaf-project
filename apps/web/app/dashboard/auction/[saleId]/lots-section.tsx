@@ -10,7 +10,6 @@ export function LotsSection({
   rows,
   saleId,
   isOwner,
-  marks,
   grades,
   addAction,
   canEdit,
@@ -21,7 +20,6 @@ export function LotsSection({
   rows: LotRow[];
   saleId: string;
   isOwner: boolean;
-  marks: { id: string; code: string; name: string }[];
   grades: { code: string; name: string }[];
   addAction: (formData: FormData) => Promise<string | null>;
   canEdit: boolean;
@@ -42,8 +40,6 @@ export function LotsSection({
     const bags = Number(formData.get("bags") ?? 0);
     const kpb = Number(formData.get("kg_per_bag") ?? 0);
     const sampleKg = Math.max(0, Number(formData.get("sample_allowance") ?? 0) || 0);
-    const markId = formData.get("mark_id") as string;
-    const mark = marks.find((m) => m.id === markId) ?? null;
     const tempId = `pending-${Date.now()}`;
 
     const optimisticRow: LotRow = {
@@ -64,7 +60,7 @@ export function LotsSection({
       reprint_target_label: null,
       threshold_min_net_kg: null,
       threshold_applies: false,
-      marks: mark ? { code: mark.code, name: mark.name } : null,
+      marks: null,
       lot_invoices: null,
     };
 
@@ -90,7 +86,7 @@ export function LotsSection({
             {currentRows.length} lot{currentRows.length === 1 ? "" : "s"} · {totalNet.toFixed(2)} kg net
           </p>
         </div>
-        {canAdd && <DispatchLotForm action={handleAdd} marks={marks} grades={grades} />}
+        {canAdd && <DispatchLotForm action={handleAdd} grades={grades} />}
       </div>
 
       <div className="mt-4">
