@@ -9,7 +9,9 @@ export const collectors = pgTable(
     factoryId: uuid("factory_id")
       .references(() => factories.id)
       .notNull(),
-    userId: uuid("user_id").references(() => users.id), // nullable: some collectors aren't app users
+    // A collector is an operational registry row even when its login is
+    // removed, so preserve the collector and clear only the optional link.
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
     name: text("name").notNull(),
     phone: text("phone"),
     nicNumber: text("nic_number"),

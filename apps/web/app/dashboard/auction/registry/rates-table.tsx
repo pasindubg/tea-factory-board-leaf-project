@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSurface, SortButton, useListControls, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 import { createBrokerRate, deleteBrokerRate, updateBrokerRate } from "../actions";
 import { SubmitButton } from "@/components/submit-button";
-import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
 
 export type RateRow = {
   id: string;
@@ -36,16 +36,36 @@ const LIST: ListDefinition<RateRow> = { columns: COLUMNS, selectionMode: "single
 const input = "w-full rounded border border-stone-300 px-2 py-1 text-xs dark:border-stone-600 dark:bg-stone-800";
 const fieldClass = "grid gap-1 text-[11px] font-medium text-stone-500 dark:text-stone-400";
 
-export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; brokers: BrokerOption[]; isOwner: boolean }) {
+export function RatesTable({ rows: initialRows, brokers, isOwner }: { rows: RateRow[]; brokers: BrokerOption[]; isOwner: boolean }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { rows, refreshing, mutate, mutationAction } = useFrameworkListData({ initialRows, resource: { key: "auction.broker-rates" } });
   const controls = useListControls(rows, LIST.columns);
+  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
   const visibleRows = controls.rows;
 
   return (
-    <ListSurface>
-      <ListCommandToolbar mode="single" enableAdd={isOwner && Boolean(LIST.add)} onAdd={{ label: "Add rate card", onClick: () => setAdding((value) => !value), disabled: Boolean(editingId) }} />
-      <ListCreatePanel open={adding} title="Add broker rate card"><form action={createBrokerRate} className="grid gap-3"><div className="grid gap-3 sm:grid-cols-2"><select name="broker_id" required defaultValue="" className={input}><option value="" disabled>Pick a broker…</option>{brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.name}</option>)}</select><input type="date" name="effective_from" required defaultValue={new Date().toISOString().slice(0, 10)} className={input} /></div><div className="grid gap-3 sm:grid-cols-3">{RATE_INPUTS.map((field) => <input key={field.name} name={field.name} type="number" step="any" min="0" defaultValue={field.defaultValue} placeholder={field.label} className={input} />)}</div><div><SubmitButton pendingText="Adding…" className="rounded-full bg-green-700 px-4 text-sm font-semibold text-white">Add rate card</SubmitButton></div></form></ListCreatePanel>
+    <ListSurface
+      title="Broker rate cards"
+      onCreate={() => setAdding(true)}
+      canCreate={isOwner && !editingId && !adding}
+      createDisabledReason={isOwner ? "Finish editing the current rate card first." : "Only the owner can add rate cards."}
+      createLabel="New rate card"
+      refreshing={refreshing}
+    >
+      <ListCommandToolbar
+        mode={LIST.selectionMode ?? "single"}
+        count={selection.selectedCount}
+        enableEdit={isOwner && Boolean(LIST.edit)}
+        onEdit={{ onClick: () => setEditingId(selection.selectedId), disabled: !selection.selectedId || Boolean(editingId) || adding }}
+        enableDelete={isOwner && Boolean(LIST.delete)}
+        onDelete={{ onClick: () => setConfirmingDelete(true), disabled: !selection.selectedId || Boolean(editingId) || adding || deleting }}
+      >
+        {editingId && <><button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">Cancel</button><button form={`rate-${editingId}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">Save</button></>}
+      </ListCommandToolbar>
+      <ListCreatePanel open={adding} title="Add broker rate card"><form action={mutationAction(createBrokerRate, { onSuccess: () => setAdding(false) })} className="grid gap-3"><div className="grid gap-3 sm:grid-cols-2"><select name="broker_id" required defaultValue="" className={input}><option value="" disabled>Pick a broker…</option>{brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.name}</option>)}</select><input type="date" name="effective_from" required defaultValue={new Date().toISOString().slice(0, 10)} className={input} /></div><div className="grid gap-3 sm:grid-cols-3">{RATE_INPUTS.map((field) => <input key={field.name} name={field.name} type="number" step="any" min="0" defaultValue={field.defaultValue} placeholder={field.label} className={input} />)}</div><div><SubmitButton pendingText="Adding…" className="rounded-full bg-green-700 px-4 text-sm font-semibold text-white">Add rate card</SubmitButton></div></form></ListCreatePanel>
       <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -56,7 +76,6 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
             ))}
-            {isOwner && <th className="px-3 py-3 text-right">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -64,10 +83,10 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
             const isEditing = editingId === r.id;
             const formId = `rate-${r.id}`;
             return (
-              <tr key={r.id} className="border-b border-stone-100 align-top last:border-0 dark:border-stone-800">
+              <tr key={r.id} {...selection.rowProps(r.id, isEditing)} className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(r.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
                 {isEditing ? (
-                  <td colSpan={isOwner ? 6 : 5} className="px-3 py-3">
-                    <form id={formId} action={updateBrokerRate.bind(null, r.id)} className="grid gap-3">
+                  <td colSpan={5} className="px-3 py-3">
+                    <form id={formId} action={mutationAction(updateBrokerRate.bind(null, r.id), { onSuccess: () => setEditingId(null) })} className="grid gap-3">
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className={fieldClass}>
                           Broker
@@ -94,14 +113,6 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
                         <RateInput name="proceeds_vat_pct" label="Proceeds VAT %" value={r.proceedsVatPct} />
                       </div>
                     </form>
-                    <div className="mt-3 flex justify-end gap-2">
-                      <button type="button" onClick={() => setEditingId(null)} className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-600">
-                        Cancel
-                      </button>
-                      <button form={formId} className="rounded-md bg-green-700 px-2 py-1 text-xs font-medium text-white dark:bg-green-600">
-                        Save
-                      </button>
-                    </div>
                   </td>
                 ) : (
                   <>
@@ -110,20 +121,6 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
                     <td className="px-3 py-3 text-right tabular-nums">{r.brokeragePct.toFixed(3)}%</td>
                     <td className="px-3 py-3 text-right tabular-nums">{r.insurancePerKg.toFixed(4)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{r.chargesVatPct.toFixed(0)}%</td>
-                    {isOwner && (
-                      <td className="px-3 py-3">
-                        <div className="flex justify-end gap-2">
-                          <button type="button" onClick={() => setEditingId(r.id)} className="rounded-md border border-stone-300 px-2 py-1 text-xs dark:border-stone-600">
-                            Edit
-                          </button>
-                          <form action={deleteBrokerRate.bind(null, r.id)}>
-                            <ConfirmSubmitButton title="Delete rate card?" description="This rate card will be permanently removed. This cannot be undone." className="rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950">
-                              Delete
-                            </ConfirmSubmitButton>
-                          </form>
-                        </div>
-                      </td>
-                    )}
                   </>
                 )}
               </tr>
@@ -131,17 +128,33 @@ export function RatesTable({ rows, brokers, isOwner }: { rows: RateRow[]; broker
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={isOwner ? 6 : 5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No rate cards match these filters.</td>
+              <td colSpan={5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No rate cards match these filters.</td>
             </tr>
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={isOwner ? 6 : 5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No rate cards yet — add one so settlements can be computed.</td>
+              <td colSpan={5} className="px-4 py-6 text-center text-stone-400 dark:text-stone-500">No rate cards yet — add one so settlements can be computed.</td>
             </tr>
           )}
         </tbody>
       </table>
       </div>
+      <ConfirmationDialog
+        open={confirmingDelete}
+        title="Delete rate card?"
+        description="This rate card will be permanently removed. If another record uses it, deletion will be blocked with the dependent record type."
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={async () => {
+          if (!selection.selectedId) return;
+          setDeleting(true);
+          const deleted = await mutate(() => deleteBrokerRate(selection.selectedId!), { onSuccess: selection.clear });
+          setDeleting(false);
+          if (deleted) setConfirmingDelete(false);
+        }}
+      />
     </ListSurface>
   );
 }

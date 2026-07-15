@@ -1,7 +1,7 @@
 "use client";
 
 import type { ValClass } from "@tea/api";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 const CLASS_STYLE: Record<ValClass, string> = {
   above: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400",
@@ -39,19 +39,24 @@ const COLUMNS: ColumnDef<ContractLineRow>[] = [
   { key: "vatAmount", label: "VAT", accessor: (r) => r.vatAmount, sortable: true },
 ];
 
+const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<ContractLineRow>;
+
 const RIGHT_ALIGNED = new Set(["pricePerKg", "proceeds", "variance"]);
 
 export function ContractLinesTable({ rows }: { rows: ContractLineRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
+  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.invoiceNo });
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface title="Contract lines" description="Staged buyer, price, proceeds and VAT values before confirmation.">
+      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {COLUMNS.map((col) => (
+            {LIST.columns.map((col) => (
               <th key={col.key} className={`px-3 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
@@ -60,7 +65,7 @@ export function ContractLinesTable({ rows }: { rows: ContractLineRow[] }) {
         </thead>
         <tbody>
           {visibleRows.map((l) => (
-            <tr key={l.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
+            <tr key={l.invoiceNo} {...selection.rowProps(l.invoiceNo)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(l.invoiceNo) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
               <td className="px-3 py-2">
                 <span className={`rounded-full px-2 py-0.5 text-xs ${l.status === "Sold" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-400" : l.status === "Re-print" ? "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
                   {l.status}
@@ -98,6 +103,7 @@ export function ContractLinesTable({ rows }: { rows: ContractLineRow[] }) {
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </ListSurface>
   );
 }

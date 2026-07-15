@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { ListSearchPanel, ListSidePanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
-import { completeGrn, confirmDispatchDraft, updateSale } from "../actions";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSidePanel, SortButton, useFrameworkListData, useListControls, type ColumnDef } from "@/components/list-controls";
+import { completeGrn, confirmDispatchDraft, createDispatch, updateSale } from "../actions";
 import { stateBucket } from "../state-buckets";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
+import type { AuctionDispatchListRow } from "@/lib/list-resources";
+import { NewDispatchForm, type DispatchCreationOptions } from "../new-dispatch-form";
 
 type SaleDetail = {
   id: string;
@@ -25,19 +27,12 @@ type SaleDetail = {
   broker_lorry_no: string | null;
   driver_name: string | null;
   bundle_dispatch_no: string | null;
+  created_date: string | null;
 };
 
 type MarkOption = { id: string; code: string; name: string | null };
 type GradeOption = { code: string; name: string };
-type DispatchListItem = {
-  id: string;
-  sale_no: string | null;
-  target_sale_no: string | null;
-  broker: string;
-  dispatch_date: string | null;
-  sale_date: string | null;
-  status: string | null;
-};
+type DispatchListItem = AuctionDispatchListRow;
 type DispatchStats = {
   totalLots: number;
   cataloguedLots: number;
@@ -59,7 +54,7 @@ const DISPATCH_STEPS: DispatchStep[] = [
 
 const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
   { key: "sale_no", label: "Broker invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
-  { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  { key: "broker", label: "Broker", accessor: (row) => row.brokers?.name ?? null, sortable: true, filter: "select" },
   { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
   { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
@@ -104,9 +99,8 @@ export function DispatchDetailEditor({
   marks,
   grades,
   isOwner,
-  addAction,
   soldLotIds,
-  newInvoiceAction,
+  creation,
 }: {
   sale: SaleDetail;
   dispatches: DispatchListItem[];
@@ -115,13 +109,13 @@ export function DispatchDetailEditor({
   marks: MarkOption[];
   grades: GradeOption[];
   isOwner: boolean;
-  addAction: (formData: FormData) => Promise<string | null>;
   soldLotIds: string[];
-  newInvoiceAction: ReactNode;
+  creation: DispatchCreationOptions;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [grnOpen, setGrnOpen] = useState(false);
+  const [liveRows, setLiveRows] = useState(rows);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
   const canDelete = isOwner && (sale.status === "dispatched" || sale.status === "draft");
@@ -129,12 +123,12 @@ export function DispatchDetailEditor({
   const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
   const canConfirmDraft = !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
-  const cataloguedLots = rows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
-  const issueLots = rows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
-  const reprintLots = rows.filter((row) => row.state === "re-print").length;
-  const appliedThresholdGrades = new Set(rows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
+  const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
+  const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
+  const reprintLots = liveRows.filter((row) => row.state === "re-print").length;
+  const appliedThresholdGrades = new Set(liveRows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
   const dispatchStats: DispatchStats = {
-    totalLots: rows.length,
+    totalLots: liveRows.length,
     cataloguedLots,
     issueLots,
     reprintLots,
@@ -144,6 +138,9 @@ export function DispatchDetailEditor({
   const currentStatusIndex = statusIndex(displayStatus);
   const detailConfirmed = currentStatusIndex >= statusIndex("invoiced");
   const canProceedToGrn = currentStatusIndex >= statusIndex("invoiced") && currentStatusIndex < statusIndex("catalogued");
+  const handleRowsChange = useCallback((nextRows: LotRow[]) => setLiveRows(nextRows), []);
+
+  useEffect(() => setLiveRows(rows), [rows]);
 
   async function saveDispatch(formData: FormData) {
     await updateSale(sale.id, formData);
@@ -167,6 +164,7 @@ export function DispatchDetailEditor({
         currentId={sale.id}
         currentDisplayStatus={displayStatus}
         title="Invoice Overview"
+        creation={creation}
       />
       <div className="min-w-0 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -189,7 +187,6 @@ export function DispatchDetailEditor({
         </div>
 
         <div className="w-full max-w-md lg:ml-auto lg:w-[26rem]">
-          <div className="mb-3 flex justify-end">{newInvoiceAction}</div>
           <ol className="grid grid-cols-4 gap-1.5">
             {DISPATCH_STEPS.map((step, index) => {
               const selected = index === currentStatusIndex;
@@ -248,11 +245,11 @@ export function DispatchDetailEditor({
             saleId={sale.id}
             isOwner={isOwner}
             grades={grades}
-            addAction={addAction}
-            canEdit={isEditing}
+            canEdit={canAddLots}
             canAdd={canAddLots}
             soldLotIds={soldLotIds}
             title="Lot invoices"
+            onRowsChange={handleRowsChange}
           />
         </div>
 
@@ -285,6 +282,7 @@ export function DispatchDetailEditor({
             <div className="mt-4 space-y-2 text-sm">
               <DetailRow label="Broker" value={broker} />
               <DetailRow label="Broker invoice" value={sale.sale_no ?? "—"} />
+              <DetailRow label="Created date" value={sale.created_date ?? "—"} />
               <DetailRow label="Bundle dispatch" value={sale.bundle_dispatch_no ?? "—"} />
               <DetailRow label="Dispatch date" value={sale.dispatch_date ?? "—"} />
               <SellingMarkField marks={marks} defaultValue={sale.selling_mark_id ?? ""} displayValue={sale.selling_mark ?? "—"} disabled={!isEditing} />
@@ -346,21 +344,52 @@ function DispatchSideList({
   currentId,
   currentDisplayStatus,
   title,
+  creation,
 }: {
   rows: DispatchListItem[];
   currentId: string;
   currentDisplayStatus: string | null;
   title: string;
+  creation: DispatchCreationOptions;
 }) {
-  const controls = useListControls(rows, DISPATCH_LIST_COLUMNS);
+  const [creating, setCreating] = useState(false);
+  const { rows: liveRows, refreshing, mutationAction } = useFrameworkListData({
+    initialRows: rows,
+    resource: { key: "auction.dispatches" },
+  });
+  const controls = useListControls(liveRows, DISPATCH_LIST_COLUMNS);
+  const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
+  const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
+  const liveDispatchHistory = liveRows.map((row) => ({
+    saleNo: row.sale_no,
+    targetSaleNo: row.target_sale_no,
+    dispatchDate: row.dispatch_date,
+    saleDate: row.sale_date,
+  }));
+
   return (
-    <ListSidePanel className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col">
-      <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">{title}</h3>
-          <SortButton col={DISPATCH_LIST_COLUMNS[0]} controls={controls} />
-        </div>
-      </div>
+    <ListSidePanel
+      title={title}
+      description={`${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
+      onCreate={() => setCreating(true)}
+      canCreate={!creating && !refreshing}
+      createDisabledReason="Finish creating the current broker invoice first."
+      createLabel="New broker invoice"
+      refreshing={refreshing}
+      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+    >
+      <ListCreatePanel open={creating} title="New broker invoice">
+        <NewDispatchForm
+          {...creation}
+          nextDispatchNo={liveNextDispatchNo}
+          dispatchHistory={liveDispatchHistory}
+          action={mutationAction(createDispatch, { onSuccess: () => setCreating(false) })}
+          onCancel={() => setCreating(false)}
+        />
+      </ListCreatePanel>
+      <ListCommandToolbar mode="single" count={0} showSelectionSummary={false}>
+        <SortButton col={DISPATCH_LIST_COLUMNS[0]} controls={controls} />
+      </ListCommandToolbar>
       <ListSearchPanel columns={DISPATCH_LIST_COLUMNS} controls={controls} label="Search" variant="popover" />
       <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">
         {controls.rows.map((dispatch) => {
@@ -370,6 +399,7 @@ function DispatchSideList({
             <Link
               key={dispatch.id}
               href={`/dashboard/auction/${dispatch.id}`}
+              aria-current={active ? "page" : undefined}
               className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
                 active
                   ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
@@ -380,7 +410,7 @@ function DispatchSideList({
                 <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
                 {active && <span className="text-stone-400">‹</span>}
               </div>
-              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.broker}</p>
+              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
                 <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
                 <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>

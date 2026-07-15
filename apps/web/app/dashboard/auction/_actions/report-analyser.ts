@@ -23,9 +23,9 @@ export async function ingestAckAuto(formData: FormData) {
   const parsed = parseAcknowledgement(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No broker invoice found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
-  if (!importId) return back(REP, "Could not stage.");
-  redirect(`${AUC}/${saleId}/ack/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
+  if (!staged.ok) return back(REP, staged.error);
+  redirect(`${AUC}/${saleId}/ack/${staged.importId}`);
 }
 
 export async function ingestValAuto(formData: FormData) {
@@ -37,9 +37,9 @@ export async function ingestValAuto(formData: FormData) {
   const parsed = parseValuation(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No broker invoice found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
-  if (!importId) return back(REP, "Could not stage.");
-  redirect(`${AUC}/${saleId}/valuation/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
+  if (!staged.ok) return back(REP, staged.error);
+  redirect(`${AUC}/${saleId}/valuation/${staged.importId}`);
 }
 
 export async function ingestConAuto(formData: FormData) {
@@ -51,9 +51,9 @@ export async function ingestConAuto(formData: FormData) {
   const parsed = parseContract(text);
   const saleId = await resolveSale(supabase, profile.factory_id, parsed.saleNo);
   if (!saleId) return back(REP, `No broker invoice found for sale ${parsed.saleNo ?? "?"}. Create one first.`);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
-  if (!importId) return back(REP, "Could not stage.");
-  redirect(`${AUC}/${saleId}/contract/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
+  if (!staged.ok) return back(REP, staged.error);
+  redirect(`${AUC}/${saleId}/contract/${staged.importId}`);
 }
 
 export async function ingestBankAuto(formData: FormData) {

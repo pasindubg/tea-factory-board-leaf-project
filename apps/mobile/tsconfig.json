@@ -3,6 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
+      "@tea/ui/list-controller": [
+        "../../packages/ui/src/list-controller.ts"
+      ],
       "@/*": [
         "./*"
       ]

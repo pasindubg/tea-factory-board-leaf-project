@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReconRow, ReconStatus } from "@tea/api";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 const STATUS_STYLE: Record<ReconStatus, string> = {
   catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
@@ -21,17 +21,22 @@ const COLUMNS: ColumnDef<ReconRow>[] = [
   { key: "weightDelta", label: "Δ net kg", accessor: (r) => r.weightDelta ?? null, sortable: true },
 ];
 
+const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<ReconRow>;
+
 export function ReconTable({ rows }: { rows: ReconRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
+  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.invoiceNo });
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface title="Acknowledgement reconciliation" description="Invoiced lots compared with the staged broker acknowledgement.">
+      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {COLUMNS.map((col) => (
+            {LIST.columns.map((col) => (
               <th key={col.key} className={`px-3 py-3 ${col.key === "weightDelta" ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
@@ -41,7 +46,7 @@ export function ReconTable({ rows }: { rows: ReconRow[] }) {
         </thead>
         <tbody>
           {visibleRows.map((r) => (
-            <tr key={r.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
+            <tr key={r.invoiceNo} {...selection.rowProps(r.invoiceNo)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(r.invoiceNo) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
               <td className="px-3 py-2 font-medium">{r.invoiceNo}</td>
               <td className="px-3 py-2">
                 <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[r.status]}`}>{r.status}</span>
@@ -75,6 +80,7 @@ export function ReconTable({ rows }: { rows: ReconRow[] }) {
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </ListSurface>
   );
 }

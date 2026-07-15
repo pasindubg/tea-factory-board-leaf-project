@@ -34,6 +34,51 @@ export function friendlyError(err: unknown): string {
   }
 }
 
+const DEPENDENT_RECORD_LABELS: Record<string, string> = {
+  auction_audit: "auction audit history",
+  auction_bundled_dispatch_invoices: "bundled dispatch broker invoices",
+  auction_lots: "auction lots",
+  auction_sales: "broker invoices",
+  bank_txns: "bank transactions",
+  broker_grade_thresholds: "broker and grade threshold settings",
+  broker_rates: "broker rate cards",
+  collectors: "collectors",
+  doc_imports: "document imports",
+  lot_invoices: "lot invoices",
+  payment_lines: "payment lines",
+  payments: "supplier payments",
+  sale_lines: "sale lines",
+  settlement_charges: "settlement charges",
+  settlements: "settlements",
+  supplier_adjustments: "supplier adjustments",
+  supplier_messages: "supplier messages",
+  supplier_requests: "supplier requests",
+  supplier_tiers: "supplier tier assignments",
+  suppliers: "suppliers",
+  valuations: "valuations",
+  vat_ledger: "VAT ledger entries",
+  weighings: "weighings",
+};
+
+function dependentTable(err: unknown): string | null {
+  const value = err as { details?: string | null; message?: string | null } | null;
+  const text = `${value?.details ?? ""} ${value?.message ?? ""}`;
+  return text.match(/referenced from table "([^"]+)"/i)?.[1]
+    ?? text.match(/constraint "[^"]+" on table "([^"]+)"/i)?.[1]
+    ?? null;
+}
+
+/** Friendly delete-specific handling, including the dependent record type. */
+export function friendlyDeleteError(err: unknown): string {
+  const code = (err as { code?: string } | null)?.code;
+  if (code !== "23503") return friendlyError(err);
+
+  const table = dependentTable(err);
+  const label = table ? DEPENDENT_RECORD_LABELS[table] : null;
+  const usage = label ? label : "other records";
+  return `This record is being used by ${usage} and cannot be deleted. Remove or reassign those records first.`;
+}
+
 /** A flat, safe redirect URL carrying a `?error=` the UI can render. */
 export function errorRedirect(base: string, err: unknown): string {
   const msg = err instanceof ValidationError ? err.message : friendlyError(err);

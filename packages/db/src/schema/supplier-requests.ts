@@ -34,9 +34,9 @@ export const supplierRequests = pgTable(
       .default("pending"),
     note: text("note"),
     requestedAt: timestamp("requested_at").defaultNow().notNull(),
-    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "set null" }),
     decidedAt: timestamp("decided_at"),
-    handedBy: uuid("handed_by").references(() => users.id),
+    handedBy: uuid("handed_by").references(() => users.id, { onDelete: "set null" }),
     handedAt: timestamp("handed_at"),
     acknowledgedAt: timestamp("acknowledged_at"),
     // link to the M6 deduction created when an advance request is approved

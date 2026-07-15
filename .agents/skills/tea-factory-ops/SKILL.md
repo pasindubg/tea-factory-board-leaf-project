@@ -139,6 +139,17 @@ needs **≥ 20.19.4**, and the machine's default is older.
 
 ## Architecture rules (do not violate)
 
+**Golden tenant CRUD policy:** Before creating, changing, reviewing, or debugging
+any database read or mutation, read and follow
+`../tenant-secure-crud/SKILL.md`. Its access path, schema/RLS requirements,
+delete semantics, and verification checklist are release-blocking requirements
+for all future work.
+
+**Golden list framework policy:** Before creating or changing any record list,
+read and follow `../list-framework/SKILL.md`. Its permission-aware built-in
+creation, selection-level commands, tabs, and opaque component-local reload
+contract are mandatory on web and native list renderers.
+
 **Multi-tenancy = one Postgres, isolated by `factory_id`, enforced by RLS.**
 - Every domain table carries `factory_id` (indexed) and gets an RLS policy **in the
   same migration that creates it**. The standard policy is `factory_isolation`,
@@ -210,6 +221,14 @@ needs **≥ 20.19.4**, and the machine's default is older.
   list controls. This is mandatory even for read-only tables, record selectors,
   and side panels. Non-control clicks on a row select it and keyboard
   Enter/Space must provide the same behavior with `aria-selected` for feedback.
+- Creation belongs to the list frame: `onCreate` opts into the built-in `+ New`,
+  `canCreate`/`createDisabledReason` reflect real permissions, and
+  `ListCreatePanel` stays inside the list. Do not add a detached page, side form,
+  row action, or duplicate toolbar Add control for ordinary list creation.
+- CRUD list rows reload through `useFrameworkListData` and the server-only opaque
+  read-resource registry. Never create a refresh action per entity or let the
+  client choose a table/query. Ordinary CRUD refreshes matching mounted list
+  components, not the route or browser.
 - Sale overviews grouped by `target_sale_no` must show all brokers participating
   in that auction sale, because multiple brokers can sell tea in the same sale.
 - The dashboard sidebar uses drill-in sections, not expanding dropdown trees:

@@ -15,7 +15,10 @@ export const auctionLots = pgTable(
       .references(() => factories.id)
       .notNull(),
     saleId: uuid("sale_id")
-      .references(() => auctionSales.id)
+      // Lots are operational children of a Broker Invoice. Financial children
+      // such as sale_lines remain restrictive and therefore still block a
+      // Broker Invoice delete once it has accounting history.
+      .references(() => auctionSales.id, { onDelete: "cascade" })
       .notNull(),
     markId: uuid("mark_id").references(() => marks.id),
     invoiceNo: text("invoice_no").notNull(), // factory ref, e.g. 0058
@@ -61,7 +64,12 @@ export const auctionLots = pgTable(
       .default("invoiced")
       .notNull(),
     shutoutReason: text("shutout_reason"),
-    reprintSourceLotId: uuid("reprint_source_lot_id").references((): AnyPgColumn => auctionLots.id),
+    // Preserve the re-print row if its source is removed; the relationship is
+    // historical context, not ownership.
+    reprintSourceLotId: uuid("reprint_source_lot_id").references(
+      (): AnyPgColumn => auctionLots.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

@@ -2,26 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { deleteSale, updateSale } from "./actions";
-import { ListCommandToolbar, ListSearchPanel, ListSurface, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
-import { formatSaleNo } from "./sale-number";
+import { createDispatch, deleteSale, updateSale } from "./actions";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef } from "@/components/list-controls";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "./sale-number";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { showAppToast } from "@/components/action-feedback";
+import type { AuctionDispatchListRow } from "@/lib/list-resources";
+import { NewDispatchForm, type DispatchCreationOptions } from "./new-dispatch-form";
 
-type SaleRow = {
-  id: string;
-  sale_no: string;
-  target_sale_no?: string;
-  dispatch_date?: string;
-  sale_date?: string;
-  prompt_date?: string;
-  selling_mark: string | null;
-  broker_lorry_no: string | null;
-  driver_name: string | null;
-  bundle_dispatch_no: string | null;
-  status: string;
-  brokers: { name: string } | null;
-};
+type SaleRow = AuctionDispatchListRow;
 
 type EditableSaleField = "target_sale_no";
 type SaleDraft = Pick<SaleRow, EditableSaleField>;
@@ -52,6 +41,7 @@ const COLUMNS: ColumnDef<SaleRow>[] = [
   { key: "driver_name", label: "Driver", accessor: (r) => r.driver_name, sortable: true, filter: "text" },
   { key: "bundle_dispatch_no", label: "Dispatch no.", accessor: (r) => r.bundle_dispatch_no, sortable: true, filter: "text" },
   { key: "target_sale_no", label: "Target sale", accessor: (r) => r.target_sale_no ?? null, sortable: true, filter: "text" },
+  { key: "created_date", label: "Created date", accessor: (r) => r.created_date, sortable: true, searchInput: "date" },
   { key: "dispatch_date", label: "Invoice date", accessor: (r) => r.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (r) => r.sale_date ?? null, sortable: true, searchInput: "date" },
   { key: "prompt_date", label: "Prompt", accessor: (r) => r.prompt_date ?? null, sortable: true, searchInput: "date" },
@@ -59,72 +49,67 @@ const COLUMNS: ColumnDef<SaleRow>[] = [
 ];
 
 export function DispatchesTable({
-  sales,
+  initialRows,
   isOwner,
+  creation,
 }: {
-  sales: SaleRow[];
+  initialRows: SaleRow[];
   isOwner: boolean;
+  creation: DispatchCreationOptions;
 }) {
-  const [rows, setRows] = useState(sales);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SaleDraft | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [deleteRequest, setDeleteRequest] = useState<{ ids: string[]; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const { rows, refreshing, mutate, mutationAction } = useFrameworkListData({ initialRows, resource: { key: "auction.dispatches" } });
   const controls = useListControls(rows, COLUMNS);
+  const selection = useListSelection(rows, { mode: "multi", getId: (row) => row.id });
   const visibleRows = controls.rows;
+  const latestSaleNo = rows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
+  const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
+  const liveDispatchHistory = rows.map((row) => ({
+    saleNo: row.sale_no,
+    targetSaleNo: row.target_sale_no,
+    dispatchDate: row.dispatch_date,
+    saleDate: row.sale_date,
+  }));
 
   useEffect(() => {
-    setRows(sales);
-    setSelected(new Set());
     setEditingId(null);
     setDraft(null);
     setPendingIds(new Set());
-  }, [sales]);
-
-  const allSelected = visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.id));
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleAll() {
-    if (allSelected) setSelected(new Set());
-    else setSelected(new Set(visibleRows.map((s) => s.id)));
-  }
-
-  function handleRowSelection(event: React.MouseEvent<HTMLTableRowElement>, id: string) {
-    if ((event.target as HTMLElement).closest("a,button,input,select,textarea")) return;
-    toggle(id);
-  }
+  }, [rows]);
 
   async function deleteSelected(ids: string[]) {
     if (ids.length === 0) return;
-    let succeeded = 0;
     setPendingIds((prev) => new Set([...prev, ...ids]));
-    for (const id of ids) {
-      try {
-        await deleteSale(id);
-        setRows((curr) => curr.filter((row) => row.id !== id));
-        succeeded += 1;
-      } catch {
-        showAppToast("Could not delete one or more broker invoices. Please try again.", "error");
-        setPendingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }
+    try {
+      await mutate(async () => {
+        let succeeded = 0;
+        const failures: string[] = [];
+        for (const id of ids) {
+          try {
+            const result = await deleteSale(id);
+            if (result.ok) succeeded += 1;
+            else failures.push(result.error);
+          } catch {
+            failures.push("Could not delete this broker invoice. Please try again.");
+          }
+        }
+        if (succeeded === 0) {
+          return { ok: false, error: failures[0] ?? "No broker invoices were deleted." };
+        }
+        for (const failure of failures) showAppToast(failure, "error");
+        return {
+          ok: true,
+          notice: `${succeeded} broker invoice${succeeded === 1 ? "" : "s"} deleted${failures.length ? `; ${failures.length} could not be deleted` : ""}.`,
+        };
+      }, { onSuccess: selection.clear });
+    } finally {
+      setPendingIds(new Set());
     }
-    if (succeeded > 0) showAppToast(`${succeeded === 1 ? "Broker invoice" : "Broker invoices"} deleted.`);
-    setSelected(new Set());
-    setPendingIds(new Set());
   }
 
   async function confirmDelete() {
@@ -157,10 +142,7 @@ export function DispatchesTable({
     const form = new FormData();
     form.set("target_sale_no", formatSaleNo(draft.target_sale_no));
     try {
-      await updateSale(id, form);
-      setRows((curr) => curr.map((row) => (row.id === id ? { ...row, ...draft, target_sale_no: formatSaleNo(draft.target_sale_no) } : row)));
-      setEditingId(null);
-      setDraft(null);
+      await mutate(() => updateSale(id, form), { onSuccess: cancelEdit });
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -171,25 +153,40 @@ export function DispatchesTable({
   }
 
   return (
-    <ListSurface>
+    <ListSurface
+      title="Invoice Overview"
+      description={`${rows.length} broker invoice${rows.length === 1 ? "" : "s"}`}
+      onCreate={() => setCreating(true)}
+      canCreate={!creating && !editingId && pendingIds.size === 0 && !deleteBusy}
+      createDisabledReason="Finish the current broker-invoice action first."
+      createLabel="New broker invoice"
+      refreshing={refreshing}
+    >
+      <ListCommandToolbar
+        mode="multi"
+        count={selection.selectedCount}
+        enableEdit={isOwner && !editingId}
+        onEdit={{ label: "Edit", onClick: () => { const row = rows.find((item) => item.id === [...selection.selectedIds][0]); if (row) beginEdit(row); }, disabled: selection.selectedCount !== 1 || pendingIds.size > 0 || creating }}
+        enableDelete={isOwner && !editingId}
+        onDelete={{ label: "Delete", onClick: () => setDeleteRequest({ ids: [...selection.selectedIds], label: `Delete ${selection.selectedCount} broker invoice${selection.selectedCount === 1 ? "" : "s"}?` }), disabled: selection.selectedCount === 0 || pendingIds.size > 0 || creating, busy: deleteBusy }}
+      >
+        {editingId && (
+          <>
+            <button type="button" onClick={cancelEdit} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800">Cancel</button>
+            <button type="button" onClick={() => saveRow(editingId)} disabled={pendingIds.has(editingId)} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-40 dark:bg-green-600 dark:hover:bg-green-500">Save changes</button>
+          </>
+        )}
+      </ListCommandToolbar>
+      <ListCreatePanel open={creating} title="New broker invoice">
+        <NewDispatchForm
+          {...creation}
+          nextDispatchNo={liveNextDispatchNo}
+          dispatchHistory={liveDispatchHistory}
+          action={mutationAction(createDispatch, { onSuccess: () => setCreating(false) })}
+          onCancel={() => setCreating(false)}
+        />
+      </ListCreatePanel>
       <ListSearchPanel columns={COLUMNS} controls={controls} />
-      {isOwner && (
-        <ListCommandToolbar
-          mode="multi"
-          count={selected.size}
-          enableEdit={!editingId}
-          onEdit={{ label: "Edit", onClick: () => { const row = rows.find((item) => item.id === [...selected][0]); if (row) beginEdit(row); }, disabled: selected.size !== 1 || pendingIds.size > 0 }}
-          enableDelete={!editingId}
-          onDelete={{ label: "Delete", onClick: () => setDeleteRequest({ ids: [...selected], label: `Delete ${selected.size} broker invoice${selected.size === 1 ? "" : "s"}?` }), disabled: selected.size === 0 || pendingIds.size > 0, busy: deleteBusy }}
-        >
-          {editingId && (
-            <>
-              <button type="button" onClick={cancelEdit} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800">Cancel</button>
-              <button type="button" onClick={() => saveRow(editingId)} disabled={pendingIds.has(editingId)} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-40 dark:bg-green-600 dark:hover:bg-green-500">Save changes</button>
-            </>
-          )}
-        </ListCommandToolbar>
-      )}
       {pendingIds.size > 0 && (
         <div className="flex items-center gap-2 border-b border-stone-100 px-4 py-2 dark:border-stone-800">
           <span className="h-3 w-3 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
@@ -200,11 +197,7 @@ export function DispatchesTable({
         <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 text-left text-xs font-semibold uppercase tracking-wider text-stone-400 dark:border-stone-700 dark:text-stone-500">
-            {isOwner && (
-              <th className="w-8 px-4 py-3">
-                <input type="checkbox" checked={allSelected} onChange={toggleAll} className="rounded" />
-              </th>
-            )}
+            {isOwner && <ListSelectionHeader mode="multi" scope="dispatches" checked={selection.allVisibleSelected(visibleRows)} onChange={() => selection.toggleVisible(visibleRows)} disabled={pendingIds.size > 0 || Boolean(editingId)} />}
             {COLUMNS.map((col) => (
               <th key={col.key} className="px-4 py-3">
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
@@ -221,28 +214,16 @@ export function DispatchesTable({
             return (
               <tr
                 key={s.id}
-                tabIndex={0}
-                aria-selected={selected.has(s.id)}
-                onClick={(event) => handleRowSelection(event, s.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    toggle(s.id);
-                  }
-                }}
+                {...selection.rowProps(s.id, !isOwner || isEditing || rowBusy)}
                 className={`border-b border-stone-100 last:border-0 transition-colors dark:border-stone-800 ${
-                  selected.has(s.id)
+                  selection.isSelected(s.id)
                     ? "bg-green-50/70 dark:bg-green-950/50"
                     : rowBusy
                       ? "bg-stone-50/90 dark:bg-stone-800/60"
                       : "hover:bg-stone-50 dark:hover:bg-stone-800/50"
                 }`}
               >
-                {isOwner && (
-                  <td className="px-4 py-2.5">
-                    <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="rounded" />
-                  </td>
-                )}
+                {isOwner && <ListSelectionCell mode="multi" scope="dispatches" id={s.id} label={`broker invoice ${s.sale_no}`} checked={selection.isSelected(s.id)} onChange={() => selection.toggle(s.id)} disabled={rowBusy || isEditing} />}
                 <td className="px-4 py-2.5 font-medium">
                   <Link href={`/dashboard/auction/${s.id}`} className="text-green-700 hover:underline dark:text-green-400">
                     {s.sale_no}
@@ -266,6 +247,7 @@ export function DispatchesTable({
                     formatSaleNo(s.target_sale_no) || <span className="text-stone-300 dark:text-stone-600">—</span>
                   )}
                 </td>
+                <td className="px-4 py-2.5 text-xs text-stone-500 dark:text-stone-400">{s.created_date ?? "—"}</td>
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.dispatch_date ?? "—"}</td>
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.sale_date ?? "—"}</td>
                 <td className="px-4 py-2.5 text-stone-500 dark:text-stone-400 text-xs">{s.prompt_date ?? "—"}</td>
@@ -279,7 +261,7 @@ export function DispatchesTable({
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={isOwner ? 12 : 11} className="px-6 py-12 text-center">
+              <td colSpan={isOwner ? 13 : 12} className="px-6 py-12 text-center">
                 <p className="text-sm text-stone-400 dark:text-stone-500">No broker invoices match these filters.</p>
                 <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
                   Clear filters
@@ -289,7 +271,7 @@ export function DispatchesTable({
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={isOwner ? 12 : 11} className="px-6 py-12 text-center">
+              <td colSpan={isOwner ? 13 : 12} className="px-6 py-12 text-center">
                 <p className="text-2xl mb-2">📋</p>
                 <p className="text-sm text-stone-400 dark:text-stone-500">No broker invoices yet.</p>
                 <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Create your first broker invoice to start tracking its lot invoices.</p>

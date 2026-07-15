@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireModuleAccess } from "@/lib/profile";
+import { loadListResource } from "@/lib/list-resource-registry";
 import { stateBucket } from "../../state-buckets";
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
-import { SaleLinesTable, type SaleLineRow } from "./sale-lines-table";
+import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
 import { TabbedListSurface } from "@/components/list-controls";
@@ -40,24 +41,10 @@ type LotRow = {
 };
 
 type LineRow = {
-  id: string;
-  sale_id: string;
   lot_id: string | null;
   proceeds: number | string | null;
-  price_per_kg: number | string | null;
-  net_wt: number | string | null;
   vat_amount: number | string | null;
   on_guarantee: boolean | null;
-  auction_lots: {
-    invoice_no: string | null;
-    lot_no: string | null;
-    grade: string | null;
-    bags: number | null;
-    kg_per_bag: number | string | null;
-    state: string | null;
-    reprint_source_lot_id: string | null;
-  } | null;
-  buyers: { name: string; vat_no: string | null } | null;
 };
 
 type MachineStep = {
@@ -151,36 +138,21 @@ export default async function SaleDetailPage({
   );
 
   if (dispatches.length === 0 && lotRows.length === 0) notFound();
+  const saleLineResourceId = dispatches[0]?.id ?? lotRows[0]?.sale_id;
+  if (!saleLineResourceId) notFound();
 
   const { data: lines, error: linesError } = lotRows.length > 0
     ? await supabase
         .from("sale_lines")
-        .select(
-          "id, sale_id, lot_id, proceeds, price_per_kg, net_wt, vat_amount, on_guarantee, " +
-            "auction_lots(invoice_no, lot_no, grade, bags, kg_per_bag, state, reprint_source_lot_id), " +
-            "buyers(name, vat_no)",
-        )
+        .select("lot_id, proceeds, vat_amount, on_guarantee")
         .in("lot_id", lotRows.map((lot) => lot.id))
         .order("created_at", { ascending: false })
     : { data: [], error: null };
   if (linesError) throw new Error(`Could not load auction sale lines: ${linesError.message}`);
 
   const lineRows = (lines ?? []) as unknown as LineRow[];
-  const lotIds = lotRows.map((lot) => lot.id).filter(Boolean);
-  const reprintCountBySource = new Map<string, number>();
-  if (lotIds.length > 0) {
-    const { data: reprintChildren, error: reprintError } = await supabase
-      .from("auction_lots")
-      .select("reprint_source_lot_id")
-      .in("reprint_source_lot_id", lotIds);
-    if (reprintError) throw new Error(`Could not load re-print counts: ${reprintError.message}`);
-    for (const child of (reprintChildren ?? []) as { reprint_source_lot_id: string | null }[]) {
-      if (!child.reprint_source_lot_id) continue;
-      reprintCountBySource.set(child.reprint_source_lot_id, (reprintCountBySource.get(child.reprint_source_lot_id) ?? 0) + 1);
-    }
-  }
-  const dispatchById = new Map(dispatches.map((dispatch) => [dispatch.id, dispatch]));
-  const saleLineByLotId = new Map(lineRows.filter((line) => line.lot_id).map((line) => [line.lot_id as string, line]));
+  const saleLines = await loadListResource({ key: "auction.sale-lines", params: { saleId: saleLineResourceId } });
+  if (!saleLines.ok) throw new Error(saleLines.error);
   const soldLotIds = new Set<string>([
     ...(lineRows.map((line) => line.lot_id).filter(Boolean) as string[]),
     ...lotRows.filter(lotIsSold).map((lot) => lot.id),
@@ -194,7 +166,6 @@ export default async function SaleDetailPage({
 
   const totalProceeds = lineRows.reduce((s, line) => s + Number(line.proceeds ?? 0), 0);
   const totalVat = lineRows.reduce((s, line) => s + Number(line.vat_amount ?? 0), 0);
-  const totalNetKg = lineRows.reduce((s, line) => s + Number(line.net_wt ?? 0), 0);
   const guaranteeLots = lineRows.filter((line) => line.on_guarantee).length;
   const reprintCount = lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
@@ -327,36 +298,7 @@ export default async function SaleDetailPage({
   }
   const reconciliationGroups = [...reconciliationGroupsByBroker.values()].sort((a, b) => a.broker.localeCompare(b.broker));
 
-  const saleLineTableRows: SaleLineRow[] = lotRows.map((lot) => {
-    const line = saleLineByLotId.get(lot.id);
-    const dispatch = dispatchById.get(lot.sale_id);
-    const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
-    const state = stateBucket(lot.state);
-    return {
-      id: lot.id,
-      saleId: lot.sale_id,
-      dispatchId: dispatch?.id ?? null,
-      dispatchSaleNo: dispatch ? formatFourDigitNo(dispatch.sale_no) : null,
-      lotNo: formatFourDigitNo(lot.lot_no),
-      invoiceNo: invoices.length > 0 ? invoices.join(", ") : formatFourDigitNo(lot.invoice_no),
-      grade: lot.grade ?? null,
-      state: lot.state ?? null,
-      stateLabel: state.label,
-      stateStyle: state.style,
-      buyerName: line?.buyers?.name ?? null,
-      buyerVatNo: line?.buyers?.vat_no ?? null,
-      bags: lot.bags ?? null,
-      kgPerBag: lot.kg_per_bag != null ? Number(lot.kg_per_bag) : null,
-      sampleKg: lot.sample_allowance != null ? Number(lot.sample_allowance) : null,
-      netWt: Number(line?.net_wt ?? lot.net_wt ?? 0),
-      pricePerKg: line?.price_per_kg != null ? Number(line.price_per_kg) : null,
-      proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
-      vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
-      onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
-      reprint: Boolean(lot.reprint_source_lot_id),
-      reprintCount: reprintCountBySource.get(lot.id) ?? 0,
-    };
-  });
+  const saleLineTableRows = saleLines.rows;
 
   return (
     <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
@@ -421,7 +363,7 @@ export default async function SaleDetailPage({
           { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices` },
         ]}
       >
-        <SaleLinesTable rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} />
+        <SaleLinesTable saleId={saleLineResourceId} rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} />
         <DispatchesInSaleTable rows={dispatchTableRows} />
       </TabbedListSurface>
       </div>

@@ -1,11 +1,13 @@
 import { requireModuleAccess } from "@/lib/profile";
+import { loadListResource } from "@/lib/list-resource-registry";
 import { WarehousesTable, type WarehouseTableRow } from "../settings/warehouses-table";
 
 export default async function WarehousesPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { profile } = await requireModuleAccess("auction");
   const { error } = await searchParams;
-  const { data: warehouses } = await supabase.from("auction_warehouses").select("id, name, active").order("name");
-  const rows: WarehouseTableRow[] = (warehouses ?? []).map((warehouse) => ({ id: warehouse.id as string, name: warehouse.name as string, active: warehouse.active as boolean }));
+  const warehouses = await loadListResource({ key: "auction.warehouses" });
+  if (!warehouses.ok) throw new Error(warehouses.error);
+  const rows: WarehouseTableRow[] = warehouses.rows;
   const isOwner = profile.role === "owner";
 
   return <div className="space-y-5">

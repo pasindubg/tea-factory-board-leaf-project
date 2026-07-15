@@ -34,14 +34,32 @@ export default function NewRequest() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!key) return;
-    supabase
-      .from("request_types")
-      .select("id, key, label, fields, requires_amount, creates_advance, sort_order")
-      .eq("key", key)
-      .maybeSingle()
-      .then(({ data }) => setType((data as RequestType) ?? null));
-  }, [key]);
+    if (!key || !profile || profile.role !== "supplier") return;
+    const requestKey = key;
+    const factoryId = profile.factory_id;
+    let active = true;
+    async function loadRequestType() {
+      const { data, error: loadError } = await supabase
+        .from("request_types")
+        .select("id, key, label, fields, requires_amount, creates_advance, sort_order")
+        .eq("factory_id", factoryId)
+        .eq("key", requestKey)
+        .eq("active", true)
+        .maybeSingle();
+      if (!active) return;
+      if (loadError) {
+        setError(loadError.message);
+        return;
+      }
+      if (!data) {
+        setError("This request type is no longer available.");
+        return;
+      }
+      setType(data as RequestType);
+    }
+    void loadRequestType();
+    return () => { active = false; };
+  }, [key, profile]);
 
   function setField(name: string, v: string | boolean) {
     setValues((prev) => ({ ...prev, [name]: v }));
@@ -50,7 +68,7 @@ export default function NewRequest() {
   async function submit() {
     setError(null);
     if (!type) return;
-    if (!profile || !supplier) return setError("Your supplier profile isn't loaded yet.");
+    if (!profile || profile.role !== "supplier" || !supplier) return setError("Your supplier profile isn't loaded yet.");
 
     const amt = type.requires_amount ? Number(amount) : null;
     if (type.requires_amount && (!amount || Number.isNaN(amt as number) || (amt as number) <= 0)) {
@@ -80,7 +98,13 @@ export default function NewRequest() {
     return (
       <SafeAreaView style={s.screen}>
         <View style={[s.pad, { alignItems: "center", marginTop: 40 }]}>
-          <ActivityIndicator color={colors.green} />
+          {error ? (
+            <View style={s.errorBox} accessibilityRole="alert">
+              <Text style={s.errorText}>{error}</Text>
+            </View>
+          ) : (
+            <ActivityIndicator color={colors.green} />
+          )}
         </View>
       </SafeAreaView>
     );

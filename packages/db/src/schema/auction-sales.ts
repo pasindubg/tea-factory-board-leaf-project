@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, date, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, uuid, text, date, timestamp, index, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { brokers } from "./brokers";
 import { marks } from "./marks";
@@ -26,7 +27,12 @@ export const auctionSales = pgTable(
     saleKind: text("sale_kind", { enum: ["dispatch", "reprint"] })
       .default("dispatch")
       .notNull(),
-    parentSaleId: uuid("parent_sale_id"),
+    // Re-print invoice headers are operational children of their original
+    // Broker Invoice. Financial rows under either invoice remain restrictive.
+    parentSaleId: uuid("parent_sale_id").references(
+      (): AnyPgColumn => auctionSales.id,
+      { onDelete: "cascade" },
+    ),
     reprintNo: text("reprint_no"),
     saleNo: text("sale_no").notNull(), // broker invoice number, e.g. 0001
     dispatchDate: date("dispatch_date").notNull().default("now()"), // broker invoice date (physical dispatch date)
@@ -41,6 +47,11 @@ export const auctionSales = pgTable(
       .default("draft")
       .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Immutable server date derived from the database-created timestamp in the
+    // factory's Asia/Colombo calendar. It is never accepted from a user form.
+    createdDate: date("created_date")
+      .notNull()
+      .generatedAlwaysAs(sql`("created_at" at time zone 'UTC' at time zone 'Asia/Colombo')::date`),
   },
   (t) => [
     index("idx_auction_sales_factory").on(t.factoryId),

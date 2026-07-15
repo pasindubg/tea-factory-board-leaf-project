@@ -14,7 +14,7 @@ export const settlementCharges = pgTable(
       .references(() => factories.id)
       .notNull(),
     settlementId: uuid("settlement_id")
-      .references(() => settlements.id)
+      .references(() => settlements.id, { onDelete: "cascade" })
       .notNull(),
     code: text("code").notNull(), // insurance, public_sale_ex, brokerage, handling, documentation, charges_vat, govt_relief_loan, eplatform
     label: text("label").notNull(),

@@ -25,13 +25,11 @@ export function DispatchSideList({ rows, currentId }: { rows: PhysicalDispatchLi
   const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
 
   return (
-    <ListSidePanel className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col">
-      <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Dispatches</h3>
-          <SortButton col={COLUMNS[0]} controls={controls} />
-        </div>
-      </div>
+    <ListSidePanel
+      title="Dispatches"
+      actions={<SortButton col={COLUMNS[0]} controls={controls} />}
+      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+    >
       <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount} />
       <ListSearchPanel columns={LIST.columns} controls={controls} label="Find dispatches" />
       <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">

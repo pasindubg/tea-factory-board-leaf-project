@@ -22,6 +22,7 @@ export const bankTransactions = pgTable(
     importBatchId: uuid("import_batch_id"), // group rows from the same upload
     matchedSettlementId: uuid("matched_settlement_id").references(
       () => settlements.id,
+      { onDelete: "set null" },
     ),
     matchStatus: text("match_status", {
       enum: ["unmatched", "matched", "partial", "ignored"],

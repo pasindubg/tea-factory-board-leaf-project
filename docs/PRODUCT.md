@@ -178,6 +178,17 @@ Many factories share one Postgres (Supabase). Tenancy rules are **non-negotiable
   a client. `NEXT_PUBLIC_`/`EXPO_PUBLIC_` prefixes are the exposure boundary.
 - App-level role checks (`apps/web/lib/roles.ts`) control *which screens* a role
   sees; RLS controls *which rows* exist for them. Both layers must hold.
+- After `requireProfile` resolves the signed-in actor, all web server reads and
+  writes pass through `apps/web/lib/tenant-data.ts`. Its allowlisted table
+  boundary injects `factory_id` on inserts/upserts and applies the factory
+  predicate to selects, updates, and deletes. This is defense in depth above
+  RLS; entity actions still own role checks and domain validation. Never accept
+  a table name from a browser request.
+- Entity delete actions use `deleteTenantRow`. Foreign-key behavior stays in the
+  database schema: restrictive relationships reject deletion with a friendly
+  message naming the dependent record type, while an explicitly declared
+  `ON DELETE CASCADE` removes child records atomically. Do not implement a
+  browser-controlled generic cascade option.
 - Verification gates `db:verify-rls` and `db:verify-auth` must pass after any
   schema or policy change.
 - Phase 2 note: marketplace entities (supplier accounts, listings) are

@@ -1,119 +1,28 @@
-import { requireProfile } from "@/lib/profile";
+import { friendlyError } from "@/lib/errors";
+import { loadListResource } from "@/lib/list-resource-registry";
+import { requireModuleAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
-import { SubmitButton } from "@/components/submit-button";
-import { addAdjustment } from "../actions";
-import { AdjustmentsTable, type AdjustmentRow } from "./adjustments-table";
+import { AdjustmentsTable } from "./adjustments-table";
 
-const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
-const todayStr = () => new Date().toISOString().slice(0, 10);
-
-const KIND_LABELS: Record<string, string> = {
-  advance: "Advance / loan",
-  transport: "Transport",
-  water_penalty: "Water penalty",
-  other: "Other deduction",
-  bonus: "One-off bonus",
-};
-
-type Supplier = { id: string; name: string };
-type Adj = {
-  id: string;
-  kind: string;
-  label: string | null;
-  amount: string | null;
-  percent: string | null;
-  occurred_on: string;
-  suppliers: { name: string } | null;
-};
-
-export default async function AdjustmentsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string; notice?: string }>;
-}) {
-  const { supabase } = await requireProfile(MANAGEMENT_ROLES);
-  const { error, notice } = await searchParams;
-
-  const [{ data: suppliers }, { data: adjustments }, { data: settings }] = await Promise.all([
+export default async function AdjustmentsPage() {
+  const { supabase, profile } = await requireModuleAccess("payments");
+  const [
+    adjustmentResource,
+    { data: suppliers, error: supplierError },
+    { data: settings, error: settingsError },
+  ] = await Promise.all([
+    loadListResource({ key: "payments.adjustments" }),
     supabase.from("suppliers").select("id, name").eq("active", true).order("name"),
-    supabase
-      .from("supplier_adjustments")
-      .select("id, kind, label, amount, percent, occurred_on, suppliers(name)")
-      .order("occurred_on", { ascending: false })
-      .limit(50),
     supabase.from("payment_settings").select("default_water_penalty_pct").maybeSingle(),
   ]);
-  const supplierRows = (suppliers ?? []) as Supplier[];
-  const adjRows = (adjustments ?? []) as unknown as Adj[];
-  const waterDefault = (settings as { default_water_penalty_pct: string } | null)?.default_water_penalty_pct ?? "0";
+  if (!adjustmentResource.ok) throw new Error(adjustmentResource.error);
+  const optionError = supplierError ?? settingsError;
+  if (optionError) throw new Error(friendlyError(optionError));
 
-  const tableRows: AdjustmentRow[] = adjRows.map((a) => ({
-    id: a.id,
-    occurredOn: a.occurred_on,
-    supplierName: a.suppliers?.name ?? "—",
-    kind: a.kind,
-    label: a.label,
-    amount: a.amount,
-    percent: a.percent,
-  }));
-
-  return (
-    <div className="space-y-6">
-      {error && <p className="rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">{error}</p>}
-      {notice && <p className="rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-800 dark:text-green-400" role="status">{notice}</p>}
-
-      <section className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-6">
-        <h2 className="text-sm font-semibold text-stone-800 dark:text-stone-200">Add an advance or deduction</h2>
-        <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-          Applied to the supplier&apos;s statement for the month of the date below. Use a percentage for a water penalty
-          (a % of that month&apos;s leaf value); use an amount for advances, transport, or other cuts. A one-off bonus
-          adds to the payment.
-        </p>
-        <form action={addAdjustment} className="mt-4 flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            Supplier
-            <select name="supplier_id" required defaultValue="" className={`${input} w-52`}>
-              <option value="" disabled>Select supplier</option>
-              {supplierRows.map((sp) => (
-                <option key={sp.id} value={sp.id}>{sp.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
-            Kind
-            <select name="kind" required defaultValue="advance" className={`${input} w-44`}>
-              {Object.entries(KIND_LABELS).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
-            Mode
-            <select name="mode" defaultValue="amount" className={`${input} w-36`}>
-              <option value="amount">Amount (LKR)</option>
-              <option value="percent">Percent (%)</option>
-            </select>
-          </label>
-          <label className="text-sm">
-            Value
-            <input name="value" type="number" step="0.01" min="0.01" required placeholder={`e.g. ${waterDefault}`} className={`${input} w-28`} />
-          </label>
-          <label className="text-sm">
-            Label
-            <input name="label" placeholder="optional" className={`${input} w-40`} />
-          </label>
-          <label className="text-sm">
-            Date
-            <input name="occurred_on" type="date" defaultValue={todayStr()} required className={`${input} w-44`} />
-          </label>
-          <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700">
-            Add
-          </SubmitButton>
-        </form>
-        <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">Default water penalty (from Settings): {waterDefault}%</p>
-      </section>
-
-      <AdjustmentsTable rows={tableRows} />
-    </div>
-  );
+  return <AdjustmentsTable
+    rows={adjustmentResource.rows}
+    suppliers={(suppliers ?? []).map((supplier) => ({ id: supplier.id as string, name: supplier.name as string }))}
+    waterDefault={(settings as { default_water_penalty_pct: string } | null)?.default_water_penalty_pct ?? "0"}
+    canManage={MANAGEMENT_ROLES.includes(profile.role)}
+  />;
 }

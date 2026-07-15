@@ -1,9 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import { requireProfile } from "@/lib/profile";
-import { getDefaultRoles } from "@/lib/roles";
+import { friendlyError } from "@/lib/errors";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import type { ListInvalidation } from "@/lib/list-resources";
+import { requireModuleAccess } from "@/lib/profile";
+
+const COLLECTORS_PATH = "/dashboard/collectors";
+const SUPPLIERS_PATH = "/dashboard/suppliers";
+
+function supplierInvalidation(): ListInvalidation[] {
+  return [{ kind: "exact", resource: { key: "leaf.suppliers" } }];
+}
 
 function collectorFields(formData: FormData) {
   return {
@@ -14,50 +22,70 @@ function collectorFields(formData: FormData) {
   };
 }
 
-export async function createCollector(formData: FormData) {
-  const { supabase, profile } = await requireProfile(getDefaultRoles("collectors"));
+export async function createCollector(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("collectors");
   const fields = collectorFields(formData);
-  if (!fields.name) redirect("/dashboard/collectors/new?error=Name%20is%20required");
+  if (!fields.name) return { ok: false, error: "Collector name is required." };
 
   const { error } = await supabase.from("collectors").insert({ factory_id: profile.factory_id, ...fields });
-  if (error) redirect(`/dashboard/collectors/new?error=${encodeURIComponent(error.message)}`);
+  if (error) return { ok: false, error: friendlyError(error) };
 
-  revalidatePath("/dashboard/collectors");
-  redirect("/dashboard/collectors");
+  revalidatePath(COLLECTORS_PATH);
+  revalidatePath(SUPPLIERS_PATH);
+  return { ok: true, notice: "Collector added.", invalidate: supplierInvalidation() };
 }
 
-export async function updateCollector(id: string, formData: FormData) {
-  const { supabase } = await requireProfile(getDefaultRoles("collectors"));
+export async function updateCollector(id: string, formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("collectors");
   const fields = collectorFields(formData);
-  if (!fields.name) redirect(`/dashboard/collectors/${id}/edit?error=Name%20is%20required`);
+  if (!id) return { ok: false, error: "Collector id is required." };
+  if (!fields.name) return { ok: false, error: "Collector name is required." };
 
-  const { error } = await supabase.from("collectors").update(fields).eq("id", id);
-  if (error) redirect(`/dashboard/collectors/${id}/edit?error=${encodeURIComponent(error.message)}`);
+  const { data, error } = await supabase
+    .from("collectors")
+    .update(fields)
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: friendlyError(error) };
+  if (!data) return { ok: false, error: "Collector not found." };
 
-  revalidatePath("/dashboard/collectors");
-  redirect("/dashboard/collectors");
-}
-
-export async function setCollectorActive(id: string, active: boolean) {
-  const { supabase } = await requireProfile(getDefaultRoles("collectors"));
-  await supabase.from("collectors").update({ active }).eq("id", id);
-  revalidatePath("/dashboard/collectors");
+  revalidatePath(COLLECTORS_PATH);
+  revalidatePath(SUPPLIERS_PATH);
+  return { ok: true, notice: "Collector updated.", invalidate: supplierInvalidation() };
 }
 
 function selectedIds(formData: FormData) {
   return [...new Set(formData.getAll("selected_ids").map(String).filter(Boolean))];
 }
 
-export async function editSelectedCollector(formData: FormData) {
+export async function setSelectedCollectorsActive(active: boolean, formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("collectors");
   const ids = selectedIds(formData);
-  if (ids.length !== 1) redirect("/dashboard/collectors?error=Select%20exactly%20one%20collector%20to%20edit");
-  redirect(`/dashboard/collectors/${ids[0]}/edit`);
-}
+  if (ids.length === 0) return { ok: false, error: "Select at least one collector." };
 
-export async function setSelectedCollectorsActive(active: boolean, formData: FormData) {
-  const { supabase, profile } = await requireProfile(getDefaultRoles("collectors"));
-  const ids = selectedIds(formData);
-  if (ids.length === 0) redirect("/dashboard/collectors?error=Select%20at%20least%20one%20collector");
-  await supabase.from("collectors").update({ active }).in("id", ids).eq("factory_id", profile.factory_id);
-  revalidatePath("/dashboard/collectors");
+  const { data: existing, error: readError } = await supabase
+    .from("collectors")
+    .select("id")
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (readError) return { ok: false, error: friendlyError(readError) };
+  if ((existing ?? []).length !== ids.length) {
+    return { ok: false, error: "One or more selected collectors are no longer available." };
+  }
+
+  const { error } = await supabase
+    .from("collectors")
+    .update({ active })
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (error) return { ok: false, error: friendlyError(error) };
+  revalidatePath(COLLECTORS_PATH);
+  revalidatePath(SUPPLIERS_PATH);
+  return {
+    ok: true,
+    notice: `${ids.length} collector${ids.length === 1 ? "" : "s"} ${active ? "reactivated" : "deactivated"}.`,
+    invalidate: supplierInvalidation(),
+  };
 }

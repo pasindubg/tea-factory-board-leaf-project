@@ -248,8 +248,8 @@ broker_rates      id, factory_id, broker_id, effective_from(date),
                   -- owner-editable, PER BROKER, effective-dated. Never hardcoded.
 marks             id, factory_id, code, name, address          -- MF1530 KUMUDU
 buyers            id, factory_id, name, vat_no
-auction_sales     id, factory_id, broker_id, sale_no, sale_date, prompt_date,
-                  status                                         -- one row per (broker, sale_no)
+auction_sales     id, factory_id, broker_id, sale_no, created_date(server-generated),
+                  sale_date, prompt_date, status                  -- one row per (broker, sale_no)
 auction_lots      id, factory_id, sale_id, mark_id, invoice_no,
                   provisional_sale_no, final_sale_no, lot_no, grade(text),
                   bags(int), kg_per_bag, gross_wt, sample_allowance, net_wt,

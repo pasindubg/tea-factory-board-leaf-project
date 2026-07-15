@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { money } from "../format";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 export type SaleOverviewRow = {
   saleNo: string;
@@ -29,20 +29,24 @@ const COLUMNS: ColumnDef<SaleOverviewRow>[] = [
   { key: "guaranteeLots", label: "Guarantee", accessor: (r) => r.guaranteeLots, sortable: true },
 ];
 
+const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<SaleOverviewRow>;
+
 const RIGHT_ALIGNED = new Set(["lotsSold", "netKg", "proceeds", "vat", "guaranteeLots"]);
 
 export function SalesOverviewTable({ rows }: { rows: SaleOverviewRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
+  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.saleNo });
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface title="Auction sales" description="Sale-level totals assembled from all linked broker invoices.">
+      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {COLUMNS.map((col) => (
+              {LIST.columns.map((col) => (
                 <th key={col.key} className={`px-4 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
                   {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
                 </th>
@@ -51,7 +55,7 @@ export function SalesOverviewTable({ rows }: { rows: SaleOverviewRow[] }) {
           </thead>
           <tbody>
             {visibleRows.map((sale) => (
-              <tr key={sale.saleNo} className="border-b border-stone-100 last:border-0 dark:border-stone-800">
+              <tr key={sale.saleNo} {...selection.rowProps(sale.saleNo)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(sale.saleNo) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
                 <td className="px-4 py-2 font-medium">
                   <Link href={sale.href} className="text-green-700 hover:underline dark:text-green-400">
                     {sale.saleNo}
@@ -84,6 +88,6 @@ export function SalesOverviewTable({ rows }: { rows: SaleOverviewRow[] }) {
           </tbody>
         </table>
       </div>
-    </div>
+    </ListSurface>
   );
 }

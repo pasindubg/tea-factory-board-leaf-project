@@ -1,17 +1,28 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { ListCommandToolbar, ListSearchPanel, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import {
+  ListCommandToolbar,
+  ListCreatePanel,
+  ListSearchPanel,
+  ListSurface,
+  SortButton,
+  useFrameworkListData,
+  useListControls,
+  useListSelection,
+  type ColumnDef,
+  type ListDefinition,
+} from "@/components/list-controls";
+import type {
+  AuctionEligibleBrokerInvoiceListRow,
+  AuctionPhysicalDispatchListRow,
+  AuctionWarehouseListRow,
+} from "@/lib/list-resources";
+import { createBundledDispatch } from "../actions";
+import { BundledDispatchForm } from "./new/bundled-dispatch-form";
 
-export type PhysicalDispatchListRow = {
-  id: string;
-  dispatchNo: string;
-  dispatchDateFrom: string;
-  dispatchDateTo: string;
-  warehouse: string;
-  invoiceCount: number;
-  status: string;
-};
+export type PhysicalDispatchListRow = AuctionPhysicalDispatchListRow;
 
 const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "dispatchNo", label: "Dispatch no.", accessor: (row) => row.dispatchNo, sortable: true, filter: "text", lov: false },
@@ -22,26 +33,84 @@ const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
 ];
 
-// Physical dispatches are read-only here. The common list still owns search,
-// sorting, and single-row selection; opening the dispatch is an explicit link.
-const LIST: ListDefinition<PhysicalDispatchListRow> = {
+const LIST = {
   columns: COLUMNS,
   selectionMode: "single",
-  add: false,
+  add: true,
   edit: false,
   delete: false,
-};
+} satisfies ListDefinition<PhysicalDispatchListRow>;
 
 const RIGHT_ALIGNED = new Set(["invoiceCount"]);
 
-export function DispatchList({ rows, emptyMessage = "No dispatches have been created yet." }: { rows: PhysicalDispatchListRow[]; emptyMessage?: string }) {
+export function DispatchList({
+  rows: initialRows,
+  eligibleInvoices: initialEligibleInvoices,
+  warehouses: initialWarehouses,
+  canCreate,
+  emptyMessage = "No dispatches have been created yet.",
+}: {
+  rows: PhysicalDispatchListRow[];
+  eligibleInvoices: AuctionEligibleBrokerInvoiceListRow[];
+  warehouses: AuctionWarehouseListRow[];
+  canCreate: boolean;
+  emptyMessage?: string;
+}) {
+  const [adding, setAdding] = useState(false);
+  const dispatchData = useFrameworkListData({
+    initialRows,
+    resource: { key: "auction.physical-dispatches" },
+  });
+  // These option resources remain mounted even while the create panel is
+  // closed. Their shared subscriptions therefore stay fresh when either the
+  // dispatch action or the Warehouse Basic Data list changes them.
+  const invoiceData = useFrameworkListData({
+    initialRows: initialEligibleInvoices,
+    resource: { key: "auction.eligible-broker-invoices" },
+  });
+  const warehouseData = useFrameworkListData({
+    initialRows: initialWarehouses,
+    resource: { key: "auction.warehouses" },
+  });
+  const rows = dispatchData.rows;
   const controls = useListControls(rows, LIST.columns);
-  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
+  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.id });
   const visibleRows = controls.rows;
+  const hasEligibleInvoices = invoiceData.rows.length >= 2;
+  const hasActiveWarehouse = warehouseData.rows.some((warehouse) => warehouse.active);
+  const createEnabled = canCreate && hasEligibleInvoices && hasActiveWarehouse && !adding;
+  const createDisabledReason = !canCreate
+    ? "Only owners and managers can create physical dispatches."
+    : !hasActiveWarehouse
+      ? "Add an active warehouse in Warehouse Basic Data first."
+      : !hasEligibleInvoices
+        ? "At least two unbundled Broker Invoices are required."
+        : "Finish or cancel the current dispatch first.";
 
   return (
-    <ListSurface>
-      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount} />
+    <ListSurface
+      title="Physical dispatches"
+      description="Review outbound dispatches and bundle eligible Broker Invoices without leaving this list."
+      onCreate={() => setAdding(true)}
+      canCreate={Boolean(LIST.add) && createEnabled}
+      createDisabledReason={createDisabledReason}
+      createLabel="New dispatch"
+      refreshing={dispatchData.refreshing || invoiceData.refreshing || warehouseData.refreshing}
+    >
+      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
+      <ListCreatePanel open={adding} title="Create physical dispatch">
+        <BundledDispatchForm
+          invoices={invoiceData.rows}
+          warehouses={warehouseData.rows}
+          action={dispatchData.mutationAction(createBundledDispatch, {
+            onSuccess: () => {
+              setAdding(false);
+              selection.clear();
+            },
+          })}
+          onCancel={() => setAdding(false)}
+        />
+      </ListCreatePanel>
       <ListSearchPanel columns={LIST.columns} controls={controls} label="Find dispatches" />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

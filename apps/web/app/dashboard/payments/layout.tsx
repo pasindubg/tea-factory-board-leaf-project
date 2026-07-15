@@ -1,7 +1,8 @@
 import { requireModuleAccess } from "@/lib/profile";
 import { PaymentsNav } from "./payments-nav";
 
-// Payments is management-only; the sub-nav is shared across all payment pages.
+// The payments module is readable by dynamically entitled roles; individual
+// mutations narrow access to management or owner-only commands server-side.
 export default async function PaymentsLayout({ children }: { children: React.ReactNode }) {
   await requireModuleAccess("payments");
   return (

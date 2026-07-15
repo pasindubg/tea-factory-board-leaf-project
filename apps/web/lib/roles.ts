@@ -180,14 +180,6 @@ export const MODULES: readonly ModuleDef[] = [
     group: "Dispatch Handling",
   },
   {
-    key: "auction-bundled-dispatch",
-    href: "/dashboard/auction/dispatches/new",
-    label: "New Dispatch",
-    roles: ["owner", "manager", "accountant"],
-    entitlement: "auction",
-    group: "Dispatch Handling",
-  },
-  {
     key: "auction-warehouses",
     href: "/dashboard/auction/warehouses",
     label: "Warehouse Basic Data",

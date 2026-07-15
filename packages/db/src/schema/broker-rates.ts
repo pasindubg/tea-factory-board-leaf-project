@@ -13,7 +13,9 @@ export const brokerRates = pgTable(
       .references(() => factories.id)
       .notNull(),
     brokerId: uuid("broker_id")
-      .references(() => brokers.id)
+      // Rate cards are configuration owned by their broker. They have no
+      // independent historical identity once that unused broker is removed.
+      .references(() => brokers.id, { onDelete: "cascade" })
       .notNull(),
     effectiveFrom: date("effective_from").notNull(),
     insurancePerKg: numeric("insurance_per_kg", { precision: 10, scale: 4 }).default("0").notNull(),

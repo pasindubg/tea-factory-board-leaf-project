@@ -15,8 +15,14 @@ export function DeleteDispatchButton({ saleId }: { saleId: string }) {
   async function deleteDispatch() {
     setDeleting(true);
     try {
-      await deleteSale(saleId);
-      showAppToast("Broker invoice deleted.");
+      const result = await deleteSale(saleId);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        setDeleting(false);
+        setConfirming(false);
+        return;
+      }
+      showAppToast(result.notice ?? "Broker invoice deleted.");
       router.replace(AUC);
     } catch {
       setDeleting(false);
@@ -39,7 +45,7 @@ export function DeleteDispatchButton({ saleId }: { saleId: string }) {
       <ConfirmationDialog
         open={confirming}
         title="Delete broker invoice?"
-        description="This will permanently remove the broker invoice and all of its lot invoices. This cannot be undone."
+        description="This removes the broker invoice and its operational lot records. Financial sale, VAT, or settlement records will safely block deletion instead. This cannot be undone."
         confirmLabel="Delete broker invoice"
         destructive
         busy={deleting}

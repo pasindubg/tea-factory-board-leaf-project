@@ -2,6 +2,24 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-07-15 - Tenant-safe Database Delete Relationships
+
+- Added migration `0033_tenant_delete_relationships.sql`; apply migrations through `0033` before relying on the shared delete behavior.
+- Unused broker configuration (`broker_rates` and existing broker/grade thresholds), Broker Invoice lots, lot invoices, and valuations now use database-owned cascades where the child has no independent meaning.
+- Sale lines, VAT ledger entries, and settlements remain restrictive so financial history blocks deletion with the shared dependent-record error. Document imports, bank matches, collector login links, and nullable user actor links preserve their records with `ON DELETE SET NULL`.
+- User-triggered Broker Invoice and lot deletes now issue one tenant-scoped root delete; PostgreSQL applies the relationship behavior atomically. No package dependency was added.
+
+## 2026-07-15 - Shared List Framework And Tabs
+
+- `apps/web` now depends on the local workspace package `@tea/ui` for the shared `FrameworkList` and `TabView` primitives. Run `pnpm install` after pulling this change so the workspace link is available.
+- Existing web list controls retain sorting, search, selection, and server-action behaviour while their list surfaces and related-list tabs use the shared package primitives. No database migration is required.
+
+## 2026-07-15 - Immutable Broker Invoice Created Date
+
+- Added migration `0032_broker_invoice_created_date.sql` for the Broker Invoice `created_date` attribute.
+- The date is generated and stored by PostgreSQL from the server-created timestamp using the Asia/Colombo calendar. Browser input cannot supply or edit it, and existing Broker Invoices are backfilled automatically from `created_at`.
+- No package dependency was added. Apply migrations through `0032` before using the Created date column in Invoice Overview or Invoice Details.
+
 ## 2026-07-14 - Broker Invoice Transport Attributes And Daily Bundles
 
 - Added migration `0031_broker_invoice_dispatch_attributes.sql` for the Broker Invoice selling mark, broker lorry number, driver, and normalized physical Dispatch link.

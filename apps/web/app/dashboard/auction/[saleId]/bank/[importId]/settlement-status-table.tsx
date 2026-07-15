@@ -1,6 +1,6 @@
 "use client";
 
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -34,19 +34,24 @@ const COLUMNS: ColumnDef<SettlementStatusRow>[] = [
   { key: "note", label: "Note", accessor: (r) => r.note, sortable: true, filter: "text" },
 ];
 
+const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<SettlementStatusRow>;
+
 const RIGHT_ALIGNED = new Set(["expected", "cashOnly", "received"]);
 
 export function SettlementStatusTable({ rows }: { rows: SettlementStatusRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
+  const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
+  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.id });
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
+    <ListSurface title="Settlement status" description="Contract amounts compared with imported bank credits.">
+      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
+      <ListSearchPanel columns={LIST.columns} controls={controls} />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {COLUMNS.map((col) => (
+            {LIST.columns.map((col) => (
               <th key={col.key} className={`px-3 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
@@ -55,7 +60,7 @@ export function SettlementStatusTable({ rows }: { rows: SettlementStatusRow[] })
         </thead>
         <tbody>
           {visibleRows.map((c) => (
-            <tr key={c.id} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
+            <tr key={c.id} {...selection.rowProps(c.id)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(c.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
               <td className="px-3 py-2 font-medium">{c.contractNo}</td>
               <td className="px-3 py-2 text-right tabular-nums">{LKR(c.expected)}</td>
               <td className="px-3 py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{LKR(c.cashOnly)}</td>
@@ -78,6 +83,7 @@ export function SettlementStatusTable({ rows }: { rows: SettlementStatusRow[] })
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </ListSurface>
   );
 }

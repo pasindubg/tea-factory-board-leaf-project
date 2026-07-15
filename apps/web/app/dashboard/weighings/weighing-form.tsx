@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { createWeighing } from "./actions";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm focus:border-green-600 dark:focus:border-green-500 focus:outline-none";
@@ -27,7 +26,8 @@ export function WeighingForm({
   ownCollectorName,
   transportPerKg,
   waterPenaltyLabel,
-  error,
+  action,
+  onCancel,
 }: {
   suppliers: Supplier[];
   collectors: Collector[];
@@ -37,7 +37,8 @@ export function WeighingForm({
   ownCollectorName?: string;
   transportPerKg: number;
   waterPenaltyLabel: string | null; // e.g. "10%" or "LKR 5.00/kg"; null = penalty not configured
-  error?: string;
+  action: (formData: FormData) => void | Promise<void>;
+  onCancel: () => void;
 }) {
   const [tierId, setTierId] = useState("");
   const [weightKg, setWeightKg] = useState("");
@@ -51,13 +52,7 @@ export function WeighingForm({
     : null;
 
   return (
-    <form action={createWeighing} className="mt-6 max-w-lg space-y-4 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-6">
-      {error && (
-        <p className="rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-700 dark:text-red-400" role="alert">
-          {error}
-        </p>
-      )}
-
+    <form action={action} className="max-w-xl space-y-4">
       <label className="block text-sm font-medium">
         Supplier *
         <select name="supplier_id" required defaultValue="" onChange={onSupplierChange} className={inputClass}>
@@ -162,9 +157,9 @@ export function WeighingForm({
         >
           Record weighing
         </SubmitButton>
-        <a href="/dashboard/weighings" className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
+        <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
           Cancel
-        </a>
+        </button>
       </div>
     </form>
   );

@@ -483,6 +483,21 @@ intelligence and an upgraded one can.
 - `numeric` for all money/weight columns; never `real`.
 - Every domain table carries `factory_id` + index; **every new table gets its
   RLS policy in the same migration**. `db:verify-rls` after schema changes.
+- Register every web-accessible tenant table in `apps/web/lib/tenant-data.ts`;
+  authenticated server CRUD must use the tenant-scoped client returned by
+  `requireProfile`/`requireModuleAccess`, never a client-selected table name.
+- Use `deleteTenantRow` for entity delete commands. Keep cascade policy on the
+  foreign key (`onDelete: "cascade"` plus its migration); otherwise preserve the
+  dependency and surface the shared dependent-record error.
+- The repository-wide golden tenant CRUD policy is
+  `.agents/skills/tenant-secure-crud/SKILL.md`. Every future database read,
+  mutation, import, RPC, list action, and schema change must satisfy that skill's
+  implementation and verification checklist before it is considered complete.
+- Every record list follows `.agents/skills/list-framework/SKILL.md`: shared
+  list surfaces, permission-aware built-in creation, selection-level commands,
+  tabs for related lists, and component-local reload through opaque allowlisted
+  read resources. Do not add per-entity refresh actions or browser-controlled
+  table/query endpoints.
 - Client-generated UUIDs for anything that can be created offline/on mobile.
 - New features follow the module checklist in
   [docs/PRODUCT.md](docs/PRODUCT.md#modular-architecture-how-features-get-added):

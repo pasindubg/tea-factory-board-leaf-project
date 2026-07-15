@@ -21,7 +21,7 @@ export const supplierMessages = pgTable(
     supplierId: uuid("supplier_id").references(() => suppliers.id), // null = broadcast
     title: text("title").notNull(),
     body: text("body").notNull(),
-    createdBy: uuid("created_by").references(() => users.id),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     sentAt: timestamp("sent_at").defaultNow().notNull(),
     readAt: timestamp("read_at"), // supplier marked a direct message read
     createdAt: timestamp("created_at").defaultNow().notNull(),

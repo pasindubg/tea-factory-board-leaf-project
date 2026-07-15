@@ -1,6 +1,11 @@
 "use client";
 
-import { Children, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
+import { showAppToast } from "@/components/action-feedback";
+import { refreshListResource } from "@/lib/list-resource-action";
+import type { ListMutationResult, ListRefreshResult } from "@/lib/list-mutations";
+import { listResourceIdentity, type ListInvalidation, type ListResourceKey, type ListResourceRequest, type ListResourceRow } from "@/lib/list-resources";
 
 // Shared column-sort + column-filter primitives for the app's hand-rolled
 // tables. Deliberately headless: each table keeps its own <table> markup,
@@ -42,11 +47,6 @@ export type ListDefinition<T> = {
   add?: boolean;
   edit?: boolean;
   delete?: boolean;
-  /** Header-level actions. Row-level edit/delete controls are intentionally not supported. */
-  enableEdit?: boolean;
-  enableDelete?: boolean;
-  /** @deprecated Use enableEdit. Kept temporarily for existing list definitions. */
-  editable?: boolean;
   commands?: { id: string; label: string; requiresSelection?: boolean; destructive?: boolean }[];
 };
 
@@ -56,69 +56,124 @@ export type ListTab = {
   count?: string;
 };
 
+type ListMutationOptions = {
+  notice?: string;
+  onSuccess?: () => void;
+};
+
+type ListResourceListener = () => Promise<boolean>;
+const listResourceListeners = new Map<string, Set<ListResourceListener>>();
+
+function subscribeToListResource(identity: string, listener: ListResourceListener) {
+  const listeners = listResourceListeners.get(identity) ?? new Set<ListResourceListener>();
+  listeners.add(listener);
+  listResourceListeners.set(identity, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) listResourceListeners.delete(identity);
+  };
+}
+
+async function refreshOtherListInstances(
+  resource: ListResourceRequest,
+  source?: ListResourceListener,
+) {
+  const listeners = listResourceListeners.get(listResourceIdentity(resource));
+  if (!listeners) return;
+  await Promise.all([...listeners].filter((listener) => listener !== source).map((listener) => listener()));
+}
+
+async function refreshInvalidatedListInstances(invalidation: ListInvalidation) {
+  if (invalidation.kind === "exact") {
+    await refreshOtherListInstances(invalidation.resource);
+    return;
+  }
+  const matchingListeners = [...listResourceListeners.entries()]
+    .filter(([identity]) => identity === invalidation.key || identity.startsWith(`${invalidation.key}?`))
+    .flatMap(([, listeners]) => [...listeners]);
+  await Promise.all([...new Set(matchingListeners)].map((listener) => listener()));
+}
+
+/**
+ * Owns the live rows for one framework list. After a successful mutation it
+ * asks the central server registry for this allowlisted resource and replaces
+ * only subscribed list instances; it never reloads the browser or refreshes
+ * the route tree.
+ */
+export function useFrameworkListData<Key extends ListResourceKey>(
+  { initialRows, resource }: { initialRows: ListResourceRow<Key>[]; resource: ListResourceRequest<Key> },
+) {
+  const [rows, setRows] = useState(initialRows);
+  const [refreshing, setRefreshing] = useState(false);
+  const identity = listResourceIdentity(resource);
+  const resourceRef = useRef(resource);
+  const refreshGeneration = useRef(0);
+  resourceRef.current = resource;
+
+  useEffect(() => setRows(initialRows), [initialRows]);
+
+  const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    setRefreshing(true);
+    try {
+      const result = await refreshListResource(resourceRef.current) as ListRefreshResult<ListResourceRow<Key>>;
+      if (!result.ok) {
+        if (generation === refreshGeneration.current) showAppToast(result.error, "error");
+        return false;
+      }
+      if (generation === refreshGeneration.current) setRows(result.rows);
+      return true;
+    } catch {
+      if (generation === refreshGeneration.current) {
+        showAppToast("The list changed, but its latest rows could not be loaded. Please try again.", "error");
+      }
+      return false;
+    } finally {
+      if (generation === refreshGeneration.current) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => subscribeToListResource(identity, refresh), [identity, refresh]);
+
+  const mutate = useCallback(async (
+    action: () => Promise<ListMutationResult>,
+    options: ListMutationOptions = {},
+  ) => {
+    try {
+      const result = await action();
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return false;
+      }
+      options.onSuccess?.();
+      showAppToast(result.notice ?? options.notice ?? "List updated.");
+      const refreshed = await refresh();
+      await refreshOtherListInstances(resourceRef.current, refresh);
+      await Promise.all((result.invalidate ?? []).map((invalidation) => refreshInvalidatedListInstances(invalidation)));
+      if (!refreshed) return true;
+      return true;
+    } catch {
+      showAppToast("The change could not be saved. Please try again.", "error");
+      return false;
+    }
+  }, [refresh]);
+
+  const mutationAction = useCallback((
+    action: (formData: FormData) => Promise<ListMutationResult>,
+    options: ListMutationOptions = {},
+  ) => async (formData: FormData) => {
+    await mutate(() => action(formData), options);
+  }, [mutate]);
+
+  return { rows, refreshing, refresh, mutate, mutationAction };
+}
+
 /** A reusable top-navigation tab bar for related list work surfaces. The
  * individual tables keep their own controls while the user sees one focused
  * list area at a time. */
 export function TabbedListSurface({ tabs, children, defaultTab }: { tabs: ListTab[]; children: ReactNode; defaultTab?: string }) {
-  const panels = Children.toArray(children);
-  const firstTab = tabs[0]?.id ?? "list";
-  const [activeTab, setActiveTab] = useState(defaultTab && tabs.some((tab) => tab.id === defaultTab) ? defaultTab : firstTab);
-  const tabSetId = useId().replace(/:/g, "");
-  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
-
-  function activate(index: number) {
-    const tab = tabs[index];
-    if (tab) setActiveTab(tab.id);
-  }
-
-  return (
-    <section className="space-y-3">
-      <div role="tablist" aria-label="Sale lists" className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-stone-200 bg-stone-50 p-1.5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
-        {tabs.map((tab, index) => {
-          const selected = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              id={`${tabSetId}-tab-${tab.id}`}
-              role="tab"
-              type="button"
-              aria-selected={selected}
-              aria-controls={`${tabSetId}-panel-${tab.id}`}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => activate(index)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight") activate((index + 1) % tabs.length);
-                else if (event.key === "ArrowLeft") activate((index - 1 + tabs.length) % tabs.length);
-                else if (event.key === "Home") activate(0);
-                else if (event.key === "End") activate(tabs.length - 1);
-                else return;
-                event.preventDefault();
-              }}
-              className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                selected
-                  ? "bg-white text-green-800 shadow-sm dark:bg-stone-800 dark:text-green-300"
-                  : "text-stone-600 hover:bg-white/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800/70 dark:hover:text-stone-100"
-              }`}
-            >
-              {tab.label}
-              {tab.count && <span className={`rounded-full px-2 py-0.5 text-xs ${selected ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" : "bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300"}`}>{tab.count}</span>}
-            </button>
-          );
-        })}
-      </div>
-      {tabs.map((tab, index) => (
-        <div
-          key={tab.id}
-          id={`${tabSetId}-panel-${tab.id}`}
-          role="tabpanel"
-          aria-labelledby={`${tabSetId}-tab-${tab.id}`}
-          hidden={tab.id !== activeTab}
-        >
-          {panels[index]}
-        </div>
-      ))}
-    </section>
-  );
+  const panels = Array.isArray(children) ? children : [children];
+  return <TabView label="Related lists" defaultTabId={defaultTab} tabs={tabs.map((tab, index) => ({ ...tab, badge: tab.count, content: panels[index] ?? null }))} />;
 }
 
 export function ListSelectionHeader({ mode, scope, checked, onChange, disabled = false }: { mode: ListSelectionMode; scope: string; checked?: boolean; onChange?: () => void; disabled?: boolean }) {
@@ -220,20 +275,18 @@ type ListHeaderAction = {
 export function ListCommandToolbar({
   mode,
   count = 0,
-  enableAdd = false,
   enableEdit = false,
   enableDelete = false,
-  onAdd,
+  showSelectionSummary = true,
   onEdit,
   onDelete,
   children,
 }: {
   mode: ListSelectionMode;
   count?: number;
-  enableAdd?: boolean;
   enableEdit?: boolean;
   enableDelete?: boolean;
-  onAdd?: ListHeaderAction;
+  showSelectionSummary?: boolean;
   onEdit?: ListHeaderAction;
   onDelete?: ListHeaderAction;
   children?: React.ReactNode;
@@ -253,10 +306,9 @@ export function ListCommandToolbar({
 
   return (
     <div ref={toolbarRef} className="flex min-h-16 items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
-      <ListSelectionSummary mode={mode} count={count} />
+      {showSelectionSummary ? <ListSelectionSummary mode={mode} count={count} /> : <span />}
       <div className="flex flex-wrap justify-end gap-2">
         {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
-        {enableAdd && onAdd && <ListHeaderButton kind="add" action={onAdd} />}
         {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
         {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
         {children}
@@ -269,7 +321,7 @@ function SearchGlyph() {
   return <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><circle cx="8.5" cy="8.5" r="4.75" /><path strokeLinecap="round" d="m12 12 4.25 4.25" /></svg>;
 }
 
-function ListHeaderButton({ kind, action }: { kind: "add" | "edit" | "delete"; action: ListHeaderAction }) {
+function ListHeaderButton({ kind, action }: { kind: "edit" | "delete"; action: ListHeaderAction }) {
   const destructive = kind === "delete";
   return (
     <button
@@ -282,14 +334,10 @@ function ListHeaderButton({ kind, action }: { kind: "add" | "edit" | "delete"; a
           : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
       }`}
     >
-      {action.busy ? <span className={`h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent`} /> : kind === "add" ? <AddGlyph /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
-      {action.busy ? "Working…" : action.label ?? (kind === "add" ? "Add" : kind === "edit" ? "Edit" : "Delete")}
+      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
+      {action.busy ? "Working…" : action.label ?? (kind === "edit" ? "Edit" : "Delete")}
     </button>
   );
-}
-
-function AddGlyph() {
-  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M10 3.25a.75.75 0 0 1 .75.75v5.25H16a.75.75 0 0 1 0 1.5h-5.25V16a.75.75 0 0 1-1.5 0v-5.25H4a.75.75 0 0 1 0-1.5h5.25V4a.75.75 0 0 1 .75-.75Z" /></svg>;
 }
 
 /** Collapsible creation area owned by a list. It keeps create forms with the
@@ -310,12 +358,26 @@ function DeleteGlyph() {
   return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" /></svg>;
 }
 
-export function ListSurface({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div data-list-surface className={`overflow-hidden rounded-[1.25rem] border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 ${className}`}>{children}</div>;
+export function ListSurface({ children, className = "", refreshing = false, ...frame }: Omit<FrameworkListProps, "children" | "className"> & { children: React.ReactNode; className?: string; refreshing?: boolean }) {
+  return <FrameworkList {...frame} className={`rounded-[1.25rem] shadow-sm ${className}`}><div data-list-surface aria-busy={refreshing}>{refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}{children}</div></FrameworkList>;
 }
 
-export function ListSidePanel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <aside data-list-side-panel className={`flex overflow-hidden rounded-[1.5rem] border border-stone-200 bg-white shadow-lg shadow-stone-950/5 dark:border-stone-700 dark:bg-stone-900 dark:shadow-black/20 ${className}`}>{children}</aside>;
+export function ListSidePanel({
+  children,
+  className = "",
+  refreshing = false,
+  ...frame
+}: Omit<FrameworkListProps, "children" | "className"> & { children: React.ReactNode; className?: string; refreshing?: boolean }) {
+  return (
+    <aside data-list-side-panel className={`flex overflow-hidden rounded-[1.5rem] border border-stone-200 bg-white shadow-lg shadow-stone-950/5 dark:border-stone-700 dark:bg-stone-900 dark:shadow-black/20 ${className}`}>
+      <FrameworkList {...frame} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-inherit shadow-none">
+        <div data-list-surface aria-busy={refreshing} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}
+          {children}
+        </div>
+      </FrameworkList>
+    </aside>
+  );
 }
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;

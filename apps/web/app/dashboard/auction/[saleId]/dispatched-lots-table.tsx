@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { updateLot, deleteLot, markReprint } from "../actions";
+import { useEffect, useState } from "react";
+import { createDispatchedLotForList, updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
-import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { LOT_STATES } from "../lot-states";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { showAppToast } from "@/components/action-feedback";
+import { DispatchLotForm } from "./dispatch-lot-form";
 
 const COLUMNS: ColumnDef<LotRow>[] = [
   { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
@@ -25,52 +25,74 @@ const COLUMNS: ColumnDef<LotRow>[] = [
 const LIST: ListDefinition<LotRow> = {
   columns: COLUMNS,
   selectionMode: "single",
-  enableEdit: true,
-  enableDelete: true,
+  add: true,
+  edit: true,
+  delete: true,
 };
 
 export function DispatchedLotsTable({
-  rows,
-  setRows,
+  initialRows,
   saleId,
   isOwner,
   canEdit,
+  canAdd,
+  grades,
   soldLotIds,
+  title = "Lot invoices",
+  onRowsChange,
 }: {
-  rows: LotRow[];
-  setRows: Dispatch<SetStateAction<LotRow[]>>;
+  initialRows: LotRow[];
   saleId: string;
   isOwner: boolean;
   canEdit: boolean;
+  canAdd: boolean;
+  grades: { code: string; name: string }[];
   soldLotIds: string[];
+  title?: string;
+  onRowsChange?: (rows: LotRow[]) => void;
 }) {
+  const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reprintId, setReprintId] = useState<string | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [lotToDelete, setLotToDelete] = useState<{ id: string; cascade: boolean } | null>(null);
+  const [lotToDelete, setLotToDelete] = useState<string | null>(null);
+  const { rows, refreshing, mutate, mutationAction } = useFrameworkListData({
+    initialRows,
+    resource: { key: "auction.dispatch-lots", params: { saleId } },
+  });
   const controls = useListControls(rows, LIST.columns);
   const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
   const visibleRows = controls.rows;
   const selectedLot = rows.find((row) => row.id === selection.selectedId) ?? null;
   const selectedLotCanDelete = Boolean(selectedLot && (isOwner || selectedLot.state === "invoiced" || selectedLot.state === "pending"));
+  const selectedLotCanReprint = Boolean(selectedLot && ["acknowledged", "catalogued", "valued", "withdrawn"].includes(selectedLot.state ?? ""));
+  const reprintLot = rows.find((row) => row.id === reprintId) ?? null;
+  const totalNet = rows.reduce((sum, lot) => sum + Number(lot.net_wt ?? 0), 0);
+
+  useEffect(() => onRowsChange?.(rows), [onRowsChange, rows]);
 
   useEffect(() => {
     setEditingId(null);
     setReprintId(null);
     setPendingIds(new Set());
-  }, [rows, canEdit]);
+  }, [canEdit]);
+
+  const createLot = mutationAction(
+    (formData) => createDispatchedLotForList(saleId, formData),
+    { onSuccess: () => setAdding(false) },
+  );
 
   async function confirmLotDelete() {
     if (!lotToDelete) return;
-    const id = lotToDelete.id;
+    const id = lotToDelete;
     setPendingIds((prev) => new Set(prev).add(id));
     try {
-      await deleteLot(id, saleId);
-      setRows((curr) => curr.filter((row) => row.id !== id));
-      setLotToDelete(null);
-      showAppToast("Lot deleted.");
-    } catch {
-      showAppToast("Could not delete the lot. Please try again.", "error");
+      await mutate(() => deleteLot(id, saleId), {
+        onSuccess: () => {
+          selection.clear();
+          setLotToDelete(null);
+        },
+      });
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -81,15 +103,66 @@ export function DispatchedLotsTable({
   }
 
   return (
-    <ListSurface>
+    <ListSurface
+      title={title}
+      description={`${rows.length} lot${rows.length === 1 ? "" : "s"} · ${totalNet.toFixed(2)} kg net`}
+      onCreate={() => setAdding(true)}
+      canCreate={canAdd && !adding && !editingId && !reprintId && pendingIds.size === 0 && !refreshing}
+      createDisabledReason={canAdd ? "Finish the current lot action first." : "You cannot add lots after this broker invoice is confirmed."}
+      createLabel="New lot"
+      refreshing={refreshing || pendingIds.size > 0}
+    >
       <ListCommandToolbar
         mode={LIST.selectionMode ?? "single"}
         count={selection.selectedCount}
-        enableEdit={Boolean(canEdit && isOwner && LIST.enableEdit)}
-        onEdit={{ label: "Edit", onClick: () => selectedLot && setEditingId(selectedLot.id), disabled: !selectedLot || pendingIds.has(selectedLot?.id ?? "") }}
-        enableDelete={Boolean(canEdit && isOwner && LIST.enableDelete)}
-        onDelete={{ label: "Delete", onClick: () => selectedLot && setLotToDelete({ id: selectedLot.id, cascade: !["invoiced", "pending"].includes(selectedLot.state ?? "") }), disabled: !selectedLotCanDelete || pendingIds.has(selectedLot?.id ?? "") }}
-      />
+        enableEdit={Boolean(canEdit && LIST.edit)}
+        onEdit={{ label: "Edit", onClick: () => selectedLot && setEditingId(selectedLot.id), disabled: !selectedLot || Boolean(editingId) || Boolean(reprintId) || adding || pendingIds.has(selectedLot?.id ?? "") }}
+        enableDelete={Boolean(canEdit && LIST.delete)}
+        onDelete={{ label: "Delete", onClick: () => selectedLot && setLotToDelete(selectedLot.id), disabled: !selectedLotCanDelete || Boolean(editingId) || Boolean(reprintId) || adding || pendingIds.has(selectedLot?.id ?? "") }}
+      >
+        {canEdit && isOwner && !editingId && (
+          <button
+            type="button"
+            onClick={() => selectedLot && setReprintId(selectedLot.id)}
+            disabled={!selectedLotCanReprint || Boolean(reprintId) || adding || pendingIds.has(selectedLot?.id ?? "")}
+            className="inline-flex min-h-10 items-center rounded-full border border-orange-200 bg-white px-4 text-sm font-semibold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-orange-900 dark:bg-stone-900 dark:text-orange-300 dark:hover:bg-orange-950"
+          >
+            Re-print
+          </button>
+        )}
+        {editingId && (
+          <>
+            <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">Cancel</button>
+            <button form={`edit-${editingId}`} disabled={pendingIds.has(editingId)} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white disabled:opacity-40">Save changes</button>
+          </>
+        )}
+      </ListCommandToolbar>
+      <ListCreatePanel open={adding} title="New lot">
+        <DispatchLotForm open={adding} action={createLot} grades={grades} onCancel={() => setAdding(false)} />
+      </ListCreatePanel>
+      {reprintLot && (
+        <ListCreatePanel open title="Mark selected lot as re-print">
+          <ReprintForm
+            invoices={(reprintLot.lot_invoices ?? []).map((invoice) => invoice.invoice_no)}
+            existingSampleKg={Number(reprintLot.sample_allowance ?? 0)}
+            onCancel={() => setReprintId(null)}
+            action={async (formData) => {
+              setPendingIds((current) => new Set(current).add(reprintLot.id));
+              try {
+                await mutate(() => markReprint(reprintLot.id, saleId, formData), {
+                  onSuccess: () => setReprintId(null),
+                });
+              } finally {
+                setPendingIds((current) => {
+                  const next = new Set(current);
+                  next.delete(reprintLot.id);
+                  return next;
+                });
+              }
+            }}
+          />
+        </ListCreatePanel>
+      )}
       <ListSearchPanel columns={LIST.columns} controls={controls} />
       <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -101,7 +174,6 @@ export function DispatchedLotsTable({
                 {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
               </th>
             ))}
-            <th className="px-3 py-3"></th>
           </tr>
         </thead>
         <tbody>
@@ -115,31 +187,29 @@ export function DispatchedLotsTable({
             const minNetKg = l.threshold_min_net_kg ?? 0;
             const hasMinimumWeightIssue = l.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
             const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`;
-            const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
-
             return (
               <tr
                 key={l.id}
-                {...selection.rowProps(l.id)}
+                {...selection.rowProps(l.id, isEditing || reprintId === l.id)}
                 className={`cursor-pointer border-b border-stone-100 dark:border-stone-800 last:border-0 align-top ${selection.isSelected(l.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
               >
                 {isEditing ? (
                   <EditRow
                     lot={l}
-                    saleId={saleId}
                     isOwner={isOwner}
-                    onCancel={() => setEditingId(null)}
-                    onSaved={(patch) => {
-                      setRows((curr) => curr.map((row) => (row.id === l.id ? { ...row, ...patch } : row)));
-                      setEditingId(null);
-                    }}
-                    onBusy={(busy) => {
-                      setPendingIds((prev) => {
-                        const next = new Set(prev);
-                        if (busy) next.add(l.id);
-                        else next.delete(l.id);
-                        return next;
-                      });
+                    action={async (formData) => {
+                      setPendingIds((current) => new Set(current).add(l.id));
+                      try {
+                        await mutate(() => updateLot(l.id, saleId, formData), {
+                          onSuccess: () => setEditingId(null),
+                        });
+                      } finally {
+                        setPendingIds((current) => {
+                          const next = new Set(current);
+                          next.delete(l.id);
+                          return next;
+                        });
+                      }
                     }}
                   />
                 ) : (
@@ -205,41 +275,6 @@ export function DispatchedLotsTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right">
-                      {canEdit && isOwner && reprintable && (
-                        <div className="text-right">
-                          {reprintId === l.id ? (
-                            <ReprintForm
-                              lotId={l.id}
-                              saleId={saleId}
-                              invoices={invoices}
-                              existingSampleKg={Number(l.sample_allowance ?? 0)}
-                              onCancel={() => setReprintId(null)}
-                              onSaved={(patch) => {
-                                setRows((curr) => curr.map((row) => (row.id === l.id ? { ...row, ...patch } : row)));
-                                setReprintId(null);
-                              }}
-                              onBusy={(busy) => {
-                                setPendingIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (busy) next.add(l.id);
-                                  else next.delete(l.id);
-                                  return next;
-                                });
-                              }}
-                            />
-                          ) : (
-                            <button
-                              onClick={() => setReprintId(l.id)}
-                              disabled={pendingIds.has(l.id)}
-                              className="rounded px-2 py-1 text-xs text-orange-700 hover:bg-orange-50 hover:underline dark:text-orange-400 dark:hover:bg-orange-950 disabled:opacity-40"
-                            >
-                              Re-print
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
                   </>
                 )}
               </tr>
@@ -247,7 +282,7 @@ export function DispatchedLotsTable({
           })}
           {visibleRows.length === 0 && rows.length > 0 && (
             <tr>
-              <td colSpan={10} className="px-6 py-12 text-center">
+              <td colSpan={9} className="px-6 py-12 text-center">
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots match these filters.</p>
                 <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
                   Clear filters
@@ -257,10 +292,10 @@ export function DispatchedLotsTable({
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={10} className="px-6 py-12 text-center">
+              <td colSpan={9} className="px-6 py-12 text-center">
                 <p className="text-2xl mb-2">📦</p>
                 <p className="text-sm text-stone-400 dark:text-stone-500">No lots yet.</p>
-                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Click + Add lot above to enter the specific invoices under this broker invoice.</p>
+                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Use New lot to enter the specific invoices under this broker invoice.</p>
               </td>
             </tr>
           )}
@@ -270,10 +305,10 @@ export function DispatchedLotsTable({
       <ConfirmationDialog
         open={lotToDelete !== null}
         title="Delete lot?"
-        description={lotToDelete?.cascade ? "This will permanently remove the lot and its acknowledgement, valuation, and sale records. This cannot be undone." : "This will permanently remove the lot and its invoice records. This cannot be undone."}
+        description="Owned invoice and valuation records are removed; financial sale or VAT records safely block deletion. This cannot be undone."
         confirmLabel="Delete lot"
         destructive
-        busy={lotToDelete ? pendingIds.has(lotToDelete.id) : false}
+        busy={lotToDelete ? pendingIds.has(lotToDelete) : false}
         onCancel={() => setLotToDelete(null)}
         onConfirm={confirmLotDelete}
       />
@@ -283,26 +318,22 @@ export function DispatchedLotsTable({
 
 export function EditRow({
   lot,
-  saleId,
   isOwner,
-  onCancel,
-  onSaved,
-  onBusy,
+  action,
 }: {
   lot: LotRow;
-  saleId: string;
   isOwner: boolean;
-  onCancel: () => void;
-  onSaved: (patch: Partial<Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">>) => void;
-  onBusy: (busy: boolean) => void;
+  action: (formData: FormData) => void | Promise<void>;
 }) {
   const formId = `edit-${lot.id}`;
-  const [saving, setSaving] = useState(false);
-
   const invoices = (lot.lot_invoices ?? []).map((i) => i.invoice_no);
   return (
     <>
       <td className="px-3 py-2 font-medium">
+        <form
+          id={formId}
+          action={action}
+        />
         <input
           name="invoice_no"
           form={formId}
@@ -395,67 +426,18 @@ export function EditRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2 text-right">
-        <form
-          id={formId}
-          action={async (formData) => {
-            setSaving(true);
-            onBusy(true);
-            try {
-              const saved = await updateLot(lot.id, saleId, formData);
-              if (!saved) return;
-              onSaved({
-                invoice_no: saved.invoice_no as string | null,
-                lot_no: saved.lot_no as string | null,
-                grade: saved.grade as string | null,
-                bags: saved.bags as number | null,
-                kg_per_bag: saved.kg_per_bag as number | null,
-                sample_allowance: saved.sample_allowance as number | null,
-                net_wt: saved.net_wt as number | null,
-                state: saved.state as string | null,
-              });
-            } finally {
-              setSaving(false);
-              onBusy(false);
-            }
-          }}
-          className="flex items-center justify-end gap-1"
-        >
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-60"
-          >
-            <span className={`h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent ${saving ? "" : "opacity-0"}`} />
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded border border-stone-300 px-2.5 py-1 text-xs text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-400 dark:hover:bg-stone-800"
-          >
-            Cancel
-          </button>
-        </form>
-      </td>
     </>
   );
 }
 
 function ReprintForm({
-  lotId,
-  saleId,
   onCancel,
-  onSaved,
-  onBusy,
+  action,
   invoices,
   existingSampleKg,
 }: {
-  lotId: string;
-  saleId: string;
   onCancel: () => void;
-  onSaved: (patch: Partial<LotRow>) => void;
-  onBusy: (busy: boolean) => void;
+  action: (formData: FormData) => void | Promise<void>;
   invoices: string[];
   existingSampleKg: number;
 }) {
@@ -466,17 +448,10 @@ function ReprintForm({
     <form
       action={async (formData) => {
         setSaving(true);
-        onBusy(true);
         try {
-          await markReprint(lotId, saleId, formData);
-          onSaved({
-            state: "re-print",
-            reprint_target_sale_id: null,
-            reprint_target_label: null,
-          });
+          await action(formData);
         } finally {
           setSaving(false);
-          onBusy(false);
         }
       }}
       className="mt-1 space-y-2 rounded-lg border border-stone-200 p-2 text-left dark:border-stone-700"

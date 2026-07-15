@@ -1,64 +1,53 @@
-import { useCallback, useState } from "react";
-import { FlatList, RefreshControl, Text, View } from "react-native";
+import { useCallback } from "react";
+import { Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
-import { supabase } from "@/lib/supabase";
-import { useSession } from "@/lib/session";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useFrameworkListController } from "@tea/ui/list-controller";
+import { NativeFrameworkList } from "@/components/NativeFrameworkList";
 import { formatTime, todayRange } from "@/lib/dates";
-import type { Weighing } from "@/lib/types";
+import { useSession } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
+import type { Weighing } from "@/lib/types";
 
 export default function Records() {
-  const { collector } = useSession();
-  const [rows, setRows] = useState<Weighing[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!collector) return;
+  const { profile, collector } = useSession();
+  const router = useRouter();
+  const loadRows = useCallback(async () => {
+    if (!profile || profile.role !== "collector" || !collector) return [];
     const { start, end } = todayRange();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("weighings")
       .select("id, weight_kg, collected_at, suppliers(name)")
+      .eq("factory_id", profile.factory_id)
       .eq("collector_id", collector.id)
       .gte("collected_at", start)
       .lt("collected_at", end)
       .order("collected_at", { ascending: false });
-    setRows((data as unknown as Weighing[]) ?? []);
-  }, [collector]);
+    if (error) throw error;
+    return (data as unknown as Weighing[]) ?? [];
+  }, [collector, profile]);
+  const list = useFrameworkListController(loadRows);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
+  useFocusEffect(useCallback(() => {
+    void list.reload();
+  }, [list.reload, loadRows]));
 
-  async function onRefresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
-
-  const total = rows.reduce((sum, r) => sum + Number(r.weight_kg), 0);
+  const total = list.rows.reduce((sum, row) => sum + Number(row.weight_kg), 0);
 
   return (
     <SafeAreaView style={s.screen} edges={["top"]}>
-      <View style={s.pad}>
-        <Text style={s.h1}>Today&apos;s records</Text>
-        <Text style={[s.muted, { marginTop: 2 }]}>
-          {rows.length} weighing{rows.length === 1 ? "" : "s"} · {total.toFixed(2)} kg total
-        </Text>
-      </View>
-
-      <FlatList
-        data={rows}
+      <NativeFrameworkList
+        list={list}
+        title="Today's records"
+        description={`${list.rows.length} weighing${list.rows.length === 1 ? "" : "s"} · ${total.toFixed(2)} kg total`}
+        onCreate={() => router.push("/(app)/weigh")}
+        canCreate={Boolean(profile?.role === "collector" && collector)}
+        createDisabledReason="Your collector profile must be loaded before recording a weighing."
+        createLabel="New weighing"
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.green} />}
-        ListEmptyComponent={
-          <View style={[s.card, { alignItems: "center" }]}>
-            <Text style={s.faint}>No weighings recorded today yet.</Text>
-          </View>
-        }
+        emptyMessage="No weighings recorded today yet."
         renderItem={({ item }) => (
           <View
             style={[

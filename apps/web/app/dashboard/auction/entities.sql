@@ -9,7 +9,7 @@ CREATE TABLE auction_sales (
   broker_lorry_no text,
   driver_name text,
   sale_kind text NOT NULL DEFAULT 'dispatch',
-  parent_sale_id uuid REFERENCES auction_sales(id),
+  parent_sale_id uuid REFERENCES auction_sales(id) ON DELETE CASCADE,
   reprint_no text,
   sale_no text NOT NULL,
   dispatch_date date NOT NULL,
@@ -18,13 +18,14 @@ CREATE TABLE auction_sales (
   prompt_date date,
   status text NOT NULL DEFAULT 'draft',
   created_at timestamp NOT NULL DEFAULT now(),
+  created_date date GENERATED ALWAYS AS ((created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Colombo')::date) STORED NOT NULL,
   UNIQUE(factory_id, broker_id, sale_no),
   UNIQUE(factory_id, bundled_dispatch_id, broker_id, selling_mark_id)
 );
 CREATE TABLE auction_lots (
   id uuid PRIMARY KEY,
   factory_id uuid NOT NULL,
-  sale_id uuid NOT NULL REFERENCES auction_sales(id),
+  sale_id uuid NOT NULL REFERENCES auction_sales(id) ON DELETE CASCADE,
   mark_id uuid,
   invoice_no text NOT NULL,
   provisional_sale_no text,
@@ -34,7 +35,7 @@ CREATE TABLE auction_lots (
   bags integer,
   net_wt numeric(10,2) NOT NULL,
   state text NOT NULL DEFAULT 'invoiced',
-  reprint_source_lot_id uuid REFERENCES auction_lots(id),
+  reprint_source_lot_id uuid REFERENCES auction_lots(id) ON DELETE SET NULL,
   created_at timestamp NOT NULL DEFAULT now()
 );
 CREATE TABLE lot_invoices (

@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { updateSaleLotsInline } from "../../actions";
 import { deleteLot } from "../../_actions/lots";
 import { money } from "../../format";
-import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { showAppToast } from "@/components/action-feedback";
 
@@ -61,12 +60,12 @@ const SOLD_REQUIREMENTS = "It is not allowed to change the status to sold withou
 const LIST: ListDefinition<SaleLineRow> = {
   columns: COLUMNS,
   selectionMode: "multi",
-  enableEdit: true,
-  enableDelete: true,
+  edit: true,
+  delete: true,
 };
 
-export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: SaleLineRow[]; invoiceEditingLocked?: boolean }) {
-  const router = useRouter();
+export function SaleLinesTable({ saleId, rows: initialRows, invoiceEditingLocked = false }: { saleId: string; rows: SaleLineRow[]; invoiceEditingLocked?: boolean }) {
+  const { rows, refreshing, mutate } = useFrameworkListData({ initialRows, resource: { key: "auction.sale-lines", params: { saleId } } });
   const controls = useListControls(rows, LIST.columns);
   const visibleRows = controls.rows;
   const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "multi", getId: (row) => row.id });
@@ -82,16 +81,19 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
     if (!deleteRequest) return;
     setDeleting(true);
     try {
-      for (const row of deleteRequest) {
-        if (!row.dispatchId) throw new Error("This lot is not linked to a broker invoice.");
-        await deleteLot(row.id, row.dispatchId);
-      }
-      selection.clear();
-      setDeleteRequest(null);
-      showAppToast(`${deleteRequest.length === 1 ? "Lot" : "Lots"} deleted.`);
-      router.refresh();
-    } catch {
-      showAppToast("Could not delete one or more lots. Please try again.", "error");
+      await mutate(async () => {
+        for (const row of deleteRequest) {
+          if (!row.dispatchId) return { ok: false, error: "This lot is not linked to a broker invoice." };
+          const result = await deleteLot(row.id, row.dispatchId);
+          if (!result.ok) return result;
+        }
+        return { ok: true, notice: `${deleteRequest.length === 1 ? "Lot" : "Lots"} deleted.` };
+      }, {
+        onSuccess: () => {
+          selection.clear();
+          setDeleteRequest(null);
+        },
+      });
     } finally {
       setDeleting(false);
     }
@@ -118,23 +120,25 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
         }
         setSaving(true);
         try {
-          await updateSaleLotsInline(actionSaleId, formData);
-          setEditing(false);
-          selection.clear();
-          router.refresh();
+          await mutate(() => updateSaleLotsInline(actionSaleId, formData), {
+            onSuccess: () => {
+              setEditing(false);
+              selection.clear();
+            },
+          });
         } finally {
           setSaving(false);
         }
       }}
       className="mt-3"
     >
-      <ListSurface>
+      <ListSurface refreshing={refreshing}>
       <ListCommandToolbar
         mode={LIST.selectionMode ?? "multi"}
         count={selection.selectedCount}
-        enableEdit={Boolean(LIST.enableEdit && !editing && !invoiceEditingLocked)}
+        enableEdit={Boolean(LIST.edit && !editing && !invoiceEditingLocked)}
         onEdit={{ label: "Edit", onClick: () => setEditing(true), disabled: selection.selectedCount === 0 }}
-        enableDelete={Boolean(LIST.enableDelete && !editing && !invoiceEditingLocked)}
+        enableDelete={Boolean(LIST.delete && !editing && !invoiceEditingLocked)}
         onDelete={{ label: "Delete", onClick: () => setDeleteRequest(selectedRows), disabled: selection.selectedCount === 0, busy: deleting }}
       >
         {editing && (
@@ -284,7 +288,7 @@ export function SaleLinesTable({ rows, invoiceEditingLocked = false }: { rows: S
       <ConfirmationDialog
         open={deleteRequest !== null}
         title={`Delete ${deleteRequest?.length === 1 ? "lot" : `${deleteRequest?.length ?? 0} lots`}?`}
-        description="This permanently removes the selected lots and their related acknowledgement, valuation, and sale records. This cannot be undone."
+        description="This removes the selected lots plus their owned invoice and valuation records. Financial sale or VAT records safely block deletion instead. This cannot be undone."
         confirmLabel="Delete"
         destructive
         busy={deleting}

@@ -82,6 +82,16 @@ selection. A list marked non-editable may still use the same search, sorting,
 and selection primitives without exposing edit commands. Do not create an
 ad-hoc list outside this framework.
 
+CRUD-enabled lists use `useFrameworkListData` with an opaque typed resource
+from `apps/web/lib/list-resources.ts`. Its single shared server action dispatches
+through the server-only allowlist in `list-resource-registry.ts`, where module
+authorization, parameter validation, tenant/actor predicates, projection, and
+row mapping are defined. Do not create a refresh action per entity, and never
+let the browser select a table, tenant, columns, or arbitrary query filters.
+After successful CRUD, the framework replaces only matching mounted list rows
+plus explicitly invalidated dependent lists. Do not require a browser reload or
+use route-wide `router.refresh()` for ordinary list CRUD.
+
 List pages and list sections must use one consistent search pattern.
 
 - Use `useListControls`, `SortButton`, and `ListSearchPanel` from `apps/web/components/list-controls.tsx` for sortable/searchable tables.
@@ -97,6 +107,10 @@ List pages and list sections must use one consistent search pattern.
   a list Search button.
 - Keep the search surface collapsed by default. LOV selections are drafts until
   the user selects the explicit `Search` action; only then update the visible rows.
+- Creation is owned by `ListSurface`: providing `onCreate` displays its built-in
+  `+ New` button, while `canCreate` and `createDisabledReason` express the real
+  permission. Open `ListCreatePanel` inside that same list. Do not duplicate New
+  in the page header, command toolbar, row, or a persistent adjacent form.
 - Editable lists use a selection toolbar above the list. Multi-select lists show a
   leading checkbox column and top-level Edit plus domain actions such as Deactivate
   and Reactivate; do not repeat text actions on every row. Edit requires exactly

@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { createDispatch } from "./actions";
 import { formatSaleNo, saleNoMatches } from "./sale-number";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
+
+export type DispatchCreationOptions = {
+  brokers: { id: string; name: string }[];
+  marks: { id: string; code: string; name: string | null }[];
+  invoiceDate: string;
+  nextDispatchNo: string;
+  dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
+};
 
 export function NewDispatchForm({
   brokers,
@@ -15,27 +22,15 @@ export function NewDispatchForm({
   invoiceDate,
   nextDispatchNo,
   dispatchHistory,
-}: {
-  brokers: { id: string; name: string }[];
-  marks: { id: string; code: string; name: string | null }[];
-  invoiceDate: string;
-  nextDispatchNo: string;
-  dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
+  action,
+  onCancel,
+}: DispatchCreationOptions & {
+  action: (formData: FormData) => void | Promise<void>;
+  onCancel?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [dispatchDate, setDispatchDate] = useState(invoiceDate);
   const [targetSaleNo, setTargetSaleNo] = useState("");
   const [saleDate, setSaleDate] = useState(addDays(invoiceDate, 14));
-  const ref = useRef<HTMLFormElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
 
   useEffect(() => {
     const formattedSaleNo = formatSaleNo(targetSaleNo);
@@ -61,19 +56,7 @@ export function NewDispatchForm({
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-      >
-        New broker invoice
-      </button>
-      <form
-        ref={ref}
-        action={createDispatch}
-        className={`absolute right-0 top-12 z-20 w-96 grid gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 shadow-lg ${open ? "" : "hidden"}`}
-      >
+    <form action={action} className="grid gap-3">
         <div>
           <label className={label}>Broker</label>
           <select name="broker_id" required defaultValue="" className={input}>
@@ -151,14 +134,16 @@ export function NewDispatchForm({
             />
           </div>
         </div>
-        <SubmitButton
-          pendingText="Creating…"
-          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-        >
-          Create broker invoice
-        </SubmitButton>
-      </form>
-    </div>
+        <div className="flex flex-wrap gap-2">
+          <SubmitButton
+            pendingText="Creating…"
+            className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+          >
+            Create broker invoice
+          </SubmitButton>
+          {onCancel && <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">Cancel</button>}
+        </div>
+    </form>
   );
 }
 

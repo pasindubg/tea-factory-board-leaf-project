@@ -13,10 +13,10 @@ export const brokerGradeThresholds = pgTable(
       .references(() => factories.id)
       .notNull(),
     brokerId: uuid("broker_id")
-      .references(() => brokers.id)
+      .references(() => brokers.id, { onDelete: "cascade" })
       .notNull(),
     gradeId: uuid("grade_id")
-      .references(() => auctionGrades.id)
+      .references(() => auctionGrades.id, { onDelete: "cascade" })
       .notNull(),
     minNetKg: numeric("min_net_kg", { precision: 10, scale: 2 }).default("0").notNull(),
     applies: boolean("applies").default(false).notNull(),

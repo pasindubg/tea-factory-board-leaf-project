@@ -17,6 +17,7 @@ import {
   type ParsedContract,
 } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
+import { friendlyError } from "@/lib/errors";
 import {
   AUC,
   back,
@@ -71,9 +72,9 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
   if (!isAcknowledgement(text)) return back(detail, "That doesn't look like an Acknowledgement document.");
   const parsed = parseAcknowledgement(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
-  if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${reviewBase}/ack/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
+  if (!staged.ok) return back(detail, staged.error);
+  redirect(`${reviewBase}/ack/${staged.importId}`);
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
@@ -381,9 +382,9 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
   if (!isValuation(text)) return back(detail, "That doesn't look like a Valuation Report.");
   const parsed = parseValuation(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
-  if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${reviewBase}/valuation/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
+  if (!staged.ok) return back(detail, staged.error);
+  redirect(`${reviewBase}/valuation/${staged.importId}`);
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
@@ -435,9 +436,9 @@ export async function ingestContract(saleId: string, formData: FormData) {
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
   if (!isContract(text)) return back(detail, "That doesn't look like a Sellers Contract & Account Sales document.");
   const parsed = parseContract(text);
-  const importId = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
-  if (!importId) return back(detail, "Could not stage the document.");
-  redirect(`${reviewBase}/contract/${importId}`);
+  const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
+  if (!staged.ok) return back(detail, staged.error);
+  redirect(`${reviewBase}/contract/${staged.importId}`);
 }
 
 export async function confirmContract(importId: string, saleId: string) {
@@ -499,11 +500,26 @@ export async function confirmContract(importId: string, saleId: string) {
   const alreadyApplied = new Set((priorReprintAudits ?? []).map((row) => row.lot_id as string));
 
   if (notSoldLotIds.length > 0) {
-    const { data: staleSaleLines } = await supabase.from("sale_lines").select("id").in("lot_id", notSoldLotIds);
+    const { data: staleSaleLines, error: staleLineReadError } = await supabase
+      .from("sale_lines")
+      .select("id")
+      .eq("factory_id", profile.factory_id)
+      .in("lot_id", notSoldLotIds);
+    if (staleLineReadError) return back(detail, friendlyError(staleLineReadError));
     const staleSaleLineIds = (staleSaleLines ?? []).map((row) => row.id as string);
     if (staleSaleLineIds.length > 0) {
-      await supabase.from("vat_ledger").delete().in("sale_line_id", staleSaleLineIds);
-      await supabase.from("sale_lines").delete().in("id", staleSaleLineIds);
+      const { error: vatDeleteError } = await supabase
+        .from("vat_ledger")
+        .delete()
+        .eq("factory_id", profile.factory_id)
+        .in("sale_line_id", staleSaleLineIds);
+      if (vatDeleteError) return back(detail, friendlyError(vatDeleteError));
+      const { error: staleLineDeleteError } = await supabase
+        .from("sale_lines")
+        .delete()
+        .eq("factory_id", profile.factory_id)
+        .in("id", staleSaleLineIds);
+      if (staleLineDeleteError) return back(detail, friendlyError(staleLineDeleteError));
     }
   }
 

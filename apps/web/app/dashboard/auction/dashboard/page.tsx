@@ -149,10 +149,10 @@ export default async function AuctionDashboardPage() {
       {totalLots === 0 ? (
         <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
           Nothing to show yet.{" "}
-          <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
-            Create a dispatch
+          <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
+            Open broker invoices
           </Link>{" "}
-          to get started.
+          and use the list&apos;s New command to get started.
         </div>
       ) : (
         <>
