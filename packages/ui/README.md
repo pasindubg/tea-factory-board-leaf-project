@@ -38,15 +38,24 @@ directly; `ListSurface` is the web behavior-layer adapter and accepts the same
 header/create props. Do not nest the two components or add another New action
 to `ListCommandToolbar`.
 
-CRUD lists pass an opaque `resource` to `useFrameworkListData`. Register the
-read model once in the server-only resource registry. Do not create a refresh
-server action for each entity: the framework's shared dispatcher reloads only
-the mounted list instances for that resource after a successful mutation.
+For a normal scalar CRUD table, prefer the web app's `EntityList` adapter. It
+looks up the shared title/description from the opaque resource key and owns the
+common list wiring. Declare inline editors on columns, bulk/domain actions in
+`commands`, totals in `summary`/`footer`, and same-resource lanes in `tabs`.
+`sideList` owns ordinary linked-card panels and `create.render` supplies domain
+form fields. Reserve the top-level `render` escape hatch for genuine workflow
+or matrix layouts.
+
+CRUD lists pass an opaque `resource` to `EntityList`. Register the read model
+once in the server-only resource registry. Do not create a refresh server action
+for each entity: the framework's shared dispatcher reloads only the mounted list
+instances for that resource after a successful mutation.
 
 ## Move stacked related lists into `TabView`
 
-When two or more full operational lists belong to one work surface, preserve
-each list's independent controls and place the finished list surfaces in tabs.
+Use `EntityList.tabs` to partition one resource. When two or more independent
+full operational lists belong to one work surface, preserve each list's
+controls and place the finished surfaces in `EntityListTabs`.
 
 ```tsx
 import { TabView } from "@tea/ui";
@@ -69,7 +78,9 @@ retained.
 ## Expo lists use the headless subpath
 
 React Native must not import the DOM component barrel from `@tea/ui`. Import
-the platform-neutral controller from `@tea/ui/list-controller`, then render it
+the platform-neutral controller only inside the app's `NativeEntityList`
+adapter; screens render `NativeEntityList` rather than calling the hook
+directly.
 with `apps/mobile/components/NativeFrameworkList.tsx`:
 
 ```tsx

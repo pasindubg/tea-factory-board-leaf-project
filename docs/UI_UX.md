@@ -82,8 +82,21 @@ selection. A list marked non-editable may still use the same search, sorting,
 and selection primitives without exposing edit commands. Do not create an
 ad-hoc list outside this framework.
 
-CRUD-enabled lists use `useFrameworkListData` with an opaque typed resource
-from `apps/web/lib/list-resources.ts`. Its single shared server action dispatches
+For ordinary scalar CRUD collections, use `EntityList` from
+`apps/web/components/entity-list.tsx`. It takes the opaque resource identity,
+rows, a `ListDefinition`, permission result, and declarative columns, then
+owns the repeated refresh/search/selection/toolbar/create/delete/table wiring.
+The entity-specific form remains a `create.render` callback; column `edit`
+renderers own ordinary inline editing, `commands` own bulk/domain actions,
+`summary`/`footer` own aggregates, and `tabs` partitions one live entity into
+independent lanes. Ordinary linked-card selectors and side panels use
+`sideList`. All mutations remain typed tenant-scoped server actions. Reserve
+`EntityList.render` for genuine multi-record workflows and matrices; consume
+the controls supplied to that callback instead of importing list hooks in the
+page.
+
+CRUD-enabled lists give `EntityList` an opaque typed resource from
+`apps/web/lib/list-resources.ts`. Its internal shared controller dispatches
 through the server-only allowlist in `list-resource-registry.ts`, where module
 authorization, parameter validation, tenant/actor predicates, projection, and
 row mapping are defined. Do not create a refresh action per entity, and never
@@ -94,7 +107,9 @@ use route-wide `router.refresh()` for ordinary list CRUD.
 
 List pages and list sections must use one consistent search pattern.
 
-- Use `useListControls`, `SortButton`, and `ListSearchPanel` from `apps/web/components/list-controls.tsx` for sortable/searchable tables.
+- Ordinary tables declare searchable/sortable columns on `EntityList`; only
+  approved `render` workflow/detail exceptions use the supplied
+  `controls` with `SortButton` and `ListSearchPanel`.
 - `ListSearchPanel` shows one always-visible LOV select for every column with an
   accessor. Omitting the accessor is the explicit way to make a list attribute
   non-searchable. Do not use a Google-style general text box for ordinary list
@@ -118,8 +133,9 @@ List pages and list sections must use one consistent search pattern.
 - A list explicitly configured with `selectionMode: "single"` omits the checkbox
   column and bulk toolbar; it exposes the edit action only for its selected/current
   row. Multi-select is the default for editable operational lists.
-- When two or more related lists belong to the same work surface, use
-  `TabbedListSurface` with a top `tablist` instead of stacking full tables. Each
+- When one live entity is divided into lanes, use `EntityList.tabs`. When two
+  or more independent related lists belong to the same work surface, use
+  `EntityListTabs` with a top `tablist` instead of stacking full tables. Each
   tab retains its own list search, selection, and actions; arrow keys plus
   Home/End must navigate the tab bar.
 - Do not add inline filter rows inside `<thead>`. Put the top-right `Search` button/panel above the table inside the same bordered table surface.

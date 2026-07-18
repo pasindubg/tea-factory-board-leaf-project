@@ -1,9 +1,8 @@
 import { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
-import { useFrameworkListController } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import type { FrameworkListController } from "@tea/ui/list-controller";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
@@ -24,15 +23,10 @@ export default function Messages() {
     if (error) throw error;
     return (data as SupplierMessage[]) ?? [];
   }, [profile, supplier]);
-  const list = useFrameworkListController(loadRows);
-
-  useFocusEffect(useCallback(() => {
-    void list.reload();
-  }, [list.reload, loadRows]));
-
-  const unread = list.rows.filter((message) => message.supplier_id != null && message.read_at == null);
-
-  async function markAllRead() {
+  async function markAllRead(
+    list: FrameworkListController<SupplierMessage>,
+    unread: SupplierMessage[],
+  ) {
     if (!profile || profile.role !== "supplier" || !supplier || unread.length === 0) return;
     setBusy(true);
     await list.runMutation(async () => {
@@ -51,19 +45,22 @@ export default function Messages() {
 
   return (
     <SafeAreaView style={s.screen} edges={["bottom"]}>
-      <NativeFrameworkList
-        list={list}
+      <NativeEntityList
+        loadRows={loadRows}
         title="Inbox"
         description="Direct factory messages and factory-wide broadcasts."
-        actions={unread.length > 0 ? (
-          <Pressable
-            style={[s.button, { paddingHorizontal: 12, paddingVertical: 9 }, busy && s.buttonDisabled]}
-            disabled={busy}
-            onPress={() => { void markAllRead(); }}
-          >
-            <Text style={s.buttonText}>Mark {unread.length} read</Text>
-          </Pressable>
-        ) : null}
+        actions={(list) => {
+          const unread = list.rows.filter((message) => message.supplier_id != null && message.read_at == null);
+          return unread.length > 0 ? (
+            <Pressable
+              style={[s.button, { paddingHorizontal: 12, paddingVertical: 9 }, busy && s.buttonDisabled]}
+              disabled={busy}
+              onPress={() => { void markAllRead(list, unread); }}
+            >
+              <Text style={s.buttonText}>Mark {unread.length} read</Text>
+            </Pressable>
+          ) : null;
+        }}
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.pad}
         emptyMessage="No messages yet."

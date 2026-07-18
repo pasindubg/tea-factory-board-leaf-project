@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 
 type ImportRow = {
@@ -13,14 +13,11 @@ type ImportRow = {
   sale_id: string | null;
 };
 
-const COLUMNS: ColumnDef<ImportRow>[] = [
+const BASE_COLUMNS: EntityListColumn<ImportRow>[] = [
   { key: "source_filename", label: "File", accessor: (row) => row.source_filename ?? "document.pdf", sortable: true, filter: "text" },
-  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
-  { key: "parsed_at", label: "Uploaded", accessor: (row) => row.parsed_at, sortable: true, searchInput: "date" },
-  { key: "sale_id", label: "Record", accessor: (row) => row.sale_id, sortable: true, filter: "text" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", render: (row) => <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-400">{row.status}</span> },
+  { key: "parsed_at", label: "Uploaded", accessor: (row) => row.parsed_at, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => row.parsed_at ? new Date(row.parsed_at).toLocaleString() : "—" },
 ];
-
-const LIST = { columns: COLUMNS, selectionMode: "single", add: true } satisfies ListDefinition<ImportRow>;
 
 export function DocumentImportList({
   title,
@@ -37,46 +34,51 @@ export function DocumentImportList({
   reviewType: "ack" | "valuation" | "contract" | "bank";
   accept?: string;
 }) {
-  const [adding, setAdding] = useState(false);
-  const controls = useListControls(rows, LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.id });
+  const columns: EntityListColumn<ImportRow>[] = [
+    ...BASE_COLUMNS,
+    {
+      key: "sale_id",
+      label: "Record",
+      accessor: (row) => row.sale_id,
+      sortable: true,
+      filter: "text",
+      render: (row) => {
+        const href = row.sale_id
+          ? `/dashboard/auction/${row.sale_id}/${reviewType}/${row.id}`
+          : `/dashboard/auction/${row.id}`;
+        return <Link href={href} className="text-green-700 hover:underline dark:text-green-400">Review</Link>;
+      },
+    },
+  ];
+  const definition = { columns, selectionMode: "single", add: true } satisfies ListDefinition<ImportRow>;
 
   return (
-    <ListSurface
+    <EntityList
+      scope={`document-import-${reviewType}`}
+      initialRows={rows}
+      definition={definition}
+      getId={(row) => row.id}
+      rowLabel={(row) => row.source_filename ?? "document.pdf"}
       title={title}
       description={description}
-      onCreate={() => setAdding(true)}
-      canCreate={!adding}
-      createDisabledReason="Finish the current upload first."
-      createLabel="Upload document"
-    >
-      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
-      <ListCreatePanel open={adding} title={`Upload ${title.toLowerCase()}`}>
-        <form action={action} className="flex flex-wrap items-center gap-3">
-          <input type="file" name="file" accept={accept} required className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-green-700 file:px-3 file:py-1.5 file:text-white hover:file:bg-green-800" />
-          <SubmitButton pendingText="Reading…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600">Upload &amp; review</SubmitButton>
-          <button type="button" onClick={() => setAdding(false)} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">Cancel</button>
-        </form>
-      </ListCreatePanel>
-      <ListSearchPanel columns={LIST.columns} controls={controls} label={`Search ${title.toLowerCase()} history`} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">{LIST.columns.map((column) => <th key={column.key} className="px-4 py-3">{column.sortable ? <SortButton col={column} controls={controls} /> : column.label}</th>)}</tr></thead>
-          <tbody>
-            {visibleRows.map((row) => {
-              const href = row.sale_id ? `/dashboard/auction/${row.sale_id}/${reviewType}/${row.id}` : `/dashboard/auction/${row.id}`;
-              return <tr key={row.id} {...selection.rowProps(row.id)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(row.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
-                <td className="px-4 py-2">{row.source_filename ?? "document.pdf"}</td>
-                <td className="px-4 py-2"><span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-400">{row.status}</span></td>
-                <td className="px-4 py-2 text-stone-500 dark:text-stone-400">{row.parsed_at ? new Date(row.parsed_at).toLocaleString() : "—"}</td>
-                <td className="px-4 py-2"><Link href={href} className="text-green-700 hover:underline dark:text-green-400">Review</Link></td>
-              </tr>;
-            })}
-            {visibleRows.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-stone-400">{rows.length === 0 ? "No documents uploaded yet." : "No documents match these filters."}</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </ListSurface>
+      create={{
+        label: "Upload document",
+        panelTitle: `Upload ${title.toLowerCase()}`,
+        disabledReason: "Finish the current upload first.",
+        action: async (formData) => {
+          await action(formData);
+          return { ok: true, notice: "Document uploaded." };
+        },
+        render: ({ action: submit, close }) => (
+          <form action={submit} className="flex flex-wrap items-center gap-3">
+            <input type="file" name="file" accept={accept} required className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-green-700 file:px-3 file:py-1.5 file:text-white hover:file:bg-green-800" />
+            <SubmitButton pendingText="Reading…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600">Upload &amp; review</SubmitButton>
+            <button type="button" onClick={close} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">Cancel</button>
+          </form>
+        ),
+      }}
+      emptyMessage="No documents uploaded yet."
+      filteredEmptyMessage="No documents match these filters."
+    />
   );
 }

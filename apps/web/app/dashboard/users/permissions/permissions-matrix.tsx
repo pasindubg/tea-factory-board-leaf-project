@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { EntityList } from "@/components/entity-list";
 import {
   ListCommandToolbar,
   ListSearchPanel,
   ListSurface,
   SortButton,
-  useFrameworkListData,
-  useListControls,
-  useListSelection,
   type ColumnDef,
   type ListDefinition,
 } from "@/components/list-controls";
@@ -46,29 +44,6 @@ function draftFromRows(rows: ModulePermissionListRow[]): PermissionDraft {
 export function PermissionsMatrix({ initialRows }: { initialRows: ModulePermissionListRow[] }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draft, setDraft] = useState<PermissionDraft>(() => draftFromRows(initialRows));
-  const { rows, refreshing, mutationAction } = useFrameworkListData({
-    initialRows,
-    resource: { key: "users.module-permissions" },
-  });
-  const selection = useListSelection(rows, {
-    mode: LIST.selectionMode,
-    getId: (row) => row.key,
-  });
-  const controls = useListControls(rows, LIST.columns);
-  const visibleRows = controls.rows;
-  const selectedModule = rows.find((row) => row.key === selection.selectedId) ?? null;
-  const editingModule = rows.find((row) => row.key === editingKey) ?? null;
-
-  function beginEditing() {
-    if (!selectedModule) return;
-    setDraft(draftFromRows(rows));
-    setEditingKey(selectedModule.key);
-  }
-
-  function cancelEditing() {
-    setDraft(draftFromRows(rows));
-    setEditingKey(null);
-  }
 
   function setAllowed(moduleKey: string, role: Role, allowed: boolean) {
     setDraft((current) => {
@@ -82,6 +57,27 @@ export function PermissionsMatrix({ initialRows }: { initialRows: ModulePermissi
   }
 
   return (
+    <EntityList
+      resource={{ key: "users.module-permissions" }}
+      initialRows={initialRows}
+      definition={LIST}
+      getId={(row) => row.key}
+      rowLabel={(row) => row.label}
+      emptyMessage="No configurable modules are available."
+      renderMode="matrix"
+      render={({ rows, visibleRows, refreshing, mutationAction, controls, selection }) => {
+        const selectedModule = rows.find((row) => row.key === selection.selectedId) ?? null;
+        const editingModule = rows.find((row) => row.key === editingKey) ?? null;
+        const beginEditing = () => {
+          if (!selectedModule) return;
+          setDraft(draftFromRows(rows));
+          setEditingKey(selectedModule.key);
+        };
+        const cancelEditing = () => {
+          setDraft(draftFromRows(rows));
+          setEditingKey(null);
+        };
+        return (
     <form
       id={FORM_ID}
       action={mutationAction(saveModulePermissions, {
@@ -186,5 +182,8 @@ export function PermissionsMatrix({ initialRows }: { initialRows: ModulePermissi
         </div>
       </ListSurface>
     </form>
+        );
+      }}
+    />
   );
 }

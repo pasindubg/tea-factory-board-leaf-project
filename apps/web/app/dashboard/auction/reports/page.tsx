@@ -4,7 +4,7 @@ import { ReportsTabs } from "./reports-tabs";
 import { SettlementsTable, type SettlementRow } from "./settlements-table";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { DocumentImportList } from "./document-import-list";
-import { TabbedListSurface } from "@/components/list-controls";
+import { EntityListTabs } from "@/components/entity-list";
 
 export default async function ReportsPage() {
   const { supabase } = await requireModuleAccess("auction");
@@ -114,44 +114,35 @@ export default async function ReportsPage() {
         <p className="text-sm text-stone-500 dark:text-stone-400">Drop a broker PDF or bank CSV — the system parses the sale number and links it to the right broker invoice automatically.</p>
       </section>
 
-      <TabbedListSurface
+      <EntityListTabs
+        label="Auction report imports"
         tabs={[
-          { id: "acknowledgements", label: "Acknowledgements", count: `${ackImports.length}` },
-          { id: "valuations", label: "Valuations", count: `${valImports.length}` },
-          { id: "contracts", label: "Contracts", count: `${conImports.length}` },
-          { id: "bank", label: "Bank statements", count: `${bankImports.length}` },
+          {
+            id: "acknowledgements",
+            label: "Acknowledgements",
+            count: `${ackImports.length}`,
+            content: <DocumentImportList title="Acknowledgement" description="Catalogue lots and reconcile (①) against what you invoiced; shutouts are flagged. Auto-detects the sale." action={ingestAckAuto} rows={ackImports} reviewType="ack" />,
+          },
+          {
+            id: "valuations",
+            label: "Valuations",
+            count: `${valImports.length}`,
+            content: <DocumentImportList title="Valuation report" description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes." action={ingestValAuto} rows={valImports} reviewType="valuation" />,
+          },
+          {
+            id: "contracts",
+            label: "Contracts",
+            count: `${conImports.length}`,
+            content: <DocumentImportList title="Sellers contract" description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation." action={ingestConAuto} rows={conImports} reviewType="contract" />,
+          },
+          {
+            id: "bank",
+            label: "Bank statements",
+            count: `${bankImports.length}`,
+            content: <DocumentImportList title="Bank statement (CSV)" description="Upload the bank statement to reconcile (④) settlements against the credits that actually arrived." action={ingestBankAuto} rows={bankImports} reviewType="bank" accept=".csv,text/csv" />,
+          },
         ]}
-      >
-        <DocumentImportList
-          title="Acknowledgement"
-          description="Catalogue lots and reconcile (①) against what you invoiced; shutouts are flagged. Auto-detects the sale."
-          action={ingestAckAuto}
-          rows={ackImports}
-          reviewType="ack"
-        />
-        <DocumentImportList
-          title="Valuation report"
-          description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes."
-          action={ingestValAuto}
-          rows={valImports}
-          reviewType="valuation"
-        />
-        <DocumentImportList
-          title="Sellers contract"
-          description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation."
-          action={ingestConAuto}
-          rows={conImports}
-          reviewType="contract"
-        />
-        <DocumentImportList
-          title="Bank statement (CSV)"
-          description="Upload the bank statement to reconcile (④) settlements against the credits that actually arrived."
-          action={ingestBankAuto}
-          rows={bankImports}
-          reviewType="bank"
-          accept=".csv,text/csv"
-        />
-      </TabbedListSurface>
+      />
     </div>
   );
 

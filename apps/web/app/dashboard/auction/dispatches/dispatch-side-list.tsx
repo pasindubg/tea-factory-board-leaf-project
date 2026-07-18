@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { ListCommandToolbar, ListSearchPanel, ListSidePanel, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { EntityList } from "@/components/entity-list";
+import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import type { PhysicalDispatchListRow } from "./dispatch-list";
 
 const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
@@ -21,43 +21,33 @@ const LIST: ListDefinition<PhysicalDispatchListRow> = {
 };
 
 export function DispatchSideList({ rows, currentId }: { rows: PhysicalDispatchListRow[]; currentId: string }) {
-  const controls = useListControls(rows, LIST.columns);
-  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
-
   return (
-    <ListSidePanel
+    <EntityList
+      scope="physical-dispatch-side-list"
+      initialRows={rows}
+      definition={LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `Dispatch ${row.dispatchNo}`}
       title="Dispatches"
-      actions={<SortButton col={COLUMNS[0]} controls={controls} />}
       className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
-    >
-      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount} />
-      <ListSearchPanel columns={LIST.columns} controls={controls} label="Find dispatches" />
-      <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">
-        {controls.rows.map((dispatch) => {
-          const active = dispatch.id === currentId;
-          return (
-            <Link
-              key={dispatch.id}
-              href={`/dashboard/auction/dispatches/${dispatch.id}`}
-              onClick={() => selection.select(dispatch.id)}
-              aria-current={active ? "page" : undefined}
-              className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
-                active
-                  ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
-                  : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-mono font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.dispatchNo}</span>
-                <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-300">{dispatch.status}</span>
-              </div>
-              <p className="mt-1 tabular-nums text-xs text-stone-500 dark:text-stone-400">{dispatch.dispatchDateFrom}{dispatch.dispatchDateFrom === dispatch.dispatchDateTo ? "" : ` – ${dispatch.dispatchDateTo}`}</p>
-              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.warehouse} · {dispatch.invoiceCount} invoice{dispatch.invoiceCount === 1 ? "" : "s"}</p>
-            </Link>
-          );
-        })}
-        {controls.rows.length === 0 && <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">No dispatches match.</p>}
-      </div>
-    </ListSidePanel>
+      emptyMessage="No dispatches."
+      filteredEmptyMessage="No dispatches match."
+      sideList={{
+        href: (dispatch) => `/dashboard/auction/dispatches/${dispatch.id}`,
+        isActive: (dispatch) => dispatch.id === currentId,
+        sortColumnKey: "dispatchNo",
+        searchLabel: "Find dispatches",
+        content: (dispatch) => (
+          <>
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-mono font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.dispatchNo}</span>
+              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-300">{dispatch.status}</span>
+            </div>
+            <p className="mt-1 tabular-nums text-xs text-stone-500 dark:text-stone-400">{dispatch.dispatchDateFrom}{dispatch.dispatchDateFrom === dispatch.dispatchDateTo ? "" : ` – ${dispatch.dispatchDateTo}`}</p>
+            <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.warehouse} · {dispatch.invoiceCount} invoice{dispatch.invoiceCount === 1 ? "" : "s"}</p>
+          </>
+        ),
+      }}
+    />
   );
 }

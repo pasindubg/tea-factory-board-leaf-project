@@ -342,9 +342,19 @@ function ListHeaderButton({ kind, action }: { kind: "edit" | "delete"; action: L
 
 /** Collapsible creation area owned by a list. It keeps create forms with the
  * records they affect instead of requiring a persistent adjacent form panel. */
-export function ListCreatePanel({ open, title = "Add record", children }: { open: boolean; title?: string; children: ReactNode }) {
+export function ListCreatePanel({
+  open,
+  title = "Add record",
+  children,
+  className = "",
+}: {
+  open: boolean;
+  title?: string;
+  children: ReactNode;
+  className?: string;
+}) {
   if (!open) return null;
-  return <section className="border-b border-stone-100 bg-green-50/50 px-4 py-4 dark:border-stone-800 dark:bg-green-950/10" aria-label={title}>
+  return <section className={`border-b border-stone-100 bg-green-50/50 px-4 py-4 dark:border-stone-800 dark:bg-green-950/10 ${className}`} aria-label={title}>
     <h3 className="mb-3 text-sm font-semibold text-stone-800 dark:text-stone-100">{title}</h3>
     {children}
   </section>;
@@ -381,6 +391,14 @@ export function ListSidePanel({
 }
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;
+type StoredListControls = {
+  filters: Record<string, string>;
+  columnSearches: Record<string, string>;
+  appliedColumnSearches: Record<string, string>;
+  advancedQuery: string;
+  appliedAdvancedQuery: string;
+  sort: SortState;
+};
 type SearchOperator = ":" | "=" | ">" | ">=" | "<" | "<=";
 type SearchToken<T> =
   | { kind: "free"; value: string }
@@ -453,13 +471,51 @@ function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: Colu
   return left <= right;
 }
 
-export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
+export function useListControls<T>(
+  rows: T[],
+  columns: ColumnDef<T>[],
+  options: { initialFilters?: Record<string, string>; storageKey?: string } = {},
+) {
   const [sort, setSort] = useState<SortState>(null);
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, string>>(options.initialFilters ?? {});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [appliedColumnSearches, setAppliedColumnSearches] = useState<Record<string, string>>({});
   const [advancedQuery, setAdvancedQuery] = useState("");
   const [appliedAdvancedQuery, setAppliedAdvancedQuery] = useState("");
+  const [storageHydrated, setStorageHydrated] = useState(!options.storageKey);
+
+  useEffect(() => {
+    if (!options.storageKey) return;
+    const stored = window.sessionStorage.getItem(options.storageKey);
+    if (stored !== null) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          // Support the status-only shape stored by the earlier implementation.
+          if ("filters" in parsed) {
+            const saved = parsed as Partial<StoredListControls>;
+            if (saved.filters) setFilters(saved.filters);
+            if (saved.columnSearches) setColumnSearches(saved.columnSearches);
+            if (saved.appliedColumnSearches) setAppliedColumnSearches(saved.appliedColumnSearches);
+            if (typeof saved.advancedQuery === "string") setAdvancedQuery(saved.advancedQuery);
+            if (typeof saved.appliedAdvancedQuery === "string") setAppliedAdvancedQuery(saved.appliedAdvancedQuery);
+            if (saved.sort === null || (saved.sort && typeof saved.sort.key === "string" && (saved.sort.dir === "asc" || saved.sort.dir === "desc"))) setSort(saved.sort);
+          } else {
+            setFilters(parsed as Record<string, string>);
+          }
+        }
+      } catch {
+        window.sessionStorage.removeItem(options.storageKey);
+      }
+    }
+    setStorageHydrated(true);
+  }, [options.storageKey]);
+
+  useEffect(() => {
+    if (!options.storageKey || !storageHydrated) return;
+    const saved: StoredListControls = { filters, columnSearches, appliedColumnSearches, advancedQuery, appliedAdvancedQuery, sort };
+    window.sessionStorage.setItem(options.storageKey, JSON.stringify(saved));
+  }, [advancedQuery, appliedAdvancedQuery, appliedColumnSearches, columnSearches, filters, options.storageKey, sort, storageHydrated]);
 
   function toggleSort(key: string) {
     setSort((prev) => {
@@ -470,7 +526,9 @@ export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
   }
 
   function setFilter(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      return { ...prev, [key]: value };
+    });
   }
 
   function setColumnSearch(key: string, value: string) {

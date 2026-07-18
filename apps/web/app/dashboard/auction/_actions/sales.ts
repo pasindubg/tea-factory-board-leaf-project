@@ -179,12 +179,13 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   if (formData.has("selling_mark_id")) {
     const sellingMarkId = str(formData.get("selling_mark_id"));
     if (!sellingMarkId) return { ok: false, error: "Selling mark is required." };
-    const { data: mark } = await supabase
+    const { data: mark, error: markError } = await supabase
       .from("marks")
       .select("id")
       .eq("id", sellingMarkId)
       .eq("factory_id", profile.factory_id)
       .maybeSingle();
+    if (markError) return { ok: false, error: friendlyError(markError) };
     if (!mark) return { ok: false, error: "Unknown selling mark." };
     updates.selling_mark_id = sellingMarkId;
   }
@@ -197,16 +198,24 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
     updates.driver_name = driverName || null;
   }
   if (Object.keys(updates).length > 0) {
-    const { error } = await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
+    const { data: updatedSale, error } = await supabase
+      .from("auction_sales")
+      .update(updates)
+      .eq("id", id)
+      .eq("factory_id", profile.factory_id)
+      .select("id")
+      .maybeSingle();
     if (error?.code === "23505") return { ok: false, error: "This broker and selling mark are already used in this bundled dispatch." };
     if (error) return { ok: false, error: friendlyError(error) };
+    if (!updatedSale) return { ok: false, error: "This broker invoice was not found or changed before it could be updated." };
     if (updates.target_sale_no) {
-      await supabase
+      const { error: lotUpdateError } = await supabase
         .from("auction_lots")
         .update({ provisional_sale_no: updates.target_sale_no })
         .eq("sale_id", id)
         .eq("factory_id", profile.factory_id)
         .is("final_sale_no", null);
+      if (lotUpdateError) return { ok: false, error: friendlyError(lotUpdateError) };
     }
   }
   revalidatePath(AUC);
@@ -214,27 +223,33 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   return { ok: true, notice: "Broker invoice updated." };
 }
 
-export async function confirmDispatchDraft(id: string) {
+export async function confirmDispatchDraft(id: string): Promise<ListMutationResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  await supabase
+  const { data: confirmed, error } = await supabase
     .from("auction_sales")
     .update({ status: "invoiced" })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
-    .in("status", ["draft", "dispatched"]);
+    .in("status", ["draft", "dispatched"])
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: friendlyError(error) };
+  if (!confirmed) return { ok: false, error: "This broker invoice was not found or is no longer a draft." };
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
+  return { ok: true, notice: "Broker invoice confirmed." };
 }
 
 export async function completeGrn(id: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = `${AUC}/${id}`;
-  const { data: invoice } = await supabase
+  const { data: invoice, error: invoiceError } = await supabase
     .from("auction_sales")
     .select("id, status")
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
+  if (invoiceError) back(detail, friendlyError(invoiceError));
   if (!invoice) back(detail, "Broker Invoice not found.");
   if (!["invoiced", "grn"].includes(invoice?.status as string)) {
     back(detail, "Confirm the Broker Invoice before proceeding to GRN.");
@@ -280,12 +295,15 @@ export async function completeGrn(id: string, formData: FormData) {
     uploaded = true;
   }
 
-  await supabase
+  const { data: grnInvoice, error: grnError } = await supabase
     .from("auction_sales")
     .update({ status: "grn" })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
-    .in("status", ["invoiced", "grn"]);
+    .in("status", ["invoiced", "grn"])
+    .select("id")
+    .maybeSingle();
+  if (grnError || !grnInvoice) back(detail, grnError ? friendlyError(grnError) : "This broker invoice changed before GRN could be completed.");
   revalidatePath(AUC);
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);

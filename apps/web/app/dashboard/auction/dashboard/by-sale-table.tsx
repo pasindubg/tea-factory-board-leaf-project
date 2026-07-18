@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 
 export type BySaleRow = {
   id: string;
@@ -16,72 +17,34 @@ export type BySaleRow = {
   settlement: number | null;
 };
 
-const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { maximumFractionDigits: 0 });
+const LKR = (amount: number) => `Rs ${amount.toLocaleString("en-LK", { maximumFractionDigits: 0 })}`;
 
-const COLUMNS: ColumnDef<BySaleRow>[] = [
-  { key: "saleNo", label: "Broker invoice", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
-  { key: "targetSaleNo", label: "Sale", accessor: (r) => r.targetSaleNo ?? null, sortable: true, filter: "text" },
-  { key: "broker", label: "Broker", accessor: (r) => r.broker, sortable: true, filter: "select" },
-  { key: "status", label: "Status", accessor: (r) => r.status, sortable: true, filter: "select" },
-  { key: "lotsCount", label: "Lots", accessor: (r) => r.lotsCount, sortable: true },
-  { key: "netKg", label: "Net kg", accessor: (r) => r.netKg, sortable: true },
-  { key: "proceeds", label: "Proceeds", accessor: (r) => r.proceeds ?? null, sortable: true },
-  { key: "settlement", label: "Settlement", accessor: (r) => r.settlement ?? null, sortable: true },
+const COLUMNS: EntityListColumn<BySaleRow>[] = [
+  { key: "saleNo", label: "Broker invoice", accessor: (row) => row.saleNo, sortable: true, filter: "text", cellClassName: "font-medium", render: (row) => <Link href={`/dashboard/auction/${row.id}`} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
+  { key: "targetSaleNo", label: "Sale", accessor: (row) => row.targetSaleNo ?? null, sortable: true, filter: "text", cellClassName: "tabular-nums text-stone-600 dark:text-stone-400", render: (row) => row.targetSaleNo || "—" },
+  { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${row.statusChip}`}>{row.status}</span> },
+  { key: "lotsCount", label: "Lots", accessor: (row) => row.lotsCount, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
+  { key: "netKg", label: "Net kg", accessor: (row) => row.netKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.netKg.toFixed(2) },
+  { key: "proceeds", label: "Proceeds", accessor: (row) => row.proceeds ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.proceeds != null ? LKR(row.proceeds) : "—" },
+  { key: "settlement", label: "Settlement", accessor: (row) => row.settlement ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.settlement != null ? LKR(row.settlement) : "—" },
 ];
 
-const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<BySaleRow>;
-
-const RIGHT_ALIGNED = new Set(["lotsCount", "netKg", "proceeds", "settlement"]);
+const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<BySaleRow>;
 
 export function BySaleTable({ rows }: { rows: BySaleRow[] }) {
-  const controls = useListControls(rows, LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.id });
-
   return (
-    <ListSurface title="Broker invoices by sale" description="Sale progress, proceeds and settlements across broker invoices.">
-      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
-      <ListSearchPanel columns={LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {LIST.columns.map((col) => (
-              <th key={col.key} className={`px-3 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
-                {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {visibleRows.map((s) => (
-            <tr key={s.id} {...selection.rowProps(s.id)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(s.id) ? "bg-green-50/60 dark:bg-green-950/20" : "hover:bg-stone-50 dark:hover:bg-stone-800/50"}`}>
-              <td className="px-3 py-2 font-medium">
-                <Link href={`/dashboard/auction/${s.id}`} className="text-green-700 dark:text-green-400 hover:underline">
-                  {s.saleNo}
-                </Link>
-              </td>
-              <td className="px-3 py-2 tabular-nums text-stone-600 dark:text-stone-400">{s.targetSaleNo || "—"}</td>
-              <td className="px-3 py-2">{s.broker}</td>
-              <td className="px-3 py-2">
-                <span className={`rounded-full px-2 py-0.5 text-xs ${s.statusChip}`}>{s.status}</span>
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">{s.lotsCount}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{s.netKg.toFixed(2)}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{s.proceeds != null ? LKR(s.proceeds) : "—"}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{s.settlement != null ? LKR(s.settlement) : "—"}</td>
-            </tr>
-          ))}
-          {visibleRows.length === 0 && rows.length > 0 && (
-            <tr>
-              <td colSpan={8} className="px-3 py-8 text-center text-stone-400 dark:text-stone-500">
-                No sales match these filters.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      </div>
-    </ListSurface>
+    <EntityList
+      scope="auction-by-sale"
+      initialRows={rows}
+      definition={LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `broker invoice ${row.saleNo}`}
+      title="Broker invoices by sale"
+      description="Sale progress, proceeds and settlements across broker invoices."
+      emptyMessage="No broker invoices."
+      filteredEmptyMessage="No sales match these filters."
+      rowClassName={() => "hover:bg-stone-50 dark:hover:bg-stone-800/50"}
+    />
   );
 }

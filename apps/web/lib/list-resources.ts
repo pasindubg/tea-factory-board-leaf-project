@@ -145,6 +145,31 @@ export type AuctionDispatchLotListRow = {
   lot_invoices: { invoice_no: string }[] | null;
 };
 
+export type AuctionReprintOverviewListRow = {
+  id: string;
+  dispatchId: string;
+  dispatchNo: string | null;
+  saleNo: string | null;
+  broker: string;
+  dispatchDate: string | null;
+  saleDate: string | null;
+  invoiceNo: string;
+  lotNo: string | null;
+  grade: string | null;
+  bags: number | null;
+  kgPerBag: number | null;
+  totalSampleKg: number;
+  remainingNetKg: number;
+  actualSoldKg: number | null;
+  reprintSales: string;
+  soldSale: string | null;
+  history: string;
+  source: string | null;
+  stateLabel: string;
+  stateStyle: string;
+  reprintCount: number;
+};
+
 export type SupplierListRow = {
   id: string;
   name: string;
@@ -268,6 +293,7 @@ export type ListResourceContracts = {
   "auction.sale-lines": { params: { saleId: string }; row: AuctionSaleLineListRow };
   "auction.dispatches": { params: undefined; row: AuctionDispatchListRow };
   "auction.dispatch-lots": { params: { saleId: string }; row: AuctionDispatchLotListRow };
+  "auction.reprint-overview": { params: undefined; row: AuctionReprintOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
@@ -297,6 +323,7 @@ export const LIST_RESOURCE_KEYS = [
   "auction.sale-lines",
   "auction.dispatches",
   "auction.dispatch-lots",
+  "auction.reprint-overview",
   "auction.physical-dispatches",
   "auction.eligible-broker-invoices",
   "leaf.suppliers",

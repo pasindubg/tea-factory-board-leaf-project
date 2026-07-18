@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 import { money } from "../format";
-import { ListCommandToolbar, ListSurface, useListControls, useListSelection, SortButton, ListSearchPanel, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 
 export type SaleOverviewRow = {
   saleNo: string;
@@ -17,77 +18,32 @@ export type SaleOverviewRow = {
   guaranteeLots: number;
 };
 
-const COLUMNS: ColumnDef<SaleOverviewRow>[] = [
-  { key: "saleNo", label: "Sale no.", accessor: (r) => r.saleNo, sortable: true, filter: "text" },
-  { key: "dispatchNos", label: "Broker invoices", accessor: (r) => r.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
-  { key: "brokers", label: "Brokers", accessor: (r) => r.brokers.join(", ") || null, sortable: true, filter: "text" },
-  { key: "saleDate", label: "Sale date", accessor: (r) => r.saleDate ?? null, sortable: true, searchInput: "date" },
-  { key: "lotsSold", label: "Lots sold", accessor: (r) => r.lotsSold, sortable: true },
-  { key: "netKg", label: "Net kg", accessor: (r) => r.netKg, sortable: true },
-  { key: "proceeds", label: "Proceeds", accessor: (r) => r.proceeds, sortable: true },
-  { key: "vat", label: "VAT", accessor: (r) => r.vat, sortable: true },
-  { key: "guaranteeLots", label: "Guarantee", accessor: (r) => r.guaranteeLots, sortable: true },
+const COLUMNS: EntityListColumn<SaleOverviewRow>[] = [
+  { key: "saleNo", label: "Sale no.", accessor: (row) => row.saleNo, sortable: true, filter: "text", cellClassName: "font-medium", render: (row) => <Link href={row.href} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
+  { key: "dispatchNos", label: "Broker invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.dispatchNos.join(", ") || "—" },
+  { key: "brokers", label: "Brokers", accessor: (row) => row.brokers.join(", ") || null, sortable: true, filter: "text", render: (row) => row.brokers.join(", ") || "—" },
+  { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.saleDate ?? "—" },
+  { key: "lotsSold", label: "Lots sold", accessor: (row) => row.lotsSold, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
+  { key: "netKg", label: "Net kg", accessor: (row) => row.netKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.netKg) },
+  { key: "proceeds", label: "Proceeds", accessor: (row) => row.proceeds, sortable: true, headerClassName: "text-right", cellClassName: "text-right font-medium tabular-nums", render: (row) => money(row.proceeds) },
+  { key: "vat", label: "VAT", accessor: (row) => row.vat, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.vat) },
+  { key: "guaranteeLots", label: "Guarantee", accessor: (row) => row.guaranteeLots, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
 ];
 
-const LIST = { columns: COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<SaleOverviewRow>;
-
-const RIGHT_ALIGNED = new Set(["lotsSold", "netKg", "proceeds", "vat", "guaranteeLots"]);
+const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<SaleOverviewRow>;
 
 export function SalesOverviewTable({ rows }: { rows: SaleOverviewRow[] }) {
-  const controls = useListControls(rows, LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: LIST.selectionMode, getId: (row) => row.saleNo });
-
   return (
-    <ListSurface title="Auction sales" description="Sale-level totals assembled from all linked broker invoices.">
-      <ListCommandToolbar mode={LIST.selectionMode} count={selection.selectedCount} />
-      <ListSearchPanel columns={LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {LIST.columns.map((col) => (
-                <th key={col.key} className={`px-4 py-3 ${RIGHT_ALIGNED.has(col.key) ? "text-right" : ""}`}>
-                  {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleRows.map((sale) => (
-              <tr key={sale.saleNo} {...selection.rowProps(sale.saleNo)} className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(sale.saleNo) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}>
-                <td className="px-4 py-2 font-medium">
-                  <Link href={sale.href} className="text-green-700 hover:underline dark:text-green-400">
-                    {sale.saleNo}
-                  </Link>
-                </td>
-                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{sale.dispatchNos.join(", ") || "—"}</td>
-                <td className="px-4 py-2">{sale.brokers.join(", ") || "—"}</td>
-                <td className="px-4 py-2 text-stone-600 dark:text-stone-400">{sale.saleDate ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{sale.lotsSold}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(sale.netKg)}</td>
-                <td className="px-4 py-2 text-right tabular-nums font-medium">{money(sale.proceeds)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(sale.vat)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{sale.guaranteeLots}</td>
-              </tr>
-            ))}
-            {visibleRows.length === 0 && rows.length > 0 && (
-              <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No sales match these filters.
-                </td>
-              </tr>
-            )}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">
-                  No sales yet. Confirm a sellers contract to record auction sales.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </ListSurface>
+    <EntityList
+      scope="auction-sales-overview"
+      initialRows={rows}
+      definition={LIST}
+      getId={(row) => row.saleNo}
+      rowLabel={(row) => `sale ${row.saleNo}`}
+      title="Auction sales"
+      description="Sale-level totals assembled from all linked broker invoices."
+      emptyMessage="No sales yet. Confirm a sellers contract to record auction sales."
+      filteredEmptyMessage="No sales match these filters."
+    />
   );
 }

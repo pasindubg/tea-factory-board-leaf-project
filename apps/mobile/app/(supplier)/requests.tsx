@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, useRouter } from "expo-router";
-import { useFrameworkListController } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import { useRouter } from "expo-router";
+import type { FrameworkListController } from "@tea/ui/list-controller";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
@@ -37,13 +37,7 @@ export default function MyRequests() {
     ));
     return (requestsResult.data as SupplierRequest[]) ?? [];
   }, [profile, supplier]);
-  const list = useFrameworkListController(loadRows);
-
-  useFocusEffect(useCallback(() => {
-    void list.reload();
-  }, [list.reload, loadRows]));
-
-  async function acknowledge(id: string) {
+  async function acknowledge(id: string, list: FrameworkListController<SupplierRequest>) {
     if (!profile || profile.role !== "supplier" || !supplier) return;
     setBusyId(id);
     await list.runMutation(async () => {
@@ -64,8 +58,8 @@ export default function MyRequests() {
 
   return (
     <SafeAreaView style={s.screen} edges={["bottom"]}>
-      <NativeFrameworkList
-        list={list}
+      <NativeEntityList
+        loadRows={loadRows}
         title="Request history"
         description="Requests sent to your factory and their current status."
         onCreate={() => router.replace("/(supplier)/home")}
@@ -75,7 +69,7 @@ export default function MyRequests() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.pad}
         emptyMessage="No requests yet. Raise one from the home screen."
-        renderItem={({ item }) => (
+        renderItem={({ item }, list) => (
           <View style={[s.card, { marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Text style={s.h2}>{labels.get(item.type_key) ?? item.type_key}</Text>
@@ -93,7 +87,7 @@ export default function MyRequests() {
               <Pressable
                 style={[s.button, { marginTop: 12 }, busyId === item.id && s.buttonDisabled]}
                 disabled={busyId === item.id}
-                onPress={() => { void acknowledge(item.id); }}
+                onPress={() => { void acknowledge(item.id, list); }}
               >
                 {busyId === item.id ? (
                   <ActivityIndicator color="#fff" />

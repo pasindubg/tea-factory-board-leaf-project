@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSidePanel, SortButton, useFrameworkListData, useListControls, type ColumnDef } from "@/components/list-controls";
+import { showAppToast } from "@/components/action-feedback";
+import { EntityList } from "@/components/entity-list";
+import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import { completeGrn, confirmDispatchDraft, createDispatch, updateSale } from "../actions";
 import { stateBucket } from "../state-buckets";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
@@ -60,6 +62,14 @@ const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
   { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
   { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select" },
 ];
+
+const DISPATCH_LIST = {
+  columns: DISPATCH_LIST_COLUMNS,
+  selectionMode: "single",
+  add: true,
+  edit: false,
+  delete: false,
+} satisfies ListDefinition<DispatchListItem>;
 
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
@@ -143,14 +153,23 @@ export function DispatchDetailEditor({
   useEffect(() => setLiveRows(rows), [rows]);
 
   async function saveDispatch(formData: FormData) {
-    await updateSale(sale.id, formData);
+    const result = await updateSale(sale.id, formData);
+    if (!result.ok) {
+      showAppToast(result.error, "error");
+      return;
+    }
     setIsEditing(false);
+    router.refresh();
   }
 
   async function confirmDraft() {
     setIsConfirming(true);
     try {
-      await confirmDispatchDraft(sale.id);
+      const result = await confirmDispatchDraft(sale.id);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return;
+      }
       router.refresh();
     } finally {
       setIsConfirming(false);
@@ -352,60 +371,58 @@ function DispatchSideList({
   title: string;
   creation: DispatchCreationOptions;
 }) {
-  const [creating, setCreating] = useState(false);
-  const { rows: liveRows, refreshing, mutationAction } = useFrameworkListData({
-    initialRows: rows,
-    resource: { key: "auction.dispatches" },
-  });
-  const controls = useListControls(liveRows, DISPATCH_LIST_COLUMNS);
-  const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
-  const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
-  const liveDispatchHistory = liveRows.map((row) => ({
-    saleNo: row.sale_no,
-    targetSaleNo: row.target_sale_no,
-    dispatchDate: row.dispatch_date,
-    saleDate: row.sale_date,
-  }));
-
   return (
-    <ListSidePanel
+    <EntityList
+      resource={{ key: "auction.dispatches" }}
+      initialRows={rows}
+      definition={DISPATCH_LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
       title={title}
-      description={`${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
-      onCreate={() => setCreating(true)}
-      canCreate={!creating && !refreshing}
-      createDisabledReason="Finish creating the current broker invoice first."
-      createLabel="New broker invoice"
-      refreshing={refreshing}
+      description={(liveRows) => `${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
+      create={{
+        action: createDispatch,
+        label: "New broker invoice",
+        panelTitle: "New broker invoice",
+        panelClassName: "max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain",
+        disabledReason: "Finish creating the current broker invoice first.",
+        render: ({ action, close, rows: liveRows }) => {
+          const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
+          const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
+          const liveDispatchHistory = liveRows.map((row) => ({
+            saleNo: row.sale_no,
+            targetSaleNo: row.target_sale_no,
+            dispatchDate: row.dispatch_date,
+            saleDate: row.sale_date,
+          }));
+          return (
+            <NewDispatchForm
+              {...creation}
+              nextDispatchNo={liveNextDispatchNo}
+              dispatchHistory={liveDispatchHistory}
+              action={action}
+              onCancel={close}
+            />
+          );
+        },
+      }}
       className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
-    >
-      <ListCreatePanel open={creating} title="New broker invoice">
-        <NewDispatchForm
-          {...creation}
-          nextDispatchNo={liveNextDispatchNo}
-          dispatchHistory={liveDispatchHistory}
-          action={mutationAction(createDispatch, { onSuccess: () => setCreating(false) })}
-          onCancel={() => setCreating(false)}
-        />
-      </ListCreatePanel>
-      <ListCommandToolbar mode="single" count={0} showSelectionSummary={false}>
-        <SortButton col={DISPATCH_LIST_COLUMNS[0]} controls={controls} />
-      </ListCommandToolbar>
-      <ListSearchPanel columns={DISPATCH_LIST_COLUMNS} controls={controls} label="Search" variant="popover" />
-      <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">
-        {controls.rows.map((dispatch) => {
-          const active = dispatch.id === currentId;
+      listControls={{
+        initialFilters: { status: "Draft" },
+        storageKey: "auction.invoice-overview.filters",
+      }}
+      emptyMessage="No broker invoices."
+      filteredEmptyMessage="No broker invoices match."
+      sideList={{
+        href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
+        isActive: (dispatch) => dispatch.id === currentId,
+        sortColumnKey: "sale_no",
+        searchLabel: "Search",
+        showSelectionSummary: false,
+        content: (dispatch, { active }) => {
           const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
           return (
-            <Link
-              key={dispatch.id}
-              href={`/dashboard/auction/${dispatch.id}`}
-              aria-current={active ? "page" : undefined}
-              className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
-                active
-                  ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
-                  : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
-              }`}
-            >
+            <>
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
                 {active && <span className="text-stone-400">‹</span>}
@@ -415,14 +432,11 @@ function DispatchSideList({
                 <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
                 <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
               </div>
-            </Link>
+            </>
           );
-        })}
-        {controls.rows.length === 0 && (
-          <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">No broker invoices match.</p>
-        )}
-      </div>
-    </ListSidePanel>
+        },
+      }}
+    />
   );
 }
 

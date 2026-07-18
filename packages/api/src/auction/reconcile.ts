@@ -32,6 +32,64 @@ export type ReconSummary = {
 
 export type Reconciliation = { rows: ReconRow[]; summary: ReconSummary };
 
+/**
+ * A parser warning describes what was printed in the broker document, while a
+ * reconciliation row describes what happened to a factory invoice. This keeps
+ * the two views connected without treating a close weight as a proven match.
+ */
+export type ParseWarningRelation = {
+  issue: string;
+  parsedKg: number;
+  printedKg: number;
+  differenceKg: number;
+  relatedStatus: "pending" | "unexpected";
+  rows: Array<{ invoiceNo: string; status: "pending" | "unexpected"; kg: number }>;
+};
+
+const CATALOGUED_KG_ISSUE = /^Catalogued kg parsed \(([\d,.]+)\) ≠ printed total \(([\d,.]+)\)\.$/;
+
+/**
+ * Finds reconciliation rows whose quantity is close enough to a catalogue-total
+ * parse gap to warrant review. The result is intentionally advisory: a parser
+ * warning alone must never change a lot's state or create an automatic match.
+ */
+export function relateAcknowledgementParseWarnings(
+  issues: string[],
+  rows: ReconRow[],
+): ParseWarningRelation[] {
+  return issues.flatMap((issue) => {
+    const match = issue.match(CATALOGUED_KG_ISSUE);
+    if (!match) return [];
+
+    const parsedKg = Number(match[1].replace(/,/g, ""));
+    const printedKg = Number(match[2].replace(/,/g, ""));
+    const differenceKg = Number((printedKg - parsedKg).toFixed(2));
+    if (Math.abs(differenceKg) <= 0.01) return [];
+
+    // If the document prints more catalogue weight than was parsed, the most
+    // useful factory-side lead is an invoice still pending from this partial
+    // acknowledgement. In the reverse direction, an unexpected parsed line is
+    // the useful lead. Do not label either as a confirmed cause.
+    const relatedStatus: ParseWarningRelation["relatedStatus"] = differenceKg > 0 ? "pending" : "unexpected";
+    const targetKg = Math.abs(differenceKg);
+    const toleranceKg = Math.max(0.01, targetKg * 0.02);
+    const candidates = rows
+      .filter((row) => row.status === relatedStatus)
+      .map((row) => ({
+        invoiceNo: row.invoiceNo,
+        status: relatedStatus,
+        kg: row.status === "pending" ? row.invoiced?.netWt ?? 0 : row.ack?.netWt ?? 0,
+      }))
+      .filter((row) => row.kg > 0)
+      .sort((a, b) => Math.abs(targetKg - a.kg) - Math.abs(targetKg - b.kg) || a.invoiceNo.localeCompare(b.invoiceNo));
+
+    const nearest = candidates[0];
+    if (!nearest || Math.abs(targetKg - nearest.kg) > toleranceKg) return [];
+
+    return [{ issue, parsedKg, printedKg, differenceKg, relatedStatus, rows: [nearest] }];
+  });
+}
+
 const normGrade = (g: string) => g.toUpperCase().replace(/\s+/g, "");
 
 export function reconcileAcknowledgement(

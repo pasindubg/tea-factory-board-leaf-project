@@ -20,10 +20,15 @@ admin Supabase client for tenant data.
 
 ## Golden list framework policy
 
-Every record list must follow `.agents/skills/list-framework/SKILL.md`. Use the
-shared `FrameworkList`/`ListSurface`, its permission-aware built-in `+ New`,
-selection toolbar commands, inline ordinary editing, and `TabView` for two or
-more related lists. CRUD lists must use the central opaque resource registry for
-component-local soft reloads. Entity-specific refresh functions, row action
-columns, page-level duplicate Add buttons, stacked related lists, and
-`router.refresh()` for ordinary list CRUD are not permitted.
+Every record list must follow `.agents/skills/list-framework/SKILL.md`.
+Ordinary lists use the entity-keyed `EntityList` with declarative columns,
+inline editing, bulk/domain commands, totals/footers, and tab partitions.
+Ordinary linked side panels use `sideList`; `EntityList.render` is reserved for
+genuine workflow and matrix layouts and must consume the framework-provided
+controls rather than page-level list hooks. Expo screens use
+`NativeEntityList`, not the controller hook directly. All paths use the
+permission-aware built-in `+ New`, opaque
+resource-local refresh, and `EntityListTabs` for independent related lists.
+Entity-specific refresh functions, row action columns, page-level duplicate
+Add buttons, stacked related lists, and `router.refresh()` for ordinary list
+CRUD are not permitted.

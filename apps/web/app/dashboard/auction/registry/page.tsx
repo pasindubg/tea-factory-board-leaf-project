@@ -3,7 +3,7 @@ import { loadListResource } from "@/lib/list-resource-registry";
 import { BrokersTable, type BrokerRow } from "./brokers-table";
 import { RatesTable, type RateRow } from "./rates-table";
 import { MarksTable, type MarkRow } from "./marks-table";
-import { TabbedListSurface } from "@/components/list-controls";
+import { EntityListTabs } from "@/components/entity-list";
 
 export default async function RegistryPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { profile } = await requireModuleAccess("auction");
@@ -23,16 +23,13 @@ export default async function RegistryPage({ searchParams }: { searchParams: Pro
   const isOwner = profile.role === "owner";
   return <div className="space-y-6">
     {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-400">{error}</p>}
-    <TabbedListSurface
+    <EntityListTabs
+      label="Auction registry lists"
       tabs={[
-        { id: "brokers", label: "Brokers", count: String(brokerRows.length) },
-        { id: "rates", label: "Rate cards", count: String(rateRows.length) },
-        { id: "marks", label: "Estate marks", count: String(markRows.length) },
+        { id: "brokers", label: "Brokers", count: String(brokerRows.length), content: <BrokersTable rows={brokerRows} isOwner={isOwner} /> },
+        { id: "rates", label: "Rate cards", count: String(rateRows.length), content: <RatesTable rows={rateRows} brokers={brokerRows.map(({ id, name }) => ({ id, name }))} isOwner={isOwner} /> },
+        { id: "marks", label: "Estate marks", count: String(markRows.length), content: <MarksTable rows={markRows} isOwner={isOwner} /> },
       ]}
-    >
-      <BrokersTable rows={brokerRows} isOwner={isOwner} />
-      <RatesTable rows={rateRows} brokers={brokerRows.map(({ id, name }) => ({ id, name }))} isOwner={isOwner} />
-      <MarksTable rows={markRows} isOwner={isOwner} />
-    </TabbedListSurface>
+    />
   </div>;
 }

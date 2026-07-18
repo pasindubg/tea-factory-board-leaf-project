@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Modal, Pressable, Text, TextInput, View } from "react-native";
 import { filterFrameworkListRows } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import type { Supplier } from "@/lib/types";
 import { colors, s } from "@/lib/theme";
 
@@ -23,6 +23,7 @@ export function SupplierPicker({
     () => filterFrameworkListRows(suppliers, query, (supplier) => [supplier.name, supplier.area]),
     [suppliers, query],
   );
+  const loadRows = useCallback(async () => filtered, [filtered]);
 
   return (
     <View>
@@ -43,8 +44,8 @@ export function SupplierPicker({
               padding: 16,
             }}
           >
-            <NativeFrameworkList
-              list={{ rows: filtered }}
+            <NativeEntityList
+              loadRows={loadRows}
               title="Select supplier"
               actions={(
                 <Pressable onPress={() => setOpen(false)} hitSlop={8}>

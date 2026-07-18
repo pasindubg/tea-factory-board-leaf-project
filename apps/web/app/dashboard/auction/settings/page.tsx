@@ -2,7 +2,7 @@ import { requireModuleAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { GradesTable, type GradeTableRow } from "./grades-table";
 import { ThresholdsTable, type ThresholdTableRow } from "./thresholds-table";
-import { TabbedListSurface } from "@/components/list-controls";
+import { EntityListTabs } from "@/components/entity-list";
 
 export default async function AuctionSettingsPage({
   searchParams,
@@ -27,15 +27,13 @@ export default async function AuctionSettingsPage({
     <div className="space-y-8">
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-400">{error}</p>}
 
-      <TabbedListSurface
+      <EntityListTabs
+        label="Auction setup lists"
         tabs={[
-          { id: "grades", label: "Tea grades", count: String(gradeTableRows.length) },
-          { id: "thresholds", label: "Broker thresholds", count: String(thresholdTableRows.length) },
+          { id: "grades", label: "Tea grades", count: String(gradeTableRows.length), content: <GradesTable rows={gradeTableRows} isOwner={isOwner} /> },
+          { id: "thresholds", label: "Broker thresholds", count: String(thresholdTableRows.length), content: <ThresholdsTable rows={thresholdTableRows} isOwner={isOwner} /> },
         ]}
-      >
-        <GradesTable rows={gradeTableRows} isOwner={isOwner} />
-        <ThresholdsTable rows={thresholdTableRows} isOwner={isOwner} />
-      </TabbedListSurface>
+      />
     </div>
   );
 }

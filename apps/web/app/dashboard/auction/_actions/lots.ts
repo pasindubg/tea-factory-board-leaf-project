@@ -48,13 +48,15 @@ function netWeight(bags: number, kgPerBag: number, sampleKg = 0) {
   return Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2));
 }
 
-async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factoryId: string) {
-  const [{ data: sale }, { data: lots }] = await Promise.all([
+async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factoryId: string): Promise<ListMutationResult> {
+  const [{ data: sale, error: saleError }, { data: lots, error: lotsError }] = await Promise.all([
     supabase.from("auction_sales").select("status").eq("id", saleId).eq("factory_id", factoryId).maybeSingle(),
     supabase.from("auction_lots").select("state").eq("sale_id", saleId).eq("factory_id", factoryId),
   ]);
+  if (saleError || lotsError) return { ok: false, error: friendlyError(saleError ?? lotsError) };
   const current = sale?.status as string | null | undefined;
-  if (!current || ["catalogued", "settled", "broker_statement"].includes(current)) return;
+  if (!current) return { ok: false, error: "Broker Invoice not found while updating its status." };
+  if (["catalogued", "settled", "broker_statement"].includes(current)) return { ok: true };
 
   const states = (lots ?? []).map((lot) => lot.state as string | null);
   const cataloguedLots = states.filter((state) =>
@@ -67,8 +69,17 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
   }
 
   if (nextStatus && nextStatus !== current) {
-    await supabase.from("auction_sales").update({ status: nextStatus }).eq("id", saleId).eq("factory_id", factoryId);
+    const { data: updated, error: updateError } = await supabase
+      .from("auction_sales")
+      .update({ status: nextStatus })
+      .eq("id", saleId)
+      .eq("factory_id", factoryId)
+      .select("id")
+      .maybeSingle();
+    if (updateError) return { ok: false, error: friendlyError(updateError) };
+    if (!updated) return { ok: false, error: "Broker Invoice changed before its status could be updated." };
   }
+  return { ok: true };
 }
 
 async function ensureInvoiceNumbersUnused(
@@ -134,32 +145,35 @@ async function appliedThresholdForLot(
   factoryId: string,
   saleId: string,
   grade: string,
-) {
-  const { data: sale } = await supabase
+) : Promise<{ ok: true; threshold: number | null } | { ok: false; error: string }> {
+  const { data: sale, error: saleError } = await supabase
     .from("auction_sales")
     .select("broker_id")
     .eq("id", saleId)
     .eq("factory_id", factoryId)
     .single();
+  if (saleError) return { ok: false, error: friendlyError(saleError) };
   const brokerId = sale?.broker_id as string | null | undefined;
-  if (!brokerId) return null;
-  const { data: gradeRow } = await supabase
+  if (!brokerId) return { ok: false, error: "Broker Invoice has no broker for threshold validation." };
+  const { data: gradeRow, error: gradeError } = await supabase
     .from("auction_grades")
     .select("id")
     .eq("factory_id", factoryId)
     .eq("code", grade)
     .eq("active", true)
     .maybeSingle();
-  if (!gradeRow?.id) return null;
-  const { data: threshold } = await supabase
+  if (gradeError) return { ok: false, error: friendlyError(gradeError) };
+  if (!gradeRow?.id) return { ok: true, threshold: null };
+  const { data: threshold, error: thresholdError } = await supabase
     .from("broker_grade_thresholds")
     .select("min_net_kg, applies")
     .eq("factory_id", factoryId)
     .eq("broker_id", brokerId)
     .eq("grade_id", gradeRow.id)
     .maybeSingle();
-  if (!threshold?.applies) return null;
-  return Number(threshold.min_net_kg ?? 0);
+  if (thresholdError) return { ok: false, error: friendlyError(thresholdError) };
+  if (!threshold?.applies) return { ok: true, threshold: null };
+  return { ok: true, threshold: Number(threshold.min_net_kg ?? 0) };
 }
 
 type SavedLotPatch = Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">;
@@ -204,7 +218,9 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     else updates.shutout_reason = null;
   }
   if (!(newState && isOwner) && grade && bags > 0 && kgPerBag > 0) {
-    const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+    const thresholdResult = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+    if (!thresholdResult.ok) return thresholdResult;
+    const threshold = thresholdResult.threshold;
     const netWt = netWeight(bags, kgPerBag, sampleKg);
     if (threshold != null && threshold > 0 && netWt < threshold) {
       updates.state = "shutout";
@@ -248,7 +264,8 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
       if (invoiceInsertError) return { ok: false, error: friendlyError(invoiceInsertError) };
     }
   }
-  await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  if (!synced.ok) return synced;
   return {
     ok: true,
     notice: "Lot updated.",
@@ -299,7 +316,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
     .select("state, sample_allowance, net_wt")
     .maybeSingle();
   if (updateError || !updatedLot) return { ok: false, error: updateError ? friendlyError(updateError) : "Lot not found." };
-  await writeAudit(supabase, profile.factory_id, {
+  const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
     saleId,
     lotId,
     action: "Manual re-print",
@@ -307,7 +324,19 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
     reason: "Owner manually marked the lot for re-print.",
     actor: profile.name,
   });
-  await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  if (auditError) {
+    const { error: rollbackError } = await supabase
+      .from("auction_lots")
+      .update({ state: lot.state, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
+      .eq("id", lotId)
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .eq("state", "re-print");
+    if (rollbackError) return { ok: false, error: "The lot was marked for re-print, but its audit entry could not be saved. Review this broker invoice before retrying." };
+    return { ok: false, error: friendlyError(auditError) };
+  }
+  const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  if (!synced.ok) return synced;
   revalidatePath(`${AUC}/reprints`);
   return {
     ok: true,
@@ -317,6 +346,84 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
       sample_allowance: updatedLot.sample_allowance as string | number | null,
       net_wt: updatedLot.net_wt as string | number | null,
     },
+  };
+}
+
+/** Registers a pre-existing lot as the root of a historic re-print chain.
+ * A later broker-invoice lot using the same invoice number will link to it via
+ * the normal re-print source resolver. */
+export async function registerHistoricReprint(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (profile.role !== "owner") return { ok: false, error: "Only the owner can register a historic re-print." };
+
+  const lotId = str(formData.get("lot_id"));
+  const additionalSample = Math.max(0, num(formData.get("additional_sample_kg")) || 0);
+  const reason = str(formData.get("reason")) || "Historic re-print entered manually.";
+  if (!lotId) return { ok: false, error: "Select the historic lot to register." };
+
+  const { data: lot, error: lotError } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, state, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, reprint_source_lot_id, sale_lines(id)")
+    .eq("id", lotId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (lotError) return { ok: false, error: friendlyError(lotError) };
+  if (!lot) return { ok: false, error: "The selected historic lot was not found." };
+  const invoiceNo = formatFourDigitNo(lot.invoice_no as string | null);
+  if (!invoiceNo) return { ok: false, error: "A historic re-print needs an invoice number so its later reuse can be linked." };
+  if (lot.reprint_source_lot_id) return { ok: false, error: "This lot is already part of a re-print chain." };
+  if (!['acknowledged', 'catalogued', 'valued', 'withdrawn'].includes(lot.state as string)) {
+    return { ok: false, error: "Only an acknowledged, valued, or withdrawn lot can be registered as a historic re-print." };
+  }
+  if (((lot.sale_lines as unknown as { id: string }[] | null) ?? []).length > 0) {
+    return { ok: false, error: "A lot with a recorded sale cannot be registered as a re-print." };
+  }
+
+  const existingSample = Math.max(0, Number(lot.sample_allowance ?? 0));
+  const cumulativeSample = Number((existingSample + additionalSample).toFixed(2));
+  const bagGross = Number(lot.bags ?? 0) * Number(lot.kg_per_bag ?? 0);
+  const baseGross = Number(lot.gross_wt ?? 0) || bagGross || Number(lot.net_wt ?? 0) + existingSample;
+  const nextNet = Number(Math.max(0, baseGross - cumulativeSample).toFixed(2));
+  const { data: updatedLot, error: updateError } = await supabase
+    .from("auction_lots")
+    .update({ state: "re-print", sample_allowance: cumulativeSample, net_wt: nextNet })
+    .eq("id", lot.id)
+    .eq("sale_id", lot.sale_id)
+    .eq("factory_id", profile.factory_id)
+    .eq("state", lot.state as string)
+    .select("id")
+    .maybeSingle();
+  if (updateError) return { ok: false, error: friendlyError(updateError) };
+  if (!updatedLot) return { ok: false, error: "The historic lot changed before it could be registered as a re-print." };
+
+  const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
+    saleId: lot.sale_id as string,
+    lotId: lot.id as string,
+    action: "Historic manual re-print",
+    detail: `Invoice ${invoiceNo} was registered as a historic re-print. Sample allowance is ${cumulativeSample.toFixed(2)} kg and remaining net weight is ${nextNet.toFixed(2)} kg.`,
+    reason,
+    actor: profile.name,
+  });
+  if (auditError) {
+    const { error: rollbackError } = await supabase
+      .from("auction_lots")
+      .update({ state: lot.state, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
+      .eq("id", lot.id)
+      .eq("sale_id", lot.sale_id)
+      .eq("factory_id", profile.factory_id)
+      .eq("state", "re-print");
+    if (rollbackError) return { ok: false, error: "The historic re-print was saved but its audit entry could not be created. Review the Broker Invoice before retrying." };
+    return { ok: false, error: friendlyError(auditError) };
+  }
+
+  revalidatePath(`${AUC}/reprints`);
+  return {
+    ok: true,
+    notice: `Invoice ${invoiceNo} registered as a historic re-print.`,
+    invalidate: [
+      { kind: "all", key: "auction.reprint-overview" },
+      { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId: lot.sale_id as string } } },
+    ],
   };
 }
 
@@ -341,7 +448,9 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
   const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList);
   if (!reprintSource.ok) return reprintSource;
   const netWt = netWeight(bags, kgPerBag, sampleKg);
-  const threshold = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+  const thresholdResult = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
+  if (!thresholdResult.ok) return thresholdResult;
+  const threshold = thresholdResult.threshold;
   const { data: brokerInvoice, error: brokerInvoiceError } = await supabase
     .from("auction_sales")
     .select("target_sale_no, selling_mark_id, status")
@@ -386,7 +495,8 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
     }
     return { ok: false, error: friendlyError(invoiceInsertError) };
   }
-  await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  if (!synced.ok) return synced;
   return {
     ok: true,
     notice: "Lot added.",
@@ -422,13 +532,14 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
 // history remains restrictive and returns a dependent-record error.
 export async function deleteLot(id: string, saleId: string): Promise<ListMutationResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const { data: lot } = await supabase
+  const { data: lot, error: lotError } = await supabase
     .from("auction_lots")
     .select("id, state, auction_sales(status)")
     .eq("id", id)
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
+  if (lotError) return { ok: false, error: friendlyError(lotError) };
   if (!lot) return { ok: false, error: "Lot not found." };
   const saleStatus = (lot.auction_sales as unknown as { status: string } | null)?.status;
   const isDraft = saleStatus === "draft" || saleStatus === "dispatched";
@@ -441,6 +552,7 @@ export async function deleteLot(id: string, saleId: string): Promise<ListMutatio
   }
   const { error: deleteError } = await deleteTenantRow(supabase, "auction_lots", id);
   if (deleteError) return { ok: false, error: deleteError };
-  await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
+  if (!synced.ok) return synced;
   return { ok: true, notice: "Lot deleted." };
 }

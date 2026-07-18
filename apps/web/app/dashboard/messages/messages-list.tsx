@@ -1,29 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
-import {
-  ListCommandToolbar,
-  ListCreatePanel,
-  ListSearchPanel,
-  ListSurface,
-  SortButton,
-  useFrameworkListData,
-  useListControls,
-  useListSelection,
-  type ColumnDef,
-  type ListDefinition,
-} from "@/components/list-controls";
+import { useRef } from "react";
+import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import type { SentMessageListRow } from "@/lib/list-resources";
 import { sendMessage } from "./actions";
 
 type SupplierOption = { id: string; name: string };
 
-const COLUMNS: ColumnDef<SentMessageListRow>[] = [
-  { key: "title", label: "Title", accessor: (row) => row.title, sortable: true, filter: "text" },
-  { key: "recipient", label: "Recipient", accessor: (row) => row.recipient, sortable: true, filter: "select" },
-  { key: "body", label: "Message", accessor: (row) => row.body, sortable: true, filter: "text", lov: false },
-  { key: "sentAt", label: "Sent", accessor: (row) => row.sentAt, sortable: true, searchInput: "date" },
+const COLUMNS: EntityListColumn<SentMessageListRow>[] = [
+  { key: "title", label: "Title", accessor: (row) => row.title, sortable: true, filter: "text", render: (row) => <span className="font-medium text-stone-900 dark:text-stone-100">{row.title}</span> },
+  { key: "recipient", label: "Recipient", accessor: (row) => row.recipient, sortable: true, filter: "select", render: (row) => <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">{row.recipient}</span> },
+  { key: "body", label: "Message", accessor: (row) => row.body, sortable: true, filter: "text", lov: false, cellClassName: "max-w-xl whitespace-pre-wrap text-stone-600 dark:text-stone-300" },
+  { key: "sentAt", label: "Sent", accessor: (row) => row.sentAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => new Date(row.sentAt).toLocaleString() },
 ];
 
 const LIST: ListDefinition<SentMessageListRow> = {
@@ -43,38 +33,27 @@ export function MessagesList({
   initialRows: SentMessageListRow[];
   suppliers: SupplierOption[];
 }) {
-  const [adding, setAdding] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
-  const { rows, refreshing, mutationAction } = useFrameworkListData({
-    initialRows,
-    resource: { key: "communications.sent-messages" },
-  });
-  const controls = useListControls(rows, LIST.columns);
-  const selection = useListSelection(rows, {
-    mode: LIST.selectionMode ?? "single",
-    getId: (row) => row.id,
-  });
 
   return (
-    <ListSurface
+    <EntityList
+      resource={{ key: "communications.sent-messages" }}
+      initialRows={initialRows}
+      definition={LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => row.title}
       title="Recent messages"
       description="Messages already delivered to the supplier field app."
-      onCreate={() => setAdding(true)}
-      canCreate={!adding}
-      createDisabledReason="Finish composing the current message first."
-      createLabel="New message"
-      refreshing={refreshing}
-    >
-      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount} />
-      <ListCreatePanel open={adding} title="Compose message">
-        <form
+      emptyMessage="No messages sent yet."
+      create={{
+        action: sendMessage,
+        label: "New message",
+        panelTitle: "Compose message",
+        disabledReason: "Finish composing the current message first.",
+        onSuccess: () => formRef.current?.reset(),
+        render: ({ action, close }) => <form
           ref={formRef}
-          action={mutationAction(sendMessage, {
-            onSuccess: () => {
-              formRef.current?.reset();
-              setAdding(false);
-            },
-          })}
+          action={action}
           className="grid gap-4"
         >
           <div className="grid gap-4 lg:grid-cols-2">
@@ -101,7 +80,7 @@ export function MessagesList({
               type="button"
               onClick={() => {
                 formRef.current?.reset();
-                setAdding(false);
+                close();
               }}
               className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800"
             >
@@ -111,42 +90,8 @@ export function MessagesList({
               Send message
             </SubmitButton>
           </div>
-        </form>
-      </ListCreatePanel>
-      <ListSearchPanel columns={LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {COLUMNS.map((column) => (
-                <th key={column.key} className="px-4 py-3">
-                  {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {controls.rows.map((message) => (
-              <tr
-                key={message.id}
-                {...selection.rowProps(message.id)}
-                className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(message.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
-              >
-                <td className="px-4 py-3 font-medium text-stone-900 dark:text-stone-100">{message.title}</td>
-                <td className="px-4 py-3"><span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">{message.recipient}</span></td>
-                <td className="max-w-xl whitespace-pre-wrap px-4 py-3 text-stone-600 dark:text-stone-300">{message.body}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-xs text-stone-500 dark:text-stone-400">{new Date(message.sentAt).toLocaleString()}</td>
-              </tr>
-            ))}
-            {controls.rows.length === 0 && rows.length > 0 && (
-              <tr><td colSpan={4} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No messages match the current search.</td></tr>
-            )}
-            {rows.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No messages sent yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </ListSurface>
+        </form>,
+      }}
+    />
   );
 }

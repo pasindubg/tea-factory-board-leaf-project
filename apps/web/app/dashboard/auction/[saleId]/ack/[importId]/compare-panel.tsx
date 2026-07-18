@@ -6,13 +6,12 @@ import { TabView } from "@tea/ui";
 import { rankCandidates, matchBand, type OrphanLot, type CandidateLot } from "@tea/api";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { EntityList, type EntityListContext } from "@/components/entity-list";
 import {
   ListCommandToolbar,
   ListSearchPanel,
   ListSurface,
   SortButton,
-  useListControls,
-  useListSelection,
   type ColumnDef,
   type ListDefinition,
 } from "@/components/list-controls";
@@ -123,6 +122,40 @@ export function ComparePanel({
   candidates: Candidate[];
   audit: AuditRow[];
 }) {
+  if (orphans.length === 0) return null;
+
+  return (
+    <EntityList
+      scope="acknowledgement-orphan-resolver"
+      initialRows={orphans}
+      definition={ORPHAN_LIST}
+      getId={(row) => row.lotId}
+      rowLabel={(row) => `Invoice ${row.invoiceNo}`}
+      emptyMessage="No unresolved invoices."
+      renderMode="workflow"
+      render={(list) => (
+        <CompareWorkflow
+          saleId={saleId}
+          candidates={candidates}
+          audit={audit}
+          list={list}
+        />
+      )}
+    />
+  );
+}
+
+function CompareWorkflow({
+  saleId,
+  candidates,
+  audit,
+  list,
+}: {
+  saleId: string;
+  candidates: Candidate[];
+  audit: AuditRow[];
+  list: EntityListContext<Orphan>;
+}) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("orphans");
   const [confirmingOutcome, setConfirmingOutcome] = useState<Outcome | null>(null);
@@ -130,11 +163,7 @@ export function ComparePanel({
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
-  const orphanControls = useListControls(orphans, ORPHAN_LIST.columns);
-  const orphanSelection = useListSelection(orphans, {
-    mode: ORPHAN_LIST.selectionMode ?? "single",
-    getId: (row) => row.lotId,
-  });
+  const { rows: orphans, controls: orphanControls, selection: orphanSelection } = list;
   const selectOrphan = orphanSelection.select;
 
   useEffect(() => {
@@ -162,8 +191,6 @@ export function ComparePanel({
       delta: Number((match.candidate.netWt - orphan.netWt).toFixed(2)),
     }));
   }, [candidates, orphan]);
-
-  if (orphans.length === 0) return null;
 
   function runWorkflow(action: () => Promise<ListMutationResult>, notice: string, onSuccess?: () => void) {
     startTransition(async () => {
@@ -368,101 +395,109 @@ function CandidateList({
     () => rows.filter((row) => !rejected.has(row.candidate.key) && row.confidence >= minConfidence),
     [minConfidence, rejected, rows],
   );
-  const controls = useListControls(eligibleRows, CANDIDATE_LIST.columns);
-  const selection = useListSelection(eligibleRows, {
-    mode: CANDIDATE_LIST.selectionMode ?? "single",
-    getId: (row) => row.candidate.key,
-  });
-  const selected = eligibleRows.find((row) => row.candidate.key === selection.selectedId);
 
   return (
-    <ListSurface
-      title="Candidate catalogue lots"
-      description={`Ranked matches for invoice ${orphan.invoiceNo} (${orphan.grade} · ${orphan.netWt.toFixed(2)} kg).`}
-    >
-      <ListCommandToolbar mode={CANDIDATE_LIST.selectionMode ?? "single"} count={selection.selectedCount}>
-        <label className="flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-300">
-          Min confidence
-          <input type="range" min="0" max="1" step="0.05" value={minConfidence} onChange={(event) => setMinConfidence(Number(event.target.value))} className="w-24 accent-green-600" />
-          <span className="w-8 font-mono">{Math.round(minConfidence * 100)}%</span>
-        </label>
-        <AppButton type="button" variant="primary" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => selected && onLink(selected)}>Link selected lot</AppButton>
-        <AppButton type="button" variant="danger" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => setConfirmingReject(true)}>Reject candidate</AppButton>
-      </ListCommandToolbar>
-      <ListSearchPanel columns={CANDIDATE_LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {CANDIDATE_LIST.columns.map((column) => (
-                <th key={column.key} className={`px-4 py-3 ${["netWt", "delta", "confidence"].includes(column.key) ? "text-right" : ""}`}>
-                  {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {controls.rows.map((row) => {
-              const confidenceBand = matchBand(row.confidence);
-              return (
-                <tr
-                  key={row.candidate.key}
-                  {...selection.rowProps(row.candidate.key, busy)}
-                  className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(row.candidate.key) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
-                >
-                  <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{row.candidate.lotNo ?? "—"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-medium">{row.candidate.grade}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{row.candidate.netWt.toFixed(2)} kg</td>
-                  <td className="whitespace-nowrap px-4 py-3">{row.candidate.markCode ?? "—"}</td>
-                  <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${row.delta === 0 ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>
-                    {row.delta === 0 ? "Exact" : `${row.delta > 0 ? "+" : "−"}${Math.abs(row.delta).toFixed(2)} kg`}
-                  </td>
-                  <td className="min-w-36 px-4 py-3">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className={confidenceBand === "high" ? "text-green-700 dark:text-green-400" : confidenceBand === "medium" ? "text-amber-700 dark:text-amber-400" : "text-stone-500 dark:text-stone-400"}>{confidenceBand}</span>
-                      <span className="font-mono">{Math.round(row.confidence * 100)}%</span>
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                      <div className={confidenceBand === "high" ? "h-full bg-green-600" : confidenceBand === "medium" ? "h-full bg-amber-500" : "h-full bg-stone-400"} style={{ width: `${Math.round(row.confidence * 100)}%` }} />
-                    </div>
-                  </td>
-                  <td className="min-w-80 px-4 py-3 text-xs">
-                    <div className="flex flex-wrap gap-x-4 gap-y-1">
-                      {row.dims.map((dimension) => (
-                        <span key={dimension.key} className={toneText[dimension.tone]}>{dimension.label}: {dimension.detail}</span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {controls.rows.length === 0 && eligibleRows.length > 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidate lots match the current search.</td></tr>
-            )}
-            {eligibleRows.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidates are available above {Math.round(minConfidence * 100)}% confidence.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <ConfirmationDialog
-        open={confirmingReject}
-        title="Reject selected candidate?"
-        description={`The selected catalogue lot will be excluded as a match for invoice ${orphan.invoiceNo}, and the rejection will be recorded in the audit trail.`}
-        confirmLabel="Reject candidate"
-        destructive
-        busy={busy}
-        onCancel={() => setConfirmingReject(false)}
-        onConfirm={() => {
-          if (!selected) return;
-          const rejectedKey = selected.candidate.key;
-          onReject(selected, () => {
-            setRejected((current) => new Set(current).add(rejectedKey));
-            selection.clear();
-            setConfirmingReject(false);
-          });
-        }}
-      />
-    </ListSurface>
+    <EntityList
+      scope={`acknowledgement-candidates-${orphan.lotId}`}
+      initialRows={eligibleRows}
+      definition={CANDIDATE_LIST}
+      getId={(row) => row.candidate.key}
+      rowLabel={(row) => `Catalogue lot ${row.candidate.lotNo ?? "unknown"}`}
+      emptyMessage={`No candidates are available above ${Math.round(minConfidence * 100)}% confidence.`}
+      renderMode="workflow"
+      render={({ controls, selection }) => {
+        const selected = eligibleRows.find((row) => row.candidate.key === selection.selectedId);
+        return (
+          <ListSurface
+            title="Candidate catalogue lots"
+            description={`Ranked matches for invoice ${orphan.invoiceNo} (${orphan.grade} · ${orphan.netWt.toFixed(2)} kg).`}
+          >
+            <ListCommandToolbar mode={CANDIDATE_LIST.selectionMode ?? "single"} count={selection.selectedCount}>
+              <label className="flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-300">
+                Min confidence
+                <input type="range" min="0" max="1" step="0.05" value={minConfidence} onChange={(event) => setMinConfidence(Number(event.target.value))} className="w-24 accent-green-600" />
+                <span className="w-8 font-mono">{Math.round(minConfidence * 100)}%</span>
+              </label>
+              <AppButton type="button" variant="primary" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => selected && onLink(selected)}>Link selected lot</AppButton>
+              <AppButton type="button" variant="danger" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => setConfirmingReject(true)}>Reject candidate</AppButton>
+            </ListCommandToolbar>
+            <ListSearchPanel columns={CANDIDATE_LIST.columns} controls={controls} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
+                    {CANDIDATE_LIST.columns.map((column) => (
+                      <th key={column.key} className={`px-4 py-3 ${["netWt", "delta", "confidence"].includes(column.key) ? "text-right" : ""}`}>
+                        {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {controls.rows.map((row) => {
+                    const confidenceBand = matchBand(row.confidence);
+                    return (
+                      <tr
+                        key={row.candidate.key}
+                        {...selection.rowProps(row.candidate.key, busy)}
+                        className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(row.candidate.key) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{row.candidate.lotNo ?? "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium">{row.candidate.grade}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{row.candidate.netWt.toFixed(2)} kg</td>
+                        <td className="whitespace-nowrap px-4 py-3">{row.candidate.markCode ?? "—"}</td>
+                        <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${row.delta === 0 ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>
+                          {row.delta === 0 ? "Exact" : `${row.delta > 0 ? "+" : "−"}${Math.abs(row.delta).toFixed(2)} kg`}
+                        </td>
+                        <td className="min-w-36 px-4 py-3">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className={confidenceBand === "high" ? "text-green-700 dark:text-green-400" : confidenceBand === "medium" ? "text-amber-700 dark:text-amber-400" : "text-stone-500 dark:text-stone-400"}>{confidenceBand}</span>
+                            <span className="font-mono">{Math.round(row.confidence * 100)}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+                            <div className={confidenceBand === "high" ? "h-full bg-green-600" : confidenceBand === "medium" ? "h-full bg-amber-500" : "h-full bg-stone-400"} style={{ width: `${Math.round(row.confidence * 100)}%` }} />
+                          </div>
+                        </td>
+                        <td className="min-w-80 px-4 py-3 text-xs">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {row.dims.map((dimension) => (
+                              <span key={dimension.key} className={toneText[dimension.tone]}>{dimension.label}: {dimension.detail}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {controls.rows.length === 0 && eligibleRows.length > 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidate lots match the current search.</td></tr>
+                  )}
+                  {eligibleRows.length === 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidates are available above {Math.round(minConfidence * 100)}% confidence.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <ConfirmationDialog
+              open={confirmingReject}
+              title="Reject selected candidate?"
+              description={`The selected catalogue lot will be excluded as a match for invoice ${orphan.invoiceNo}, and the rejection will be recorded in the audit trail.`}
+              confirmLabel="Reject candidate"
+              destructive
+              busy={busy}
+              onCancel={() => setConfirmingReject(false)}
+              onConfirm={() => {
+                if (!selected) return;
+                const rejectedKey = selected.candidate.key;
+                onReject(selected, () => {
+                  setRejected((current) => new Set(current).add(rejectedKey));
+                  selection.clear();
+                  setConfirmingReject(false);
+                });
+              }}
+            />
+          </ListSurface>
+        );
+      }}
+    />
   );
 }

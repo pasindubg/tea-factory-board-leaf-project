@@ -1,9 +1,8 @@
 import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, useRouter } from "expo-router";
-import { useFrameworkListController } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import { useRouter } from "expo-router";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { formatTime, todayRange } from "@/lib/dates";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
@@ -27,20 +26,15 @@ export default function Records() {
     if (error) throw error;
     return (data as unknown as Weighing[]) ?? [];
   }, [collector, profile]);
-  const list = useFrameworkListController(loadRows);
-
-  useFocusEffect(useCallback(() => {
-    void list.reload();
-  }, [list.reload, loadRows]));
-
-  const total = list.rows.reduce((sum, row) => sum + Number(row.weight_kg), 0);
-
   return (
     <SafeAreaView style={s.screen} edges={["top"]}>
-      <NativeFrameworkList
-        list={list}
+      <NativeEntityList
+        loadRows={loadRows}
         title="Today's records"
-        description={`${list.rows.length} weighing${list.rows.length === 1 ? "" : "s"} · ${total.toFixed(2)} kg total`}
+        description={(list) => {
+          const total = list.rows.reduce((sum, row) => sum + Number(row.weight_kg), 0);
+          return `${list.rows.length} weighing${list.rows.length === 1 ? "" : "s"} · ${total.toFixed(2)} kg total`;
+        }}
         onCreate={() => router.push("/(app)/weigh")}
         canCreate={Boolean(profile?.role === "collector" && collector)}
         createDisabledReason="Your collector profile must be loaded before recording a weighing."

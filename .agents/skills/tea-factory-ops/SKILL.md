@@ -210,25 +210,23 @@ contract are mandatory on web and native list renderers.
   `AppNavLink`, and `AppDrawer`. Domain pages compose these primitives rather
   than copying button/navigation/drawer class strings. Confirmation, feedback,
   and list primitives remain in their dedicated shared components.
-- Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
-  inline filter rows under table headers.
+- Web screens use `EntityList`; Expo screens use `NativeEntityList`. The
+  low-level list hooks are adapter internals, not page APIs. Do not add inline
+  filter rows under table headers.
 - Search panels expose all meaningful columns and keep advanced search available.
-- Every list implementation uses the shared list framework in
-  `apps/web/components/list-controls.tsx`: declare columns, `selectionMode`,
-  editability, and command actions in one list definition; compose
-  `ListSurface`, `ListCommandToolbar`, `ListSelectionHeader`/
-  `ListSelectionCell`, and `ListSidePanel` instead of inventing page-specific
-  list controls. This is mandatory even for read-only tables, record selectors,
-  and side panels. Non-control clicks on a row select it and keyboard
-  Enter/Space must provide the same behavior with `aria-selected` for feedback.
+- Every web list implementation uses `apps/web/components/entity-list.tsx`:
+  declare columns, selection mode, editability, commands, totals/footers, tabs,
+  and ordinary linked side panels in one definition. The top-level `render`
+  escape is limited to genuine workflow and matrix screens. This is mandatory
+  even for read-only tables and record selectors.
 - Creation belongs to the list frame: `onCreate` opts into the built-in `+ New`,
   `canCreate`/`createDisabledReason` reflect real permissions, and
   `ListCreatePanel` stays inside the list. Do not add a detached page, side form,
   row action, or duplicate toolbar Add control for ordinary list creation.
-- CRUD list rows reload through `useFrameworkListData` and the server-only opaque
-  read-resource registry. Never create a refresh action per entity or let the
-  client choose a table/query. Ordinary CRUD refreshes matching mounted list
-  components, not the route or browser.
+- CRUD list rows give `EntityList` an opaque resource from the server-only read
+  registry. Never call `useFrameworkListData` in a page, create a refresh action
+  per entity, or let the client choose a table/query. Ordinary CRUD refreshes
+  matching mounted list components, not the route or browser.
 - Sale overviews grouped by `target_sale_no` must show all brokers participating
   in that auction sale, because multiple brokers can sell tea in the same sale.
 - The dashboard sidebar uses drill-in sections, not expanding dropdown trees:
@@ -257,9 +255,10 @@ contract are mandatory on web and native list renderers.
   exactly one selected row; compatible state actions may accept many. When framework
   config explicitly sets `selectionMode: "single"`, omit checkboxes/bulk controls
   and show edit only for the current row.
-- Related list work surfaces use the shared `TabbedListSurface` top tab bar
-  rather than stacking dense tables. Each tab preserves its own list controls;
-  top tabs are keyboard navigable with arrows and Home/End.
+- Related list work surfaces use `EntityList.tabs` for one partitioned resource
+  and `EntityListTabs` for independent lists rather than stacking dense tables.
+  Each tab preserves its own list controls; top tabs are keyboard navigable with
+  arrows and Home/End.
 - Appearance lives in the bottom `Settings` menu with explicit System, Light, and
   Dark choices. New user preferences should extend this menu rather than adding
   scattered shell buttons.

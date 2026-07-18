@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { createDispatchedLotForList, updateLot, deleteLot, markReprint } from "../actions";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
-import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { EntityList, type EntityListColumn, type EntityListContext } from "@/components/entity-list";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, type ListDefinition } from "@/components/list-controls";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { LOT_STATES } from "../lot-states";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DispatchLotForm } from "./dispatch-lot-form";
 
-const COLUMNS: ColumnDef<LotRow>[] = [
+const COLUMNS: EntityListColumn<LotRow>[] = [
   { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
   { key: "sale_no", label: "Sale", accessor: (r) => r.final_sale_no ?? r.provisional_sale_no ?? null, sortable: true, filter: "text" },
   { key: "lot_no", label: "Lot no.", accessor: (r) => r.lot_no ?? null, sortable: true, filter: "text" },
@@ -51,18 +52,59 @@ export function DispatchedLotsTable({
   title?: string;
   onRowsChange?: (rows: LotRow[]) => void;
 }) {
+  return (
+    <EntityList
+      resource={{ key: "auction.dispatch-lots", params: { saleId } }}
+      initialRows={initialRows}
+      definition={LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => row.invoice_no ?? row.lot_no ?? "lot"}
+      emptyMessage="No lot invoices yet."
+      renderMode="workflow"
+      render={(data) => (
+        <DispatchedLotsWorkflow
+          data={data}
+          saleId={saleId}
+          isOwner={isOwner}
+          canEdit={canEdit}
+          canAdd={canAdd}
+          grades={grades}
+          soldLotIds={soldLotIds}
+          title={title}
+          onRowsChange={onRowsChange}
+        />
+      )}
+    />
+  );
+}
+
+function DispatchedLotsWorkflow({
+  data,
+  saleId,
+  isOwner,
+  canEdit,
+  canAdd,
+  grades,
+  soldLotIds,
+  title = "Lot invoices",
+  onRowsChange,
+}: {
+  data: EntityListContext<LotRow>;
+  saleId: string;
+  isOwner: boolean;
+  canEdit: boolean;
+  canAdd: boolean;
+  grades: { code: string; name: string }[];
+  soldLotIds: string[];
+  title?: string;
+  onRowsChange?: (rows: LotRow[]) => void;
+}) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reprintId, setReprintId] = useState<string | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [lotToDelete, setLotToDelete] = useState<string | null>(null);
-  const { rows, refreshing, mutate, mutationAction } = useFrameworkListData({
-    initialRows,
-    resource: { key: "auction.dispatch-lots", params: { saleId } },
-  });
-  const controls = useListControls(rows, LIST.columns);
-  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
-  const visibleRows = controls.rows;
+  const { rows, refreshing, mutate, mutationAction, controls, selection, visibleRows } = data;
   const selectedLot = rows.find((row) => row.id === selection.selectedId) ?? null;
   const selectedLotCanDelete = Boolean(selectedLot && (isOwner || selectedLot.state === "invoiced" || selectedLot.state === "pending"));
   const selectedLotCanReprint = Boolean(selectedLot && ["acknowledged", "catalogued", "valued", "withdrawn"].includes(selectedLot.state ?? ""));

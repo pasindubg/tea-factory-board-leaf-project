@@ -10,6 +10,8 @@ import {
   parseValuation,
   isContract,
   parseContract,
+  contractValidationIssues,
+  repairLegacyContractLines,
   computeSettlement,
   reconcileVat,
   type ParsedAcknowledgement,
@@ -364,14 +366,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   );
 }
 
-export async function rejectAcknowledgement(importId: string, saleId: string) {
-  const { supabase, profile } = await requireModuleAccess("auction");
-  await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
-  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  revalidatePath(detail);
-  redirect(detail);
-}
-
 // ---------- Valuation (② valuation ↔ realised) ----------
 export async function ingestValuation(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
@@ -448,15 +442,23 @@ export async function confirmContract(importId: string, saleId: string) {
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedContract;
   const aliases = await gradeAliasMap(supabase, profile.factory_id);
+  const repairedLines = repairLegacyContractLines(rawParsed.lines);
   const parsed: ParsedContract = {
     ...rawParsed,
-    lines: rawParsed.lines.map((line) => ({
+    lines: repairedLines.map((line) => ({
       ...line,
       lotNo: formatFourDigitNo(line.lotNo),
       invoiceNo: formatFourDigitNo(line.invoiceNo),
       grade: canonicalGrade(line.grade, aliases),
     })),
   };
+  const validationIssues = contractValidationIssues(parsed.lines);
+  if (validationIssues.length > 0) {
+    return back(
+      `${AUC}/${saleId}/contract/${importId}`,
+      `Contract validation failed: ${validationIssues.join(" ")}`,
+    );
+  }
 
   // The sellers contract covers the broker's whole sale — match lots across all
   // dispatches in the sale group, and file each sale line under its lot's own dispatch.
@@ -483,6 +485,15 @@ export async function confirmContract(importId: string, saleId: string) {
     for (const invoiceNo of invoiceKeys(lot)) {
       lotByInv.set(invoiceNo, lot);
     }
+  }
+  const unmatchedInvoiceNos = parsed.lines
+    .filter((line) => !lotByInv.has(line.invoiceNo))
+    .map((line) => line.invoiceNo);
+  if (unmatchedInvoiceNos.length > 0) {
+    return back(
+      `${AUC}/${saleId}/contract/${importId}`,
+      `Contract confirmation stopped: these invoices are not present in this broker sale: ${unmatchedInvoiceNos.join(", ")}.`,
+    );
   }
 
   // NOT SOLD is the broker's re-print instruction. Add one more sampling
@@ -707,7 +718,10 @@ export async function confirmContract(importId: string, saleId: string) {
     .from("auction_sales")
     .update({ prompt_date: toISODate(parsed.promptDate) })
     .in("id", [...settledSales]);
-  await supabase.from("doc_imports").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", importId);
+  await supabase
+    .from("doc_imports")
+    .update({ parsed_json: parsed, status: "confirmed", confirmed_at: new Date().toISOString() })
+    .eq("id", importId);
   revalidatePath(detail);
   revalidatePath(`${AUC}/reprints`);
   const settlementNote = settlementCount
@@ -720,8 +734,36 @@ export async function confirmContract(importId: string, saleId: string) {
 
 export async function rejectImport(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  await supabase.from("doc_imports").update({ status: "rejected" }).eq("id", importId);
-  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  revalidatePath(detail);
-  redirect(detail);
+  const sourceDetail = `${AUC}/${saleId}`;
+  const { data: importRow, error: importError } = await supabase
+    .from("doc_imports")
+    .select("id, doc_type, status")
+    .eq("id", importId)
+    .eq("sale_id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (importError) return back(sourceDetail, friendlyError(importError));
+  if (!importRow) return back(sourceDetail, "The staged document was not found for this Broker Invoice.");
+  if (importRow.status === "confirmed") return back(sourceDetail, "A confirmed document cannot be rejected.");
+
+  const { error: rejectError } = await supabase
+    .from("doc_imports")
+    .update({ status: "rejected" })
+    .eq("id", importId)
+    .eq("sale_id", saleId)
+    .eq("factory_id", profile.factory_id);
+  if (rejectError) return back(sourceDetail, friendlyError(rejectError));
+
+  const saleDetail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  revalidatePath(sourceDetail);
+  revalidatePath(saleDetail);
+  revalidatePath(`${AUC}/sales`);
+  const documentLabel = {
+    acknowledgement: "Acknowledgement",
+    valuation: "Valuation Report",
+    contract: "Sellers Contract",
+  }[importRow.doc_type as string] ?? "Document";
+  redirect(
+    `${sourceDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
+  );
 }

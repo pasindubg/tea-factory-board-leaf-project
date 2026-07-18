@@ -3,13 +3,13 @@ import { notFound } from "next/navigation";
 import { requireModuleAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { stateBucket } from "../../state-buckets";
-import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
 import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
-import { TabbedListSurface } from "@/components/list-controls";
+import { EntityListTabs } from "@/components/entity-list";
 
 type DispatchRow = {
   id: string;
@@ -221,7 +221,7 @@ export default async function SaleDetailPage({
   }>();
   const allDispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
   for (const dispatch of allDispatchRows) {
-    const key = formatSaleNo(dispatch.target_sale_no || dispatch.sale_no);
+    const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
     if (!key) continue;
     const current = saleListSummaries.get(key) ?? {
       saleNo: key,
@@ -239,7 +239,7 @@ export default async function SaleDetailPage({
   for (const lot of allLotRows) {
     const dispatch = allDispatchById.get(lot.sale_id);
     if (!dispatch) continue;
-    const key = formatSaleNo(lot.final_sale_no || lot.provisional_sale_no);
+    const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
     if (!key) continue;
     const current = saleListSummaries.get(key) ?? {
       saleNo: key,
@@ -357,15 +357,13 @@ export default async function SaleDetailPage({
         <SalesReconciliationAssistant saleNo={displaySaleNo} groups={reconciliationGroups} />
       </section>
 
-      <TabbedListSurface
+      <EntityListTabs
+        label="Sale lists"
         tabs={[
-          { id: "lots", label: "Lots & invoices", count: `${saleLineTableRows.length} lots` },
-          { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices` },
+          { id: "lots", label: "Lots & invoices", count: `${saleLineTableRows.length} lots`, content: <SaleLinesTable saleId={saleLineResourceId} rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} /> },
+          { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={dispatchTableRows} /> },
         ]}
-      >
-        <SaleLinesTable saleId={saleLineResourceId} rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} />
-        <DispatchesInSaleTable rows={dispatchTableRows} />
-      </TabbedListSurface>
+      />
       </div>
     </div>
   );

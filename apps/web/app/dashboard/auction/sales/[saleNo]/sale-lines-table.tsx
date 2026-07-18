@@ -5,7 +5,8 @@ import { useMemo, useState } from "react";
 import { updateSaleLotsInline } from "../../actions";
 import { deleteLot } from "../../_actions/lots";
 import { money } from "../../format";
-import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
+import { EntityList, type EntityListColumn, type EntityListContext } from "@/components/entity-list";
+import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, type ListDefinition } from "@/components/list-controls";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { showAppToast } from "@/components/action-feedback";
 
@@ -34,7 +35,7 @@ export type SaleLineRow = {
   reprintCount: number;
 };
 
-const COLUMNS: ColumnDef<SaleLineRow>[] = [
+const COLUMNS: EntityListColumn<SaleLineRow>[] = [
   { key: "dispatchSaleNo", label: "Broker invoice no.", accessor: (r) => r.dispatchSaleNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "lotNo", label: "Lot no.", accessor: (r) => r.lotNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (r) => r.invoiceNo, sortable: true, filter: "text", lov: false },
@@ -65,10 +66,28 @@ const LIST: ListDefinition<SaleLineRow> = {
 };
 
 export function SaleLinesTable({ saleId, rows: initialRows, invoiceEditingLocked = false }: { saleId: string; rows: SaleLineRow[]; invoiceEditingLocked?: boolean }) {
-  const { rows, refreshing, mutate } = useFrameworkListData({ initialRows, resource: { key: "auction.sale-lines", params: { saleId } } });
-  const controls = useListControls(rows, LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "multi", getId: (row) => row.id });
+  return (
+    <EntityList
+      resource={{ key: "auction.sale-lines", params: { saleId } }}
+      initialRows={initialRows}
+      definition={LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `invoice ${row.invoiceNo}`}
+      emptyMessage="No sale lines."
+      renderMode="workflow"
+      render={(data) => <SaleLinesWorkflow data={data} invoiceEditingLocked={invoiceEditingLocked} />}
+    />
+  );
+}
+
+function SaleLinesWorkflow({
+  data,
+  invoiceEditingLocked,
+}: {
+  data: EntityListContext<SaleLineRow>;
+  invoiceEditingLocked: boolean;
+}) {
+  const { rows, refreshing, mutate, controls, visibleRows, selection } = data;
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleteRequest, setDeleteRequest] = useState<SaleLineRow[] | null>(null);

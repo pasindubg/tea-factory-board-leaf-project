@@ -1,19 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import {
-  ListCommandToolbar,
-  ListCreatePanel,
-  ListSearchPanel,
-  ListSurface,
-  SortButton,
-  TabbedListSurface,
-  useFrameworkListData,
-  useListControls,
-  useListSelection,
-  type ColumnDef,
-  type ListDefinition,
-} from "@/components/list-controls";
+import { EntityList, EntityListTabs, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 import { showAppToast } from "@/components/action-feedback";
 import { SubmitButton } from "@/components/submit-button";
 import { lkr } from "@/lib/money";
@@ -31,10 +20,10 @@ const input = "mt-1 w-full rounded-md border border-stone-300 bg-white px-3 py-2
 const compactInput = "w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm focus:border-green-600 focus:outline-none dark:border-stone-600 dark:bg-stone-800 dark:focus:border-green-500";
 const today = () => new Date().toISOString().slice(0, 10);
 
-const RATE_COLUMNS: ColumnDef<BaseRateListRow>[] = [
-  { key: "pricePerKg", label: "Rate (LKR/kg)", accessor: (row) => Number(row.pricePerKg), sortable: true, searchInput: "number", lov: false },
+const RATE_COLUMNS: EntityListColumn<BaseRateListRow>[] = [
+  { key: "pricePerKg", label: "Rate (LKR/kg)", accessor: (row) => Number(row.pricePerKg), sortable: true, searchInput: "number", lov: false, cellClassName: "text-right font-medium tabular-nums", render: (row) => lkr(row.pricePerKg) },
   { key: "effectiveFrom", label: "Effective from", accessor: (row) => row.effectiveFrom, sortable: true, searchInput: "date" },
-  { key: "effectiveTo", label: "Effective to", accessor: (row) => row.effectiveTo ?? "Current", sortable: true, searchInput: "date" },
+  { key: "effectiveTo", label: "Effective to", accessor: (row) => row.effectiveTo ?? "Current", sortable: true, searchInput: "date", render: (row) => row.effectiveTo ?? <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900 dark:text-green-300">Current</span> },
 ];
 
 const RATE_LIST = {
@@ -45,11 +34,54 @@ const RATE_LIST = {
   delete: false,
 } satisfies ListDefinition<BaseRateListRow>;
 
-const TIER_COLUMNS: ColumnDef<QualityTierListRow>[] = [
-  { key: "name", label: "Name", accessor: (row) => row.name, sortable: true, filter: "text", lov: false },
-  { key: "bonusKind", label: "Bonus type", accessor: (row) => row.bonusKind, sortable: true, filter: "select" },
-  { key: "bonusValue", label: "Value", accessor: (row) => Number(row.bonusValue), sortable: true, searchInput: "number", lov: false },
-  { key: "sortOrder", label: "Rank", accessor: (row) => row.sortOrder, sortable: true, searchInput: "number", lov: false },
+const TIER_COLUMNS: EntityListColumn<QualityTierListRow>[] = [
+  {
+    key: "name",
+    label: "Name",
+    accessor: (row) => row.name,
+    sortable: true,
+    filter: "text",
+    lov: false,
+    cellClassName: "font-medium",
+    edit: (row, { formId }) => <input form={formId} name="name" aria-label="Tier name" defaultValue={row.name} required className={compactInput} />,
+  },
+  {
+    key: "bonusKind",
+    label: "Bonus type",
+    accessor: (row) => row.bonusKind,
+    sortable: true,
+    filter: "select",
+    render: (row) => row.bonusKind === "percent" ? "% of base" : "Flat LKR/kg",
+    edit: (row, { formId }) => (
+      <select form={formId} name="bonus_kind" aria-label="Bonus type" defaultValue={row.bonusKind} className={compactInput}>
+        <option value="flat">Flat LKR/kg</option>
+        <option value="percent">% of base</option>
+      </select>
+    ),
+  },
+  {
+    key: "bonusValue",
+    label: "Value",
+    accessor: (row) => Number(row.bonusValue),
+    sortable: true,
+    searchInput: "number",
+    lov: false,
+    headerClassName: "text-right",
+    cellClassName: "text-right tabular-nums",
+    render: (row) => Number(row.bonusValue).toFixed(2),
+    edit: (row, { formId }) => <input form={formId} name="bonus_value" aria-label="Bonus value" type="number" step="0.01" min="0" defaultValue={row.bonusValue} required className={`${compactInput} text-right`} />,
+  },
+  {
+    key: "sortOrder",
+    label: "Rank",
+    accessor: (row) => row.sortOrder,
+    sortable: true,
+    searchInput: "number",
+    lov: false,
+    headerClassName: "text-right",
+    cellClassName: "text-right tabular-nums",
+    edit: (row, { formId }) => <input form={formId} name="sort_order" aria-label="Tier rank" type="number" step="1" defaultValue={row.sortOrder} className={`${compactInput} text-right`} />,
+  },
   {
     key: "active",
     label: "Status",
@@ -60,6 +92,11 @@ const TIER_COLUMNS: ColumnDef<QualityTierListRow>[] = [
       { value: "active", label: "active" },
       { value: "inactive", label: "inactive" },
     ],
+    render: (row) => (
+      <span className={`rounded-full px-2 py-0.5 text-xs ${row.active ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400"}`}>
+        {row.active ? "active" : "inactive"}
+      </span>
+    ),
   },
 ];
 
@@ -89,243 +126,111 @@ export function PaymentSettingsLists({
   isOwner: boolean;
 }) {
   return (
-    <TabbedListSurface
+    <EntityListTabs
       defaultTab="rates"
       tabs={[
-        { id: "rates", label: "Base rates" },
-        { id: "tiers", label: "Quality tiers" },
-        { id: "deductions", label: "Deductions" },
+        { id: "rates", label: "Base rates", content: <BaseRatesList initialRows={rates} canManage={canManage} /> },
+        { id: "tiers", label: "Quality tiers", content: <QualityTiersList initialRows={tiers} isOwner={isOwner} /> },
+        { id: "deductions", label: "Deductions", content: <DeductionsSettings initialSettings={settings} canManage={canManage} /> },
       ]}
-    >
-      <BaseRatesList initialRows={rates} canManage={canManage} />
-      <QualityTiersList initialRows={tiers} isOwner={isOwner} />
-      <DeductionsSettings initialSettings={settings} canManage={canManage} />
-    </TabbedListSurface>
+    />
   );
 }
 
 function BaseRatesList({ initialRows, canManage }: { initialRows: BaseRateListRow[]; canManage: boolean }) {
-  const [adding, setAdding] = useState(false);
-  const { rows, refreshing, mutationAction } = useFrameworkListData({
-    initialRows,
-    resource: { key: "payments.base-rates" },
-  });
-  const controls = useListControls(rows, RATE_LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: RATE_LIST.selectionMode, getId: (row) => row.id });
-  const currentRate = rows.find((rate) => rate.effectiveTo === null);
-
   return (
-    <ListSurface
+    <EntityList
+      resource={{ key: "payments.base-rates" }}
+      initialRows={initialRows}
+      definition={RATE_LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `base rate effective ${row.effectiveFrom}`}
       title="Base green-leaf rate"
       description="Effective-dated per-kg rates. Adding a rate closes the current period automatically without changing history."
-      onCreate={() => setAdding(true)}
-      canCreate={canManage && !adding}
-      createDisabledReason={canManage ? "Finish adding the current rate first." : "Only owners and managers can set base rates."}
-      createLabel="New rate"
-      refreshing={refreshing}
-    >
-      <ListCommandToolbar mode={RATE_LIST.selectionMode} count={selection.selectedCount} />
-      <div className="border-b border-stone-100 px-4 py-3 text-sm dark:border-stone-800">
-        Current: <span className="font-semibold">{currentRate ? `${lkr(currentRate.pricePerKg)}/kg from ${currentRate.effectiveFrom}` : "not set"}</span>
-      </div>
-      <ListCreatePanel open={adding} title="Set a new base rate">
-        <form action={mutationAction(saveBaseRate, { onSuccess: () => setAdding(false) })} className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            New rate (LKR/kg)
-            <input name="price_per_kg" type="number" step="0.01" min="0.01" required className={`${input} w-40`} />
-          </label>
-          <label className="text-sm">
-            Effective from
-            <input name="effective_from" type="date" defaultValue={today()} required className={`${input} w-44`} />
-          </label>
-          <SubmitButton pendingText="Saving…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700">
-            Set rate
-          </SubmitButton>
-          <button type="button" onClick={() => setAdding(false)} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">
-            Cancel
-          </button>
-        </form>
-      </ListCreatePanel>
-      <ListSearchPanel columns={RATE_LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {RATE_LIST.columns.map((column) => (
-                <th key={column.key} className={column.key === "pricePerKg" ? "px-4 py-3 text-right" : "px-4 py-3"}>
-                  {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleRows.map((rate) => (
-              <tr
-                key={rate.id}
-                {...selection.rowProps(rate.id, adding || refreshing)}
-                className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${selection.isSelected(rate.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
-              >
-                <td className="px-4 py-3 text-right font-medium tabular-nums">{lkr(rate.pricePerKg)}</td>
-                <td className="px-4 py-3">{rate.effectiveFrom}</td>
-                <td className="px-4 py-3">{rate.effectiveTo ?? <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900 dark:text-green-300">Current</span>}</td>
-              </tr>
-            ))}
-            {visibleRows.length === 0 && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">{rows.length ? "No rates match these filters." : "No base rate history yet."}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </ListSurface>
+      canCreate={canManage}
+      emptyMessage="No base rate history yet."
+      beforeTable={(resourceRows) => <CurrentRateSummary resourceRows={resourceRows} />}
+      create={{
+        action: saveBaseRate,
+        label: "New rate",
+        panelTitle: "Set a new base rate",
+        disabledReason: canManage ? "Finish adding the current rate first." : "Only owners and managers can set base rates.",
+        render: ({ action, close }) => (
+          <form action={action} className="flex flex-wrap items-end gap-3">
+            <label className="text-sm">New rate (LKR/kg)<input name="price_per_kg" type="number" step="0.01" min="0.01" required className={`${input} w-40`} /></label>
+            <label className="text-sm">Effective from<input name="effective_from" type="date" defaultValue={today()} required className={`${input} w-44`} /></label>
+            <SubmitButton pendingText="Saving…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700">Set rate</SubmitButton>
+            <button type="button" onClick={close} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">Cancel</button>
+          </form>
+        ),
+      }}
+    />
   );
 }
 
-function QualityTiersList({ initialRows, isOwner }: { initialRows: QualityTierListRow[]; isOwner: boolean }) {
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const { rows, refreshing, mutationAction } = useFrameworkListData({
-    initialRows,
-    resource: { key: "payments.quality-tiers" },
-  });
-  const controls = useListControls(rows, TIER_LIST.columns);
-  const visibleRows = controls.rows;
-  const selection = useListSelection(rows, { mode: TIER_LIST.selectionMode, getId: (row) => row.id });
-  const selected = rows.find((row) => row.id === selection.selectedId) ?? null;
-  const editing = rows.find((row) => row.id === editingId) ?? null;
-  const changeDisabled = adding || Boolean(editingId) || refreshing;
+function CurrentRateSummary({ resourceRows }: { resourceRows: BaseRateListRow[] }) {
+  const currentRate = resourceRows.find((rate) => rate.effectiveTo === null);
+  return <div className="border-b border-stone-100 px-4 py-3 text-sm dark:border-stone-800">Current: <span className="font-semibold">{currentRate ? `${lkr(currentRate.pricePerKg)}/kg from ${currentRate.effectiveFrom}` : "not set"}</span></div>;
+}
 
+function QualityTiersList({ initialRows, isOwner }: { initialRows: QualityTierListRow[]; isOwner: boolean }) {
   return (
-    <ListSurface
+    <EntityList
+      resource={{ key: "payments.quality-tiers" }}
+      initialRows={initialRows}
+      definition={TIER_LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => row.name}
       title="Quality tiers (superleaf)"
       description="Bonuses applied above the base rate. The factory owner controls this financial catalog."
-      onCreate={() => setAdding(true)}
-      canCreate={isOwner && !adding && !editingId}
-      createDisabledReason={isOwner ? "Finish the current tier change first." : "Only the factory owner can add quality tiers."}
-      createLabel="New tier"
-      refreshing={refreshing}
-    >
-      <ListCommandToolbar
-        mode={TIER_LIST.selectionMode}
-        count={selection.selectedCount}
-        enableEdit={isOwner && Boolean(TIER_LIST.edit)}
-        onEdit={{
-          onClick: () => setEditingId(selection.selectedId),
-          disabled: !selection.selectedId || changeDisabled,
-        }}
-      >
-        {editing && (
-          <>
-            <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
-              Cancel
-            </button>
-            <button type="submit" form={`quality-tier-${editing.id}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-600">
-              Save changes
-            </button>
-          </>
-        )}
-        {isOwner && (
-          <>
-            <TierStatusCommand
-              action={mutationAction(setTierActive, { onSuccess: selection.clear })}
-              id={selection.selectedId}
-              active={false}
-              label={TIER_LIST.commands[0].label}
-              disabled={changeDisabled || !selected?.active}
-            />
-            <TierStatusCommand
-              action={mutationAction(setTierActive, { onSuccess: selection.clear })}
-              id={selection.selectedId}
-              active
-              label={TIER_LIST.commands[1].label}
-              disabled={changeDisabled || !selected || selected.active}
-            />
-          </>
-        )}
-      </ListCommandToolbar>
-
-      <ListCreatePanel open={adding} title="Add a quality tier">
-        <form action={mutationAction(saveTier, { onSuccess: () => setAdding(false) })} className="flex flex-wrap items-end gap-3">
-          <TierFields defaultSortOrder={(rows.at(-1)?.sortOrder ?? 0) + 10} />
-          <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700">
-            Add tier
-          </SubmitButton>
-          <button type="button" onClick={() => setAdding(false)} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">
-            Cancel
-          </button>
-        </form>
-      </ListCreatePanel>
-
-      <ListSearchPanel columns={TIER_LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
-              {TIER_LIST.columns.map((column) => (
-                <th key={column.key} className={column.key === "bonusValue" || column.key === "sortOrder" ? "px-4 py-3 text-right" : "px-4 py-3"}>
-                  {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleRows.map((tier) => {
-              const isEditing = editingId === tier.id;
-              const formId = `quality-tier-${tier.id}`;
-              return (
-                <tr
-                  key={tier.id}
-                  {...selection.rowProps(tier.id, adding || Boolean(editingId) || refreshing)}
-                  className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(tier.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
-                >
-                  <td className="px-4 py-3 font-medium">
-                    {isEditing ? (
-                      <>
-                        <form
-                          id={formId}
-                          action={mutationAction(saveTier, {
-                            onSuccess: () => {
-                              setEditingId(null);
-                              selection.clear();
-                            },
-                          })}
-                        >
-                          <input type="hidden" name="id" value={tier.id} />
-                        </form>
-                        <input form={formId} name="name" aria-label="Tier name" defaultValue={tier.name} required className={compactInput} />
-                      </>
-                    ) : tier.name}
-                  </td>
-                  <td className="px-4 py-3">
-                    {isEditing ? (
-                      <select form={formId} name="bonus_kind" aria-label="Bonus type" defaultValue={tier.bonusKind} className={compactInput}>
-                        <option value="flat">Flat LKR/kg</option>
-                        <option value="percent">% of base</option>
-                      </select>
-                    ) : tier.bonusKind === "percent" ? "% of base" : "Flat LKR/kg"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {isEditing ? <input form={formId} name="bonus_value" aria-label="Bonus value" type="number" step="0.01" min="0" defaultValue={tier.bonusValue} required className={`${compactInput} text-right`} /> : Number(tier.bonusValue).toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {isEditing ? <input form={formId} name="sort_order" aria-label="Tier rank" type="number" step="1" defaultValue={tier.sortOrder} className={`${compactInput} text-right`} /> : tier.sortOrder}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${tier.active ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400"}`}>
-                      {tier.active ? "active" : "inactive"}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-            {visibleRows.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">{rows.length ? "No quality tiers match these filters." : "No quality tiers yet."}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </ListSurface>
+      canCreate={isOwner}
+      emptyMessage="No quality tiers yet."
+      create={{
+        action: saveTier,
+        label: "New tier",
+        panelTitle: "Add a quality tier",
+        disabledReason: isOwner ? "Finish the current tier change first." : "Only the factory owner can add quality tiers.",
+        render: ({ action, close, rows }) => (
+          <form action={action} className="flex flex-wrap items-end gap-3">
+            <TierFields defaultSortOrder={(rows.at(-1)?.sortOrder ?? 0) + 10} />
+            <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700">Add tier</SubmitButton>
+            <button type="button" onClick={close} className="rounded-md border border-stone-300 px-4 py-2 text-sm dark:border-stone-600">Cancel</button>
+          </form>
+        ),
+      }}
+      edit={{
+        canEdit: isOwner,
+        action: (row, formData) => {
+          formData.set("id", row.id);
+          return saveTier(formData);
+        },
+        saveLabel: "Save changes",
+      }}
+      commands={[
+        {
+          id: "deactivate",
+          label: "Deactivate",
+          visible: isOwner,
+          disabled: ({ selectedRows }) => selectedRows.length !== 1 || !selectedRows[0].active,
+          run: ({ selectedRows }) => tierStatusAction(selectedRows[0].id, false),
+        },
+        {
+          id: "activate",
+          label: "Activate",
+          visible: isOwner,
+          disabled: ({ selectedRows }) => selectedRows.length !== 1 || selectedRows[0].active,
+          run: ({ selectedRows }) => tierStatusAction(selectedRows[0].id, true),
+        },
+      ]}
+    />
   );
+}
+
+function tierStatusAction(id: string, active: boolean) {
+  const formData = new FormData();
+  formData.set("selected_ids", id);
+  formData.set("active", String(active));
+  return setTierActive(formData);
 }
 
 function TierFields({ defaultSortOrder }: { defaultSortOrder: number }) {
@@ -351,34 +256,6 @@ function TierFields({ defaultSortOrder }: { defaultSortOrder: number }) {
         <input name="sort_order" type="number" step="1" defaultValue={defaultSortOrder} className={`${input} w-24`} />
       </label>
     </>
-  );
-}
-
-function TierStatusCommand({
-  action,
-  id,
-  active,
-  label,
-  disabled,
-}: {
-  action: (formData: FormData) => Promise<void>;
-  id: string | null;
-  active: boolean;
-  label: string;
-  disabled: boolean;
-}) {
-  return (
-    <form action={action}>
-      {id && <input type="hidden" name="selected_ids" value={id} />}
-      <input type="hidden" name="active" value={String(active)} />
-      <SubmitButton
-        pendingText="Updating…"
-        disabled={disabled}
-        className="min-h-10 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
-      >
-        {label}
-      </SubmitButton>
-    </form>
   );
 }
 

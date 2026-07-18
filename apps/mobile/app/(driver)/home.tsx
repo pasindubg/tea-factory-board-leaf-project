@@ -1,9 +1,8 @@
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
-import { useFrameworkListController } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import type { FrameworkListController } from "@tea/ui/list-controller";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
@@ -38,13 +37,7 @@ export default function DriverHome() {
     ));
     return (requestsResult.data as unknown as SupplierRequest[]) ?? [];
   }, [profile]);
-  const list = useFrameworkListController(loadRows);
-
-  useFocusEffect(useCallback(() => {
-    void list.reload();
-  }, [list.reload, loadRows]));
-
-  async function markHanded(id: string) {
+  async function markHanded(id: string, list: FrameworkListController<SupplierRequest>) {
     if (!profile || profile.role !== "driver") return;
     setBusyId(id);
     await list.runMutation(async () => {
@@ -68,8 +61,8 @@ export default function DriverHome() {
 
   return (
     <SafeAreaView style={s.screen} edges={["top"]}>
-      <NativeFrameworkList
-        list={list}
+      <NativeEntityList
+        loadRows={loadRows}
         title="Today's route"
         description="Money and items to hand over"
         actions={(
@@ -80,7 +73,7 @@ export default function DriverHome() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.pad}
         emptyMessage="Nothing to hand over right now."
-        renderItem={({ item }) => (
+        renderItem={({ item }, list) => (
           <View style={[s.card, { marginBottom: 12 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Text style={s.h2}>{item.suppliers?.name ?? "Supplier"}</Text>
@@ -94,7 +87,7 @@ export default function DriverHome() {
               <Pressable
                 style={[s.button, { marginTop: 12 }, busyId === item.id && s.buttonDisabled]}
                 disabled={busyId === item.id}
-                onPress={() => { void markHanded(item.id); }}
+                onPress={() => { void markHanded(item.id, list); }}
               >
                 {busyId === item.id ? <ActivityIndicator color="#fff" /> : <Text style={s.buttonText}>Mark handed over</Text>}
               </Pressable>

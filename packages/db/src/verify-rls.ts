@@ -10,6 +10,7 @@
  *   DATABASE_URL=postgres://... pnpm db:verify-rls   (run db:seed first)
  */
 import postgres from "postgres";
+import { randomUUID } from "node:crypto";
 import { SEED_IDS } from "./seed-ids";
 
 const url = process.env.DATABASE_URL;
@@ -81,15 +82,23 @@ async function main() {
   );
 
   // 3. Cross-tenant write must be rejected
-  const crossWrite = await sql
+  let crossWriteAllowed = false;
+  await sql
     .begin(async (tx) => {
       await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: ownerA, role: "authenticated" })}, true)`;
       await tx.unsafe(`set local role authenticated`);
       await tx`insert into suppliers (factory_id, name) values (${SEED_IDS.factoryB}, 'Intruder')`;
+      crossWriteAllowed = true;
+      throw new Error("ROLLBACK_CROSS_TENANT_TEST");
     })
-    .then(() => false)
-    .catch(() => true);
-  check("owner A cannot insert a supplier into factory B", crossWrite, crossWrite ? "insert rejected" : "insert was ALLOWED");
+    .catch((error) => {
+      if (crossWriteAllowed && (error as Error).message !== "ROLLBACK_CROSS_TENANT_TEST") throw error;
+    });
+  check(
+    "owner A cannot insert a supplier into factory B",
+    !crossWriteAllowed,
+    crossWriteAllowed ? "insert was ALLOWED" : "insert rejected",
+  );
 
   // 4. The field client writes directly with the authenticated collector JWT.
   // RLS must derive collector identity from auth.uid(), not trust the payload.
@@ -99,8 +108,8 @@ async function main() {
       await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
       await tx.unsafe(`set local role authenticated`);
       await tx`
-        insert into weighings (factory_id, supplier_id, collector_id, weight_kg, collected_at)
-        values (${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorA.id}, 1.00, now())
+        insert into weighings (id, factory_id, supplier_id, collector_id, weight_kg, collected_at)
+        values (${randomUUID()}, ${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorA.id}, 1.00, now())
       `;
       validCollectorInsert = true;
       throw new Error("ROLLBACK_VALID_COLLECTOR_TEST");
@@ -110,18 +119,26 @@ async function main() {
     });
   check("collector can insert a weighing as their linked collector", validCollectorInsert, validCollectorInsert ? "insert allowed" : "insert rejected");
 
-  const forgedCollector = await sql
+  let forgedCollectorAllowed = false;
+  await sql
     .begin(async (tx) => {
       await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
       await tx.unsafe(`set local role authenticated`);
       await tx`
-        insert into weighings (factory_id, supplier_id, collector_id, weight_kg, collected_at)
-        values (${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorB.id}, 1.00, now())
+        insert into weighings (id, factory_id, supplier_id, collector_id, weight_kg, collected_at)
+        values (${randomUUID()}, ${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorB.id}, 1.00, now())
       `;
+      forgedCollectorAllowed = true;
+      throw new Error("ROLLBACK_FORGED_COLLECTOR_TEST");
     })
-    .then(() => false)
-    .catch(() => true);
-  check("collector cannot forge another collector on a weighing", forgedCollector, forgedCollector ? "insert rejected" : "insert was ALLOWED");
+    .catch((error) => {
+      if (forgedCollectorAllowed && (error as Error).message !== "ROLLBACK_FORGED_COLLECTOR_TEST") throw error;
+    });
+  check(
+    "collector cannot forge another collector on a weighing",
+    !forgedCollectorAllowed,
+    forgedCollectorAllowed ? "insert was ALLOWED" : "insert rejected",
+  );
 
   const [ownWeighing] = await sql`
     select id from weighings
@@ -129,12 +146,19 @@ async function main() {
     limit 1
   `;
   if (!ownWeighing) throw new Error("Seed weighing for collector A not found — run db:seed first");
-  const alteredRows = await sql.begin(async (tx) => {
-    await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
-    await tx.unsafe(`set local role authenticated`);
-    return tx`update weighings set weight_kg = 999 where id = ${ownWeighing.id} returning id`;
-  });
-  check("collector cannot rewrite weighing history", alteredRows.length === 0, `${alteredRows.length} row(s) updated`);
+  let alteredRowCount = 0;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const alteredRows = await tx`update weighings set weight_kg = 999 where id = ${ownWeighing.id} returning id`;
+      alteredRowCount = alteredRows.length;
+      throw new Error("ROLLBACK_WEIGHING_UPDATE_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_WEIGHING_UPDATE_TEST") throw error;
+    });
+  check("collector cannot rewrite weighing history", alteredRowCount === 0, `${alteredRowCount} row(s) updated`);
 
   // 5. Anonymous sees nothing
   const anonRows = await sql.begin(async (tx) => {

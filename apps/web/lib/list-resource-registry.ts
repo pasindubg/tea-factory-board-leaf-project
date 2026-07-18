@@ -67,6 +67,74 @@ type RefreshDispatchLotRow = RefreshLotRow & {
   marks: { code: string; name: string } | null;
 };
 
+type RefreshReprintLot = RefreshLotRow & {
+  created_at: string | null;
+  lot_source: string | null;
+  sale_lines: { net_wt: number | string | null; price_per_kg: number | string | null }[] | null;
+  auction_sales: {
+    id: string;
+    sale_no: string | null;
+    target_sale_no: string | null;
+    dispatch_date: string | null;
+    sale_date: string | null;
+    brokers: { name: string } | null;
+  } | null;
+};
+
+function reprintOverviewRows(lots: RefreshReprintLot[]) {
+  const lotById = new Map(lots.map((lot) => [lot.id, lot]));
+  const rootIdFor = (lot: RefreshReprintLot) => {
+    let current = lot;
+    const seen = new Set<string>();
+    while (current.reprint_source_lot_id && lotById.has(current.reprint_source_lot_id) && !seen.has(current.id)) {
+      seen.add(current.id);
+      current = lotById.get(current.reprint_source_lot_id)!;
+    }
+    return current.id;
+  };
+  const chains = new Map<string, RefreshReprintLot[]>();
+  for (const lot of lots) {
+    const rootId = rootIdFor(lot);
+    chains.set(rootId, [...(chains.get(rootId) ?? []), lot]);
+  }
+
+  return [...chains.entries()].map(([rootId, unsortedChain]) => {
+    const chain = [...unsortedChain].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+    const lot = lotById.get(rootId) ?? chain[0];
+    const terminal = [...chain].reverse().find((node) => node.state === "sold" || node.state === "settled" || (node.sale_lines?.length ?? 0) > 0);
+    const invoices = [...new Set(chain.flatMap((node) => (node.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no))).filter(Boolean))];
+    const reprintNodes = chain.filter((node) => node.state === "re-print");
+    const saleLabel = (node: RefreshReprintLot) => formatSaleNo(node.auction_sales?.target_sale_no ?? node.auction_sales?.sale_no ?? null) || "—";
+    const state = stateBucket(terminal?.state ?? chain[chain.length - 1]?.state);
+    const totalSampleKg = Math.max(0, ...chain.map((node) => Number(node.sample_allowance ?? 0)));
+    const soldLine = terminal?.sale_lines?.[0];
+    return {
+      id: lot.id,
+      dispatchId: lot.auction_sales?.id ?? lot.sale_id,
+      dispatchNo: formatFourDigitNo(lot.auction_sales?.sale_no ?? null),
+      saleNo: formatSaleNo(lot.auction_sales?.target_sale_no ?? null),
+      broker: lot.auction_sales?.brokers?.name ?? "—",
+      dispatchDate: lot.auction_sales?.dispatch_date ?? null,
+      saleDate: lot.auction_sales?.sale_date ?? null,
+      invoiceNo: invoices.length > 0 ? invoices.join(", ") : formatFourDigitNo(lot.invoice_no),
+      lotNo: formatFourDigitNo(lot.lot_no),
+      grade: lot.grade,
+      bags: lot.bags,
+      kgPerBag: lot.kg_per_bag != null ? Number(lot.kg_per_bag) : null,
+      totalSampleKg,
+      remainingNetKg: Number(chain[chain.length - 1]?.net_wt ?? 0),
+      actualSoldKg: terminal ? Number(soldLine?.net_wt ?? terminal.net_wt ?? 0) : null,
+      reprintSales: reprintNodes.map(saleLabel).join(", ") || "—",
+      soldSale: terminal ? saleLabel(terminal) : null,
+      history: chain.map((node) => `${saleLabel(node)} ${stateBucket(node.state).label}`).join(" → "),
+      source: lot.lot_source,
+      stateLabel: state.label,
+      stateStyle: state.style,
+      reprintCount: reprintNodes.length,
+    };
+  });
+}
+
 type RefreshSaleLineRow = {
   lot_id: string | null;
   net_wt: number | string | null;
@@ -553,6 +621,23 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
           };
         }),
       };
+    },
+  },
+  "auction.reprint-overview": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const { data, error } = await supabase
+        .from("auction_lots")
+        .select(
+          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, lot_source, reprint_source_lot_id, created_at, " +
+            "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, brokers(name))",
+        )
+        .or("state.eq.re-print,reprint_source_lot_id.not.is.null")
+        .order("created_at");
+      if (error) return { ok: false, error: friendlyError(error) };
+      return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
     },
   },
   "auction.marks": {

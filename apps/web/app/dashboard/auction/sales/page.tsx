@@ -44,7 +44,9 @@ type SaleSummary = {
 };
 
 function saleKey(sale: LineRow["auction_sales"], assignment?: AssignmentLot | null) {
-  return formatSaleNo(assignment?.final_sale_no || assignment?.provisional_sale_no || sale?.target_sale_no || sale?.sale_no) || "Unassigned";
+  const rawSaleNo = assignment?.final_sale_no || assignment?.provisional_sale_no || sale?.target_sale_no || sale?.sale_no;
+  const key = saleNoKey(rawSaleNo);
+  return formatSaleNo(key) || "Unassigned";
 }
 
 function saleHref(saleNo: string) {

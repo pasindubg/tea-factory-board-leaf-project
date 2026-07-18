@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import { validateValuationProceeds, type ParsedValuation } from "@tea/api";
 import { confirmValuation, rejectImport } from "../../../actions";
 import { canonicalGrade, gradeAliasMap } from "../../../_actions/_shared";
@@ -143,12 +144,14 @@ export default async function ValuationReviewPage({
             </SubmitButton>
           </form>
           <form action={rejectImport.bind(null, importId, saleId)}>
-            <SubmitButton
-              pendingText="…"
+            <ConfirmSubmitButton
+              title="Reject Valuation Report?"
+              description="This discards the staged valuation only. The sale, Broker Invoice, and lots will remain unchanged."
+              confirmLabel="Reject valuation"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Reject
-            </SubmitButton>
+            </ConfirmSubmitButton>
           </form>
         </div>
       )}

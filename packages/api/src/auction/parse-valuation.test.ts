@@ -2,7 +2,12 @@
 // reconcile ② (valuation ↔ sale price). Run: pnpm --dir packages/api test:auction2
 import { readFileSync } from "node:fs";
 import { parseValuation, validateValuationProceeds } from "./parse-valuation";
-import { parseContract } from "./parse-contract";
+import {
+  contractValidationIssues,
+  parseContract,
+  repairLegacyContractLines,
+  validateContractLine,
+} from "./parse-contract";
 import { reconcileValuation, type ValuationInput, type SaleInput } from "./reconcile-valuation";
 
 let failures = 0;
@@ -16,6 +21,7 @@ const valText = readFileSync(new URL("./__fixtures__/val-sale-023.txt", import.m
 const conText = readFileSync(new URL("./__fixtures__/contract-sale-023.txt", import.meta.url), "utf8");
 const asiaText = readFileSync(new URL("./__fixtures__/val-asia-siyaka-sale-020.txt", import.meta.url), "utf8");
 const asiaContractText = readFileSync(new URL("./__fixtures__/contract-asia-siyaka-sale-020.txt", import.meta.url), "utf8");
+const bpmlNotSoldText = readFileSync(new URL("./__fixtures__/contract-bpml-not-sold-sale-026.txt", import.meta.url), "utf8");
 
 // ---- Valuation ----
 const val = parseValuation(valText);
@@ -58,6 +64,83 @@ ok("con 0074 → SUNSHINE, ITTAPANA contract 0111", !!c("0074") && /SUNSHINE/.te
 const kumuduProceeds = con.lines.filter((l) => l.markCode === "MF1530").reduce((s, l) => s + l.proceeds, 0);
 const ittProceeds = con.lines.filter((l) => l.markCode === "MF1530A").reduce((s, l) => s + l.proceeds, 0);
 ok("contract: KUMUDU proceeds 4,920,400 / ITTAPANA 258,000", kumuduProceeds === 4920400 && ittProceeds === 258000, `${kumuduProceeds} / ${ittProceeds}`);
+
+// ---- BPML contract with NOT SOLD rows between sold rows (MF1530 (13).pdf) ----
+const bpmlNotSold = parseContract(bpmlNotSoldText);
+const bpml26 = (inv: string) => bpmlNotSold.lines.find((line) => line.invoiceNo === inv);
+ok(
+  "BPML sale 026: 8 sold + 3 NOT SOLD rows, no issues",
+  bpmlNotSold.lines.length === 11 &&
+    bpmlNotSold.lines.filter((line) => line.sold).length === 8 &&
+    bpmlNotSold.lines.filter((line) => !line.sold).length === 3 &&
+    bpmlNotSold.issues.length === 0,
+  `${bpmlNotSold.lines.length} lines / ${bpmlNotSold.issues.join(" | ") || "no issues"}`,
+);
+ok(
+  "BPML NOT SOLD invoice 0110 is its own row",
+  bpml26("0110")?.sold === false && bpml26("0110")?.buyerName === "Not sold" && bpml26("0110")?.lotNo === "0444",
+);
+ok(
+  "BPML sold buyers are not contaminated by preceding NOT SOLD text",
+  bpml26("0096")?.buyerName === "A.F.JONES EXPORTERS CEYLON PVT LTD" &&
+    bpml26("0093")?.buyerName === "CEYEXXE LIMITED" &&
+    bpml26("0113")?.buyerName === "STASSEN EXPORTS PVT LTD.",
+);
+const bpml0096Validation = validateContractLine(bpml26("0096")!);
+ok(
+  "BPML 0096: nett 260 × 2,250 = proceeds 585,000",
+  bpml0096Validation.proceedsMatch && bpml0096Validation.expectedProceeds === 585000,
+  JSON.stringify(bpml0096Validation),
+);
+const invalidBpml0096 = validateContractLine({ ...bpml26("0096")!, proceeds: 584000 });
+ok(
+  "contract proceeds mismatch is rejected",
+  !invalidBpml0096.proceedsMatch && invalidBpml0096.proceedsVariance === -1000,
+  JSON.stringify(invalidBpml0096),
+);
+const legacyMixedBuyerIssues = contractValidationIssues([{
+  ...bpml26("0096")!,
+  buyerName: "*** N O T S O L D *** 0444 0110 OP 10 Bags A.F.JONES EXPORTERS CEYLON PVT LTD",
+}]);
+ok(
+  "legacy staged buyer contaminated by NOT SOLD text is blocked",
+  legacyMixedBuyerIssues.some((issue) => issue.includes("buyer name contains a NOT SOLD row")),
+  legacyMixedBuyerIssues.join(" | "),
+);
+const legacyLines = [
+  bpml26("0109")!,
+  {
+    ...bpml26("0096")!,
+    buyerName: "*** N O T S O L D *** 0444 0110 OP 10 Bags 242.50 2.50 240.00 0.00 0.00 0.00 0.00NO A.F.JONES EXPORTERS CEYLON PVT LTD",
+  },
+  {
+    ...bpml26("0093")!,
+    buyerName: "*** N O T S O L D *** 0446 0101 OP1 10 Bags 282.50 2.50 280.00 0.00 0.00 0.00 0.00NO CEYEXXE LIMITED",
+  },
+  {
+    ...bpml26("0113")!,
+    buyerName: "*** N O T S O L D *** 0448 0111 OPA 10 Bags 202.50 2.50 200.00 0.00 0.00 0.00 0.00NO STASSEN EXPORTS PVT LTD.",
+  },
+  ...bpmlNotSold.lines.filter((line) => ["0114", "0117", "0115", "0116"].includes(line.invoiceNo)),
+];
+const repairedLegacyLines = repairLegacyContractLines(legacyLines);
+const repairedLegacy = (invoiceNo: string) => repairedLegacyLines.find((line) => line.invoiceNo === invoiceNo);
+ok(
+  "legacy staged BPML rows repair to 8 sold + 3 NOT SOLD",
+  repairedLegacyLines.length === 11 &&
+    repairedLegacyLines.filter((line) => line.sold).length === 8 &&
+    repairedLegacyLines.filter((line) => !line.sold).length === 3,
+  `${repairedLegacyLines.length} total`,
+);
+ok(
+  "legacy staged buyers are cleaned without another PDF upload",
+  repairedLegacy("0096")?.buyerName === "A.F.JONES EXPORTERS CEYLON PVT LTD" &&
+    repairedLegacy("0093")?.buyerName === "CEYEXXE LIMITED" &&
+    repairedLegacy("0113")?.buyerName === "STASSEN EXPORTS PVT LTD." &&
+    repairedLegacy("0110")?.sold === false &&
+    repairedLegacy("0101")?.sold === false &&
+    repairedLegacy("0111")?.sold === false,
+);
 
 // ---- ASIA SIYAKA Sellers Contract & Account Sales ----
 const asiaContract = parseContract(asiaContractText);

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createDispatch, deleteSale, updateSale } from "./actions";
-import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useFrameworkListData, useListControls, useListSelection, type ColumnDef } from "@/components/list-controls";
+import { EntityList, type EntityListColumn, type EntityListContext } from "@/components/entity-list";
+import { ListCommandToolbar, ListCreatePanel, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton } from "@/components/list-controls";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "./sale-number";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { showAppToast } from "@/components/action-feedback";
@@ -33,7 +34,7 @@ function dispatchDisplayStatus(status: string | null | undefined) {
   return ["valued", "sold", "settled", "broker_statement"].includes(status ?? "") ? "catalogued" : (status ?? "draft");
 }
 
-const COLUMNS: ColumnDef<SaleRow>[] = [
+const COLUMNS: EntityListColumn<SaleRow>[] = [
   { key: "sale_no", label: "Broker invoice no.", accessor: (r) => r.sale_no, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (r) => r.brokers?.name ?? null, sortable: true, filter: "select" },
   { key: "selling_mark", label: "Selling mark", accessor: (r) => r.selling_mark, sortable: true, filter: "text" },
@@ -57,16 +58,36 @@ export function DispatchesTable({
   isOwner: boolean;
   creation: DispatchCreationOptions;
 }) {
+  return (
+    <EntityList
+      resource={{ key: "auction.dispatches" }}
+      initialRows={initialRows}
+      definition={{ columns: COLUMNS, selectionMode: "multi", add: true, edit: true, delete: true }}
+      getId={(row) => row.id}
+      rowLabel={(row) => row.sale_no ?? "broker invoice"}
+      emptyMessage="No broker invoices yet."
+      renderMode="workflow"
+      render={(data) => <DispatchesWorkflow data={data} isOwner={isOwner} creation={creation} />}
+    />
+  );
+}
+
+function DispatchesWorkflow({
+  data,
+  isOwner,
+  creation,
+}: {
+  data: EntityListContext<SaleRow>;
+  isOwner: boolean;
+  creation: DispatchCreationOptions;
+}) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SaleDraft | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [deleteRequest, setDeleteRequest] = useState<{ ids: string[]; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const { rows, refreshing, mutate, mutationAction } = useFrameworkListData({ initialRows, resource: { key: "auction.dispatches" } });
-  const controls = useListControls(rows, COLUMNS);
-  const selection = useListSelection(rows, { mode: "multi", getId: (row) => row.id });
-  const visibleRows = controls.rows;
+  const { rows, refreshing, mutate, mutationAction, controls, selection, visibleRows } = data;
   const latestSaleNo = rows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
   const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
   const liveDispatchHistory = rows.map((row) => ({

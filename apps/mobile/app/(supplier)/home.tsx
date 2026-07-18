@@ -1,9 +1,8 @@
 import { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, useRouter } from "expo-router";
-import { useFrameworkListController } from "@tea/ui/list-controller";
-import { NativeFrameworkList } from "@/components/NativeFrameworkList";
+import { useRouter } from "expo-router";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
@@ -38,16 +37,10 @@ export default function SupplierHome() {
     setUnread(messagesResult.count ?? 0);
     return (typesResult.data as RequestType[]) ?? [];
   }, [profile, supplier]);
-  const list = useFrameworkListController(loadRows);
-
-  useFocusEffect(useCallback(() => {
-    void list.reload();
-  }, [list.reload, loadRows]));
-
   return (
     <SafeAreaView style={s.screen} edges={["top"]}>
-      <NativeFrameworkList
-        list={list}
+      <NativeEntityList
+        loadRows={loadRows}
         title={`Hello${supplier ? `, ${supplier.name.split(" ")[0]}` : ""}`}
         description="What would you like to request?"
         actions={(
