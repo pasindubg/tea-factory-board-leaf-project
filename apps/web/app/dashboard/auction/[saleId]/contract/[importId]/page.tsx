@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
@@ -21,7 +21,7 @@ export default async function ContractReviewPage({
 }: {
   params: Promise<{ saleId: string; importId: string }>;
 }) {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requirePageAccess("auction-contract");
   const { saleId, importId } = await params;
   const fallback = "/dashboard/auction/sales";
 

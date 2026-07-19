@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { BySaleTable, type BySaleRow } from "./by-sale-table";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
@@ -28,7 +28,7 @@ const STATE_ORDER: { key: string; label: string; bar: string; chip: string }[] =
 ];
 
 export default async function AuctionDashboardPage() {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-dashboard");
 
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([

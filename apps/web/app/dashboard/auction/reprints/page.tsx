@@ -1,10 +1,10 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { ReprintOverviewTable, type HistoricReprintCandidate } from "./reprint-overview-table";
 
 export default async function ReprintOverviewPage() {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requirePageAccess("auction-reprints");
   const reprintResult = await loadListResource({ key: "auction.reprint-overview" });
   if (!reprintResult.ok) throw new Error(reprintResult.error);
 

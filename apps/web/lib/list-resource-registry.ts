@@ -4,10 +4,10 @@ import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow } from "@/lib/list-resources";
 import { parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
-import { requireModuleAccess } from "@/lib/profile";
+import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "@/app/dashboard/auction/sale-number";
 import { stateBucket } from "@/app/dashboard/auction/state-buckets";
-import { MODULES } from "@/lib/roles";
+import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
 
 type AccessContext = Awaited<ReturnType<typeof requireModuleAccess>>;
@@ -18,13 +18,14 @@ type ResourceLoader = (
 ) => Promise<ListRefreshResult<unknown>>;
 
 type ResourceDefinition = {
-  moduleKey: string;
+  moduleKey: string | null;
   parse: (input: unknown) => { ok: true; value: ResourceParams } | { ok: false; error: string };
   load: ResourceLoader;
 };
 
 const parseNoParams = parseNoListParams;
 const parseSaleParams = (input: unknown) => parseUuidListParams(input, "saleId");
+const parseRoleParams = (input: unknown) => parseUuidListParams(input, "roleId");
 
 function rateListRows(rows: Record<string, unknown>[]) {
   return rows.map((row) => ({
@@ -183,11 +184,15 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     moduleKey: "users",
     parse: parseNoParams,
     async load({ supabase }) {
-      const { data, error } = await supabase
+      const [{ data, error }, { data: roles, error: rolesError }] = await Promise.all([
+        supabase
         .from("users")
-        .select("id, name, email, username, role, active, created_at")
-        .order("created_at");
-      if (error) return { ok: false, error: friendlyError(error) };
+        .select("id, name, email, username, role, access_role_id, active, created_at")
+        .order("created_at"),
+        supabase.from("access_roles").select("id, name, base_role"),
+      ]);
+      if (error || rolesError) return { ok: false, error: friendlyError(error ?? rolesError) };
+      const roleById = new Map((roles ?? []).map((role) => [role.id as string, role]));
       return {
         ok: true,
         rows: (data ?? []).map((user) => ({
@@ -195,26 +200,100 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
           name: user.name,
           email: user.email,
           username: user.username,
-          role: user.role,
+          role: roleById.get(user.access_role_id as string)?.name ?? user.role,
+          accessRoleId: user.access_role_id,
+          baseRole: roleById.get(user.access_role_id as string)?.base_role ?? user.role,
           active: user.active !== false,
         })),
       };
     },
   },
-  "users.module-permissions": {
-    moduleKey: "users",
+  "users.roles": {
+    moduleKey: "roles",
     parse: parseNoParams,
     async load({ supabase }) {
-      const { data, error } = await supabase.from("module_permissions").select("module_key, allowed_roles");
+      const { data, error } = await supabase
+        .from("access_roles")
+        .select("id, key, name, base_role, system_role, active")
+        .order("system_role", { ascending: false })
+        .order("name");
       if (error) return { ok: false, error: friendlyError(error) };
-      const overrides = new Map((data ?? []).map((row) => [row.module_key as string, row.allowed_roles as string[]]));
       return {
         ok: true,
-        rows: MODULES.filter((module) => module.key !== "overview").map((module) => ({
-          key: module.key,
-          label: module.label,
-          configurableRoles: module.roles.filter((role) => role !== "owner"),
-          allowedRoles: overrides.get(module.key) ?? [...module.roles],
+        rows: (data ?? []).map((role) => ({
+          id: role.id,
+          key: role.key,
+          name: role.name,
+          baseRole: role.base_role,
+          systemRole: role.system_role,
+          active: role.active,
+        })),
+      };
+    },
+  },
+  "users.role-page-permissions": {
+    moduleKey: "roles",
+    parse: parseRoleParams,
+    async load({ supabase }, params) {
+      const roleId = params.roleId as string;
+      const { data: role, error: roleError } = await supabase
+        .from("access_roles")
+        .select("id, base_role")
+        .eq("id", roleId)
+        .maybeSingle();
+      if (roleError) return { ok: false, error: friendlyError(roleError) };
+      if (!role) return { ok: false, error: "Role not found." };
+      const { data, error } = await supabase
+        .from("role_page_permissions")
+        .select("page_key, can_view, can_create, can_update, can_delete")
+        .eq("role_id", roleId);
+      if (error) return { ok: false, error: friendlyError(error) };
+      const saved = new Map((data ?? []).map((permission) => [permission.page_key as string, permission]));
+      return {
+        ok: true,
+        rows: PAGE_DEFINITIONS.map((page) => {
+          const permission = saved.get(page.key);
+          const allowedActions = (["view", "create", "update", "delete"] as const)
+            .filter((action) => roleMayPerformPageAction(role.base_role as Role, page, action));
+          return {
+            key: page.key,
+            label: page.label,
+            href: page.href,
+            group: page.group,
+            allowedActions,
+            canView: permission ? Boolean(permission.can_view) : roleMayPerformPageAction(role.base_role as Role, page, "view"),
+            canCreate: permission ? Boolean(permission.can_create) : roleMayPerformPageAction(role.base_role as Role, page, "create"),
+            canUpdate: permission ? Boolean(permission.can_update) : roleMayPerformPageAction(role.base_role as Role, page, "update"),
+            canDelete: permission ? Boolean(permission.can_delete) : roleMayPerformPageAction(role.base_role as Role, page, "delete"),
+          };
+        }),
+      };
+    },
+  },
+  "users.staff-directory": {
+    moduleKey: null,
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const { data, error } = await supabase.rpc("list_visible_staff_profiles");
+      if (error) return { ok: false, error: friendlyError(error) };
+      return {
+        ok: true,
+        rows: ((data ?? []) as {
+          user_id: string;
+          full_name: string;
+          role: string;
+          phone: string | null;
+          job_title: string | null;
+          department: string | null;
+          employment_type: string | null;
+        }[]).map((staff) => ({
+          id: staff.user_id,
+          fullName: staff.full_name,
+          role: staff.role,
+          phone: staff.phone,
+          jobTitle: staff.job_title,
+          department: staff.department,
+          employmentType: staff.employment_type,
         })),
       };
     },
@@ -849,6 +928,8 @@ export async function loadListResource<Key extends ListResourceKey>(
   const parsed = definition.parse(candidate.params);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
-  const context = await requireModuleAccess(definition.moduleKey);
+  const context = definition.moduleKey
+    ? await requireModuleAccess(definition.moduleKey)
+    : await requireProfile(ALL_WEB_ROLES);
   return definition.load(context, parsed.value) as Promise<ListRefreshResult<ListResourceRow<Key>>>;
 }

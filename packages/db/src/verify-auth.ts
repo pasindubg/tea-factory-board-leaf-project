@@ -11,6 +11,7 @@
  * SUPABASE_SECRET_KEY. Run db:seed + db:link-auth first.
  */
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { SEED_IDS } from "./seed-ids";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -62,6 +63,37 @@ async function main() {
     `factories=${JSON.stringify(supplierFactories)} (${ownerSuppliers?.length ?? 0} rows)`,
   );
 
+  const { data: factoryA } = await ownerA.client
+    .from("factories")
+    .select("id, name")
+    .eq("id", SEED_IDS.factoryA)
+    .single();
+  const { data: ownerFactoryUpdate, error: ownerFactoryUpdateError } = await ownerA.client
+    .from("factories")
+    .update({ name: factoryA?.name })
+    .eq("id", SEED_IDS.factoryA)
+    .select("id")
+    .maybeSingle();
+  check(
+    "owner can update their factory profile",
+    !ownerFactoryUpdateError && ownerFactoryUpdate?.id === SEED_IDS.factoryA,
+    ownerFactoryUpdateError ? `rejected: ${ownerFactoryUpdateError.message}` : `id=${ownerFactoryUpdate?.id}`,
+  );
+
+  const brandingPath = `${SEED_IDS.factoryA}/verify-${randomUUID()}.png`;
+  const onePixelPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const { error: brandingUploadError } = await ownerA.client.storage
+    .from("factory-branding")
+    .upload(brandingPath, onePixelPng, { contentType: "image/png", upsert: false });
+  check(
+    "owner can upload factory branding",
+    !brandingUploadError,
+    brandingUploadError ? `rejected: ${brandingUploadError.message}` : `path=${brandingPath}`,
+  );
+
   // 2. Collector A: authenticates and resolves the collector role (the web
   // app gives this role the restricted weighing-entry interface — M5)
   const collectorA = await loginAs("collector-a@example.com");
@@ -75,6 +107,46 @@ async function main() {
     collectorProfile?.role === "collector",
     `role=${collectorProfile?.role} (web shows weighings-only interface for this role)`,
   );
+
+  const { data: collectorFactoryUpdate, error: collectorFactoryUpdateError } = await collectorA.client
+    .from("factories")
+    .update({ name: "Forbidden factory rename" })
+    .eq("id", SEED_IDS.factoryA)
+    .select("id");
+  check(
+    "employee cannot update factory profile",
+    !collectorFactoryUpdateError && (collectorFactoryUpdate?.length ?? 0) === 0,
+    collectorFactoryUpdateError ? `rejected: ${collectorFactoryUpdateError.message}` : `${collectorFactoryUpdate?.length ?? 0} row(s) updated`,
+  );
+
+  const { error: collectorBrandingUploadError } = await collectorA.client.storage
+    .from("factory-branding")
+    .upload(`${SEED_IDS.factoryA}/forbidden-${randomUUID()}.png`, onePixelPng, {
+      contentType: "image/png",
+      upsert: false,
+    });
+  check(
+    "employee cannot upload factory branding",
+    collectorBrandingUploadError !== null,
+    collectorBrandingUploadError ? `rejected: ${collectorBrandingUploadError.message}` : "upload was ALLOWED",
+  );
+
+  const { data: sharedBranding, error: sharedBrandingError } = await collectorA.client.storage
+    .from("factory-branding")
+    .createSignedUrl(brandingPath, 60);
+  check(
+    "employee can view their factory branding",
+    !brandingUploadError && !sharedBrandingError && Boolean(sharedBranding?.signedUrl),
+    sharedBrandingError ? `rejected: ${sharedBrandingError.message}` : `signed=${Boolean(sharedBranding?.signedUrl)}`,
+  );
+  if (!brandingUploadError) {
+    const { error: cleanupError } = await ownerA.client.storage.from("factory-branding").remove([brandingPath]);
+    check(
+      "owner can remove replaced factory branding",
+      !cleanupError,
+      cleanupError ? `rejected: ${cleanupError.message}` : "temporary image removed",
+    );
+  }
 
   // 3. Unknown email cannot request an OTP the way the login form asks for it
   const anonClient = createClient(url, publishableKey, { auth: { persistSession: false } });

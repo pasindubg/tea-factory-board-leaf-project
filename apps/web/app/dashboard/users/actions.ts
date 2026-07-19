@@ -11,7 +11,6 @@ import { deleteTenantRow } from "@/lib/tenant-data";
 
 // Tenant records always use the signed-in, factory-scoped client. The admin
 // client is deliberately limited to Supabase Auth operations.
-const ALL_ROLES: Role[] = ["owner", "manager", "supervisor", "accountant", "collector"];
 const COLLECTORS_INVALIDATION: ListInvalidation = {
   kind: "exact",
   resource: { key: "leaf.collectors" },
@@ -28,22 +27,40 @@ function selfManagementError(action: string) {
   } satisfies ListMutationResult;
 }
 
+async function selectedAccessRole(
+  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
+  roleId: string,
+) {
+  const { data, error } = await supabase
+    .from("access_roles")
+    .select("id, name, base_role, active")
+    .eq("id", roleId)
+    .maybeSingle();
+  if (error) return { role: null, error: friendlyError(error) };
+  if (!data || data.active === false) return { role: null, error: "Choose an active factory role." };
+  return { role: data as { id: string; name: string; base_role: Role; active: boolean }, error: null };
+}
+
 export async function createUser(formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
 
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const phone = String(formData.get("phone") ?? "").trim() || null;
-  const role = String(formData.get("role") ?? "") as Role;
+  const accessRoleId = String(formData.get("access_role_id") ?? "");
   const username = String(formData.get("username") ?? "").trim().toLowerCase() || null;
   const password = String(formData.get("password") ?? "").trim() || null;
 
-  if (!name || !email || !ALL_ROLES.includes(role)) {
+  if (!name || !email || !accessRoleId) {
     return { ok: false, error: "Name, email, and a valid role are required." };
   }
   if ((username && !password) || (!username && password)) {
     return { ok: false, error: "Provide both a username and a password, or neither." };
   }
+
+  const selectedRole = await selectedAccessRole(supabase, accessRoleId);
+  if (!selectedRole.role) return { ok: false, error: selectedRole.error ?? "Choose a valid role." };
+  const role = selectedRole.role.base_role;
 
   const admin = createAdminClient();
   const { data: created, error: authError } = await admin.auth.admin.createUser({
@@ -68,6 +85,7 @@ export async function createUser(formData: FormData): Promise<ListMutationResult
     email,
     phone,
     role,
+    access_role_id: selectedRole.role.id,
     username,
   });
   if (insertError) {
@@ -90,6 +108,7 @@ export async function createUser(formData: FormData): Promise<ListMutationResult
     });
     if (collectorError) {
       revalidatePath("/dashboard/users");
+      revalidatePath("/dashboard/user-handling/users");
       return {
         ok: true,
         notice: `User created, but their collector record failed (${friendlyError(collectorError)}). Create and link one on the Collectors page.`,
@@ -99,6 +118,7 @@ export async function createUser(formData: FormData): Promise<ListMutationResult
   }
 
   revalidatePath("/dashboard/users");
+  revalidatePath("/dashboard/user-handling/users");
   if (role === "collector") revalidatePath("/dashboard/collectors");
   return {
     ok: true,
@@ -131,6 +151,7 @@ export async function setUserActive(formData: FormData): Promise<ListMutationRes
   });
 
   revalidatePath("/dashboard/users");
+  revalidatePath("/dashboard/user-handling/users");
   if (banError) {
     return {
       ok: true,
@@ -171,6 +192,7 @@ export async function removeUser(formData: FormData): Promise<ListMutationResult
   const invalidateCollectors = target.role === "collector";
 
   revalidatePath("/dashboard/users");
+  revalidatePath("/dashboard/user-handling/users");
   if (invalidateCollectors) revalidatePath("/dashboard/collectors");
 
   if (authError && authError.code !== "user_not_found") {
@@ -216,6 +238,7 @@ export async function resetUserPassword(formData: FormData): Promise<ListMutatio
     const { error: passwordError } = await admin.auth.admin.updateUserById(userId, { password });
     if (passwordError) {
       revalidatePath("/dashboard/users");
+      revalidatePath("/dashboard/user-handling/users");
       return {
         ok: true,
         notice: `The username was saved, but the password update failed: ${friendlyError(passwordError)}`,
@@ -224,5 +247,6 @@ export async function resetUserPassword(formData: FormData): Promise<ListMutatio
   }
 
   revalidatePath("/dashboard/users");
+  revalidatePath("/dashboard/user-handling/users");
   return { ok: true, notice: `Credentials updated for ${updated.name}.` };
 }

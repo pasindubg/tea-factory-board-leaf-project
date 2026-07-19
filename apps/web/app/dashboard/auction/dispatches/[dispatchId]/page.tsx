@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { formatFourDigitNo } from "../../sale-number";
 import { DispatchDetailLists, type DispatchInvoiceRow, type DispatchLotRow } from "../dispatch-detail-lists";
 import { DispatchDetailView } from "../dispatch-detail-view";
@@ -19,7 +19,7 @@ type DispatchListRecord = {
 };
 
 export default async function DispatchDetailPage({ params }: { params: Promise<{ dispatchId: string }> }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-dispatch-detail-view");
   const { dispatchId } = await params;
   const [{ data: dispatch }, { data: dispatches }, { data: links }] = await Promise.all([
     supabase

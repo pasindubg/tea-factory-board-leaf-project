@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { SettingsMenu } from "@/components/settings-menu";
 import { NavigationProgress } from "@/components/navigation-progress";
 import { ActionFeedback } from "@/components/action-feedback";
@@ -15,12 +16,14 @@ const STORAGE_KEY = "dashboard-sidebar-collapsed";
 
 export function DashboardShell({
   factoryName,
+  factoryLogoUrl,
   profileName,
   profileRole,
   nav,
   children,
 }: {
   factoryName: string;
+  factoryLogoUrl: string | null;
   profileName: string;
   profileRole: string;
   nav: readonly ModuleDef[];
@@ -77,7 +80,18 @@ export function DashboardShell({
 
         <div className={collapsed ? "flex h-full flex-col lg:hidden" : "flex h-full flex-col"}>
           <div className="border-b border-stone-200/70 px-5 py-5 dark:border-stone-700/70">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-green-700 text-lg font-bold text-white shadow-sm dark:bg-green-500 dark:text-green-950">T</div>
+            {factoryLogoUrl ? (
+              <Image
+                src={factoryLogoUrl}
+                alt={`${factoryName} profile`}
+                width={44}
+                height={44}
+                unoptimized
+                className="mb-3 h-11 w-11 rounded-2xl border border-stone-200 object-cover shadow-sm dark:border-stone-700"
+              />
+            ) : (
+              <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-green-700 text-lg font-bold text-white shadow-sm dark:bg-green-500 dark:text-green-950">T</div>
+            )}
             <p className="truncate text-base font-semibold tracking-tight text-green-900 dark:text-green-300">{factoryName}</p>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4">
@@ -108,6 +122,16 @@ export function DashboardShell({
           >
             <span aria-hidden="true" className="text-2xl leading-none">☰</span>
           </button>
+          {factoryLogoUrl && (
+            <Image
+              src={factoryLogoUrl}
+              alt=""
+              width={40}
+              height={40}
+              unoptimized
+              className="h-10 w-10 shrink-0 rounded-xl border border-stone-200 object-cover dark:border-stone-700"
+            />
+          )}
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-stone-900 dark:text-stone-100">{factoryName}</p>
             <p className="text-xs capitalize text-stone-500 dark:text-stone-400">{profileRole}</p>
@@ -134,7 +158,9 @@ function DashboardBreadcrumbs({ pathname, nav }: { pathname: string; nav: readon
   const routeGroup = groupForSectionSlug(sectionSlug);
   const currentModule = moduleForPath(nav, pathname);
   const group = routeGroup ?? currentModule?.group ?? null;
-  const currentLabel = routeGroup ?? currentModule?.label ?? "Current page";
+  const currentLabel = pathname === "/dashboard/settings"
+    ? "My settings"
+    : routeGroup ?? currentModule?.label ?? "Current page";
 
   return (
     <nav aria-label="Breadcrumb" className="mb-5 flex min-h-8 flex-wrap items-center gap-2 text-sm">

@@ -1,5 +1,5 @@
 import { requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES, MODULES, type Role } from "@/lib/roles";
+import { ALL_WEB_ROLES, MODULES, ROLE_LABELS, pagesForModule, type Role } from "@/lib/roles";
 import { DashboardShell } from "./dashboard-shell";
 import { saleNoKey } from "./auction/sale-number";
 
@@ -8,23 +8,33 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { data: factory } = await supabase
     .from("factories")
-    .select("name")
+    .select("name, logo_path")
     .eq("id", profile.factory_id)
     .single();
   const factoryName = factory?.name ?? "Unknown factory";
+  const { data: signedLogo } = factory?.logo_path
+    ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
+    : { data: null };
 
-  // Fetch per-factory module permission overrides (small table, fast).
-  const { data: overrides } = await supabase
-    .from("module_permissions")
-    .select("module_key, allowed_roles");
+  // Existing module overrides remain the fallback for the migrated system
+  // roles. A configured role-page row takes precedence for custom roles.
+  const [{ data: overrides }, { data: pagePermissions }] = await Promise.all([
+    supabase.from("module_permissions").select("module_key, allowed_roles"),
+    profile.access_role_id
+      ? supabase.from("role_page_permissions").select("page_key, can_view").eq("role_id", profile.access_role_id)
+      : Promise.resolve({ data: [] }),
+  ]);
 
   const overrideMap = Object.fromEntries(
     (overrides ?? []).map((r) => [r.module_key, r.allowed_roles as string[]]),
   );
+  const pagePermissionMap = new Map((pagePermissions ?? []).map((row) => [row.page_key as string, Boolean(row.can_view)]));
 
   // Owner always sees everything; others respect overrides → defaults.
   const nav = MODULES.filter((mod) => {
     if (profile.role === "owner") return true;
+    const pageKey = pagesForModule(mod.key)[0]?.key;
+    if (pageKey && pagePermissionMap.has(pageKey)) return pagePermissionMap.get(pageKey) === true;
     const allowed: string[] = overrideMap[mod.key] ?? [...mod.roles];
     return allowed.includes(profile.role as Role);
   });
@@ -65,8 +75,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <DashboardShell
       factoryName={factoryName}
+      factoryLogoUrl={signedLogo?.signedUrl ?? null}
       profileName={profile.name}
-      profileRole={profile.role}
+      profileRole={profile.access_role_name ?? ROLE_LABELS[profile.role]}
       nav={navWithDetailLinks}
     >
       {children}

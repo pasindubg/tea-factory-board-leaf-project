@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
 import { reconcileBank } from "@tea/api";
 import { confirmBankMatches } from "../../../actions";
@@ -19,7 +19,7 @@ export default async function BankReviewPage({
   params: Promise<{ saleId: string; importId: string }>;
   searchParams: Promise<{ notice?: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-bank");
   const { saleId, importId } = await params;
   const { notice } = await searchParams;
   const detail = `/dashboard/auction/${saleId}`;

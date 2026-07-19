@@ -1,10 +1,10 @@
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { SuppliersTable, type CollectorOption } from "./suppliers-table";
 
 export default async function SuppliersPage() {
-  const { supabase, profile } = await requireModuleAccess("suppliers");
+  const { supabase, profile } = await requirePageAccess("suppliers");
   const [supplierResource, { data: collectors, error: collectorError }] = await Promise.all([
     loadListResource({ key: "leaf.suppliers" }),
     supabase

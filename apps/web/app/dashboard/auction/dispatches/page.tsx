@@ -1,9 +1,9 @@
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { DispatchList } from "./dispatch-list";
 
 export default async function DispatchOverviewPage() {
-  const { profile } = await requireModuleAccess("auction");
+  const { profile } = await requirePageAccess("auction-dispatches");
   const [dispatches, eligibleInvoices, warehouses] = await Promise.all([
     loadListResource({ key: "auction.physical-dispatches" }),
     loadListResource({ key: "auction.eligible-broker-invoices" }),

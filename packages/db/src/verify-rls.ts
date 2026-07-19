@@ -29,8 +29,9 @@ async function asUser(userId: string) {
     await tx.unsafe(`set local role authenticated`);
     const weighings = await tx`select distinct factory_id from weighings`;
     const suppliers = await tx`select distinct factory_id from suppliers`;
+    const accessRoles = await tx`select distinct factory_id from access_roles`;
     const factories = await tx`select id from factories`;
-    return { weighings, suppliers, factories };
+    return { weighings, suppliers, accessRoles, factories };
   });
 }
 
@@ -72,6 +73,11 @@ async function main() {
     a.factories.length === 1 && a.factories[0].id === SEED_IDS.factoryA,
     `ids: ${JSON.stringify(a.factories.map((r) => r.id))}`,
   );
+  check(
+    "owner A sees only factory A access roles",
+    a.accessRoles.length === 1 && a.accessRoles[0].factory_id === SEED_IDS.factoryA,
+    `factory_ids: ${JSON.stringify(a.accessRoles.map((r) => r.factory_id))}`,
+  );
 
   // 2. Factory B owner
   const b = await asUser(ownerB);
@@ -98,6 +104,27 @@ async function main() {
     "owner A cannot insert a supplier into factory B",
     !crossWriteAllowed,
     crossWriteAllowed ? "insert was ALLOWED" : "insert rejected",
+  );
+
+  let crossRoleWriteAllowed = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: ownerA, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      await tx`
+        insert into access_roles (factory_id, key, name, base_role)
+        values (${SEED_IDS.factoryB}, ${`forged-${randomUUID()}`}, 'Forged role', 'manager')
+      `;
+      crossRoleWriteAllowed = true;
+      throw new Error("ROLLBACK_CROSS_ROLE_TEST");
+    })
+    .catch((error) => {
+      if (crossRoleWriteAllowed && (error as Error).message !== "ROLLBACK_CROSS_ROLE_TEST") throw error;
+    });
+  check(
+    "owner A cannot create a role in factory B",
+    !crossRoleWriteAllowed,
+    crossRoleWriteAllowed ? "insert was ALLOWED" : "insert rejected",
   );
 
   // 4. The field client writes directly with the authenticated collector JWT.
@@ -160,14 +187,138 @@ async function main() {
     });
   check("collector cannot rewrite weighing history", alteredRowCount === 0, `${alteredRowCount} row(s) updated`);
 
-  // 5. Anonymous sees nothing
+  // 5. Self-service staff profiles remain private and tenant-safe.
+  let ownProfileUpdated = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`
+        insert into user_profiles (user_id, factory_id, full_name, national_id_number)
+        values (${collectorAUser.id}, ${SEED_IDS.factoryA}, 'Collector A', 'PRIVATE-NIC')
+        on conflict (user_id) do update
+          set full_name = excluded.full_name,
+              national_id_number = excluded.national_id_number
+      `;
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const rows = await tx`
+        update user_profiles
+        set job_title = 'Leaf Collector', updated_at = now()
+        where user_id = ${collectorAUser.id}
+        returning user_id
+      `;
+      ownProfileUpdated = rows.length === 1;
+      throw new Error("ROLLBACK_OWN_PROFILE_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_OWN_PROFILE_TEST") throw error;
+    });
+  check("collector can update only their own staff profile", ownProfileUpdated, ownProfileUpdated ? "own update allowed" : "own update rejected");
+
+  let otherProfileUpdated = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`
+        insert into user_profiles (user_id, factory_id, full_name)
+        values (${ownerA}, ${SEED_IDS.factoryA}, 'Owner A')
+        on conflict (user_id) do update set full_name = excluded.full_name
+      `;
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const rows = await tx`
+        update user_profiles
+        set full_name = 'Forged owner'
+        where user_id = ${ownerA}
+        returning user_id
+      `;
+      otherProfileUpdated = rows.length > 0;
+      throw new Error("ROLLBACK_OTHER_PROFILE_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_OTHER_PROFILE_TEST") throw error;
+    });
+  check("collector cannot update another staff profile", !otherProfileUpdated, otherProfileUpdated ? "cross-user update was ALLOWED" : "cross-user update rejected");
+
+  let directVisibleRows = 0;
+  let directoryRows = 0;
+  let crossFactoryDirectoryRows = 0;
+  await sql
+    .begin(async (tx) => {
+      await tx`
+        insert into user_profiles (
+          user_id, factory_id, full_name, national_id_number, phone,
+          job_title, visible_to_colleagues
+        )
+        values (
+          ${collectorAUser.id}, ${SEED_IDS.factoryA}, 'Shared Collector',
+          'MUST-NOT-LEAK', '0700000000', 'Leaf Collector', true
+        )
+        on conflict (user_id) do update
+          set full_name = excluded.full_name,
+              national_id_number = excluded.national_id_number,
+              phone = excluded.phone,
+              job_title = excluded.job_title,
+              visible_to_colleagues = excluded.visible_to_colleagues
+      `;
+      await tx`
+        insert into user_profiles (user_id, factory_id, full_name, visible_to_colleagues)
+        values (${ownerB}, ${SEED_IDS.factoryB}, 'Other Factory Owner', true)
+        on conflict (user_id) do update
+          set full_name = excluded.full_name,
+              visible_to_colleagues = excluded.visible_to_colleagues
+      `;
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: ownerA, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const directRows = await tx`
+        select national_id_number
+        from user_profiles
+        where user_id = ${collectorAUser.id}
+      `;
+      const sharedRows = await tx`
+        select user_id, full_name, phone, job_title
+        from public.list_visible_staff_profiles()
+        where user_id = ${collectorAUser.id}
+      `;
+      const otherFactoryRows = await tx`
+        select user_id
+        from public.list_visible_staff_profiles()
+        where user_id = ${ownerB}
+      `;
+      directVisibleRows = directRows.length;
+      directoryRows = sharedRows.length;
+      crossFactoryDirectoryRows = otherFactoryRows.length;
+      throw new Error("ROLLBACK_PROFILE_VISIBILITY_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_PROFILE_VISIBILITY_TEST") throw error;
+    });
+  check("shared profiles do not expose their private base row", directVisibleRows === 0, `${directVisibleRows} private row(s) visible`);
+  check("opted-in work profile appears in the safe directory", directoryRows === 1, `${directoryRows} directory row(s) visible`);
+  check("staff directory excludes other factories", crossFactoryDirectoryRows === 0, `${crossFactoryDirectoryRows} cross-factory row(s) visible`);
+
+  let ownUsernameUpdated = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const testUsername = `rls_${randomUUID().slice(0, 8)}`;
+      const [result] = await tx`select public.update_own_username(${testUsername}) as username`;
+      const [ownUser] = await tx`select username from users where id = ${collectorAUser.id}`;
+      ownUsernameUpdated = result?.username === testUsername && ownUser?.username === testUsername;
+      throw new Error("ROLLBACK_USERNAME_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_USERNAME_TEST") throw error;
+    });
+  check("username RPC updates only the authenticated user", ownUsernameUpdated, ownUsernameUpdated ? "own username updated" : "username update failed");
+
+  // 6. Anonymous sees nothing
   const anonRows = await sql.begin(async (tx) => {
     await tx.unsafe(`set local role anon`);
     return tx`select * from weighings`;
   });
   check("anonymous sees zero weighings", anonRows.length === 0, `rows: ${anonRows.length}`);
 
-  // 6. Delete semantics are part of the tenant boundary: application code
+  // 7. Delete semantics are part of the tenant boundary: application code
   // issues one scoped root delete and PostgreSQL must own every relationship.
   const expectedDeleteRules = new Map<string, string>([
     ["broker_rates_broker_id_brokers_id_fk", "c"],
@@ -185,6 +336,7 @@ async function main() {
     ["settlements_sale_id_auction_sales_id_fk", "a"],
     ["vat_ledger_sale_line_id_sale_lines_id_fk", "a"],
     ["collectors_user_id_users_id_fk", "n"],
+    ["user_profiles_user_id_users_id_fk", "c"],
     ["supplier_messages_created_by_users_id_fk", "n"],
     ["supplier_requests_decided_by_users_id_fk", "n"],
     ["supplier_requests_handed_by_users_id_fk", "n"],

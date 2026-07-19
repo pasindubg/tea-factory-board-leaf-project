@@ -1,9 +1,9 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { WarehousesTable, type WarehouseTableRow } from "../settings/warehouses-table";
 
 export default async function WarehousesPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { profile } = await requireModuleAccess("auction");
+  const { profile } = await requirePageAccess("auction-warehouses");
   const { error } = await searchParams;
   const warehouses = await loadListResource({ key: "auction.warehouses" });
   if (!warehouses.ok) throw new Error(warehouses.error);

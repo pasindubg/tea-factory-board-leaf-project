@@ -1,11 +1,11 @@
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { PaymentSettingsLists, type PaymentSettingsValues } from "./payment-settings-lists";
 
 export default async function PaymentSettingsPage() {
-  const { supabase, profile } = await requireModuleAccess("payments");
+  const { supabase, profile } = await requirePageAccess("payment-settings");
   const [rateResource, tierResource, { data: settings, error: settingsError }] = await Promise.all([
     loadListResource({ key: "payments.base-rates" }),
     loadListResource({ key: "payments.quality-tiers" }),

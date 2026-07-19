@@ -2,13 +2,13 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { collectorForUser, requireModuleAccess } from "@/lib/profile";
+import { collectorForUser, requirePagePermission } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 
 export async function createWeighing(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("weighings");
+  const { supabase, profile } = await requirePagePermission("weighings", "create");
   const supplierId = String(formData.get("supplier_id") ?? "");
   const weightKg = Number(String(formData.get("weight_kg") ?? "").trim());
   const collectedAt = String(formData.get("collected_at") ?? "").trim();

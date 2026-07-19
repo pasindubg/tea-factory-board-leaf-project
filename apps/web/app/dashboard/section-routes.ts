@@ -4,6 +4,7 @@ const SECTION_SLUGS: Record<ModuleGroup, string> = {
   "Leaf Handling": "leaf-handling",
   "Sales Handling": "sales-handling",
   "Dispatch Handling": "dispatch-handling",
+  "User Handling": "user-handling",
 };
 
 export function sectionSlugForGroup(group: ModuleGroup) {

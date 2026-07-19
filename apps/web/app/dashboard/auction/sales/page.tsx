@@ -1,4 +1,4 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { money } from "../format";
 import { SalesOverviewTable, type SaleOverviewRow } from "./sales-overview-table";
@@ -55,7 +55,7 @@ function saleHref(saleNo: string) {
 }
 
 export default async function SalesPage() {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-sales");
 
   const [{ data: dispatches }, { data: assignmentLots }, { data: lines }] = await Promise.all([
     supabase
