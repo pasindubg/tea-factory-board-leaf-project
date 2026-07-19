@@ -99,7 +99,7 @@ export default async function SaleDetailPage({
 }: {
   params: Promise<{ saleNo: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   const { saleNo: rawSaleNo } = await params;
   const saleNo = decodeURIComponent(rawSaleNo);
   const displaySaleNo = formatSaleNo(saleNo);
@@ -360,7 +360,18 @@ export default async function SaleDetailPage({
       <EntityListTabs
         label="Sale lists"
         tabs={[
-          { id: "lots", label: "Lots & invoices", count: `${saleLineTableRows.length} lots`, content: <SaleLinesTable saleId={saleLineResourceId} rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} /> },
+          {
+            id: "lots",
+            label: "Lots & invoices",
+            count: `${saleLineTableRows.length} lots`,
+            content: (
+              <SaleLinesTable
+                saleId={saleLineResourceId}
+                rows={saleLineTableRows}
+                canManage={profile.role === "owner" && !invoiceEditingLocked}
+              />
+            ),
+          },
           { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={dispatchTableRows} /> },
         ]}
       />
