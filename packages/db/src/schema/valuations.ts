@@ -13,7 +13,9 @@ export const valuations = pgTable(
       .references(() => factories.id)
       .notNull(),
     lotId: uuid("lot_id")
-      .references(() => auctionLots.id)
+      // A valuation has no meaning outside its one auction lot. Sale proceeds
+      // and VAT are separate restrictive records and are not cascaded here.
+      .references(() => auctionLots.id, { onDelete: "cascade" })
       .notNull(),
     priceMin: numeric("price_min", { precision: 10, scale: 2 }),
     priceMax: numeric("price_max", { precision: 10, scale: 2 }),

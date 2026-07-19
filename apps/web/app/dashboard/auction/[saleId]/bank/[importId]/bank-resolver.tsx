@@ -1,41 +1,73 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { TabView } from "@tea/ui";
 import { rankSettlements, matchBand, type UnpaidSettlement, type UnattributedCredit } from "@tea/api";
+import { showAppToast } from "@/components/action-feedback";
+import { EntityList, type EntityListContext } from "@/components/entity-list";
+import {
+  ListCommandToolbar,
+  ListSearchPanel,
+  ListSurface,
+  SortButton,
+  type ColumnDef,
+  type ListDefinition,
+} from "@/components/list-controls";
+import { AppButton } from "@/components/ui/button";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import {
+  WorkflowAuditList,
+  type WorkflowAuditRow,
+} from "@/app/dashboard/auction/_components/workflow-audit-list";
+import { WorkflowDecisionDialog } from "@/app/dashboard/auction/_components/workflow-decision-dialog";
 import { linkBankCredit } from "../../../actions";
 
-// Bank resolver (#20) — reuses the orphan-resolver UX for the bank side: link an
-// UNATTRIBUTED credit to an UNPAID settlement. Same stone/green theme, same
-// transparent per-dimension breakdown (amount / date / narration) from match-bank.
-// Bank narration is garbage, so nothing auto-commits — suggest, human confirms,
-// audit it.
+// Bank resolver (#20): unattributed credits and their ranked settlement matches
+// are ordinary framework lists. Matching remains a deliberate human-confirmed
+// workflow transition and every decision is recorded in the audit list.
 
 export type ResolverCredit = { txnId: string; txnDate: string; credit: number; description: string };
 export type ResolverSettlement = UnpaidSettlement;
-export type AuditRow = {
-  action: string;
-  detail: string;
-  reason: string | null;
-  actor: string;
-  confidenceShown: number | null;
-  createdAt: string;
+export type AuditRow = WorkflowAuditRow;
+
+type RankedSettlement = ReturnType<typeof rankSettlements>[number];
+
+const CREDIT_COLUMNS: ColumnDef<ResolverCredit>[] = [
+  { key: "txnDate", label: "Credit date", accessor: (row) => row.txnDate, sortable: true, searchInput: "date" },
+  { key: "credit", label: "Credit", accessor: (row) => row.credit, sortable: true, lov: false, searchInput: "number" },
+  { key: "description", label: "Narration", accessor: (row) => row.description, sortable: true, filter: "text", lov: false },
+];
+
+const SETTLEMENT_COLUMNS: ColumnDef<RankedSettlement>[] = [
+  { key: "contractNo", label: "Contract", accessor: (row) => row.settlement.contractNo, sortable: true, filter: "text" },
+  { key: "broker", label: "Broker", accessor: (row) => row.settlement.brokerName ?? null, sortable: true, filter: "select" },
+  { key: "total", label: "Expected total", accessor: (row) => row.settlement.totalNetProceeds, sortable: true, lov: false, searchInput: "number" },
+  { key: "cashOnly", label: "Cash-only target", accessor: (row) => row.settlement.cashOnly, sortable: true, lov: false, searchInput: "number" },
+  { key: "promptDate", label: "Prompt date", accessor: (row) => row.settlement.promptDate, sortable: true, searchInput: "date" },
+  { key: "confidence", label: "Confidence", accessor: (row) => Math.round(row.confidence * 100), sortable: true, lov: false, searchInput: "number" },
+  { key: "signals", label: "Match signals", accessor: (row) => row.dims.map((dimension) => `${dimension.label}: ${dimension.detail}`).join("; "), filter: "text", lov: false },
+];
+
+const CREDIT_LIST: ListDefinition<ResolverCredit> = {
+  columns: CREDIT_COLUMNS,
+  selectionMode: "single",
+  commands: [{ id: "review", label: "Review matches", requiresSelection: true }],
 };
 
-const band = (c: number) => {
-  const b = matchBand(c);
-  return b === "high"
-    ? { label: "High", text: "text-green-700 dark:text-green-400", bar: "bg-green-600", ring: "border-green-400/50 dark:border-green-600/40" }
-    : b === "medium"
-      ? { label: "Medium", text: "text-amber-700 dark:text-amber-400", bar: "bg-amber-500", ring: "border-amber-300/60 dark:border-amber-600/30" }
-      : { label: "Low", text: "text-stone-500 dark:text-stone-400", bar: "bg-stone-400", ring: "border-stone-200 dark:border-stone-700" };
+const SETTLEMENT_LIST: ListDefinition<RankedSettlement> = {
+  columns: SETTLEMENT_COLUMNS,
+  selectionMode: "single",
+  commands: [{ id: "link", label: "Link selected settlement", requiresSelection: true }],
 };
+
 const toneText: Record<string, string> = {
   good: "text-green-700 dark:text-green-400",
   warn: "text-amber-700 dark:text-amber-400",
   bad: "text-stone-500 dark:text-stone-400",
 };
-const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const LKR = (value: number) => `Rs ${value.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function BankResolver({
   saleId,
@@ -50,174 +82,296 @@ export function BankResolver({
   settlements: ResolverSettlement[];
   audit: AuditRow[];
 }) {
-  const [idx, setIdx] = useState(0);
-  const [linking, setLinking] = useState<{ s: ResolverSettlement; confidence: number } | null>(null);
+  if (credits.length === 0 || settlements.length === 0) return null;
+
+  return (
+    <EntityList
+      scope="bank-credit-resolver"
+      initialRows={credits}
+      definition={CREDIT_LIST}
+      getId={(row) => row.txnId}
+      rowLabel={(row) => `${LKR(row.credit)} credit on ${row.txnDate}`}
+      emptyMessage="No unattributed credits."
+      renderMode="workflow"
+      render={(list) => (
+        <BankResolverWorkflow
+          saleId={saleId}
+          importId={importId}
+          settlements={settlements}
+          audit={audit}
+          list={list}
+        />
+      )}
+    />
+  );
+}
+
+function BankResolverWorkflow({
+  saleId,
+  importId,
+  settlements,
+  audit,
+  list,
+}: {
+  saleId: string;
+  importId: string;
+  settlements: ResolverSettlement[];
+  audit: AuditRow[];
+  list: EntityListContext<ResolverCredit>;
+}) {
+  const [activeTab, setActiveTab] = useState("credits");
+  const [linking, setLinking] = useState<{ credit: ResolverCredit; match: RankedSettlement } | null>(null);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { rows: credits, controls: creditControls, selection: creditSelection } = list;
+  const selectCredit = creditSelection.select;
 
-  const credit = credits[Math.min(idx, Math.max(0, credits.length - 1))];
+  useEffect(() => {
+    if (!creditSelection.selectedId && credits[0]) selectCredit(credits[0].txnId);
+  }, [creditSelection.selectedId, credits, selectCredit]);
+
+  const credit = credits.find((row) => row.txnId === creditSelection.selectedId) ?? credits[0];
   const ranked = useMemo(() => {
     if (!credit) return [];
-    const c: UnattributedCredit = { txnId: credit.txnId, txnDate: credit.txnDate, credit: credit.credit, description: credit.description };
-    return rankSettlements(c, settlements);
+    const source: UnattributedCredit = {
+      txnId: credit.txnId,
+      txnDate: credit.txnDate,
+      credit: credit.credit,
+      description: credit.description,
+    };
+    return rankSettlements(source, settlements);
   }, [credit, settlements]);
 
-  if (credits.length === 0 || settlements.length === 0) return null;
-
-  const confirmLink = () => {
-    if (!linking || !credit) return;
-    startTransition(() => {
-      void linkBankCredit({
-        saleId, importId, txnId: credit.txnId,
-        settlementId: linking.s.settlementId, contractNo: linking.s.contractNo,
-        credit: credit.credit, confidence: linking.confidence, reason: reason.trim() || undefined,
-      }).then(() => router.refresh());
+  function confirmLink() {
+    if (!linking) return;
+    const pendingLink = linking;
+    startTransition(async () => {
+      try {
+        const result: ListMutationResult = await linkBankCredit({
+          saleId,
+          importId,
+          txnId: pendingLink.credit.txnId,
+          settlementId: pendingLink.match.settlement.settlementId,
+          confidence: pendingLink.match.confidence,
+          reason: reason.trim() || undefined,
+        });
+        if (!result.ok) {
+          showAppToast(result.error, "error");
+          return;
+        }
+        setLinking(null);
+        setReason("");
+        setActiveTab("credits");
+        showAppToast(result.notice ?? "Bank credit linked.");
+        router.refresh();
+      } catch {
+        showAppToast("The bank credit could not be linked. Please try again.", "error");
+      }
     });
-    setLinking(null);
-    setReason("");
-    setIdx(0);
-  };
+  }
 
   return (
-    <div className={`rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900/60 p-4 ${isPending ? "opacity-60" : ""}`}>
-      <div className="text-sm font-medium text-stone-700 dark:text-stone-200">Resolve unattributed credits</div>
-      <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
-        Pick the unpaid settlement a credit belongs to. Nothing is auto-linked — every link is yours and is logged.
-      </p>
+    <section className={`space-y-4 rounded-xl border border-stone-200 bg-stone-50 p-4 dark:border-stone-700 dark:bg-stone-900/60 ${isPending ? "opacity-60" : ""}`} aria-busy={isPending}>
+      <header>
+        <h3 className="text-sm font-medium text-stone-700 dark:text-stone-200">Resolve unattributed credits</h3>
+        <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+          Select a credit, review ranked settlements, and confirm the link. Nothing is linked automatically.
+        </p>
+      </header>
 
-      {/* Credit selector */}
-      {credits.length > 1 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {credits.map((c, i) => (
-            <button
-              key={c.txnId}
-              onClick={() => setIdx(i)}
-              className={`rounded-full px-2.5 py-1 text-xs ${
-                i === idx
-                  ? "bg-green-700 dark:bg-green-600 text-white"
-                  : "border border-stone-300 dark:border-stone-600 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-              }`}
-            >
-              {LKR(c.credit)}
-            </button>
-          ))}
-        </div>
+      <TabView
+        label="Bank reconciliation lists"
+        activeTabId={activeTab}
+        onTabChange={setActiveTab}
+        tabs={[
+          {
+            id: "credits",
+            label: "Unattributed credits",
+            badge: credits.length,
+            content: (
+              <ListSurface title="Unattributed credits" description="Select the bank credit you want to resolve.">
+                <ListCommandToolbar mode={CREDIT_LIST.selectionMode ?? "single"} count={creditSelection.selectedCount}>
+                  <AppButton
+                    type="button"
+                    size="sm"
+                    className="min-h-10 rounded-full px-4"
+                    disabled={!creditSelection.selectedId || isPending}
+                    onClick={() => setActiveTab("candidates")}
+                  >
+                    Review matches
+                  </AppButton>
+                </ListCommandToolbar>
+                <ListSearchPanel columns={CREDIT_LIST.columns} controls={creditControls} />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
+                        {CREDIT_LIST.columns.map((column) => (
+                          <th key={column.key} className={`px-4 py-3 ${column.key === "credit" ? "text-right" : ""}`}>
+                            {column.sortable ? <SortButton col={column} controls={creditControls} /> : column.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {creditControls.rows.map((row) => (
+                        <tr
+                          key={row.txnId}
+                          {...creditSelection.rowProps(row.txnId, isPending)}
+                          className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${creditSelection.isSelected(row.txnId) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                        >
+                          <td className="whitespace-nowrap px-4 py-3 tabular-nums">{row.txnDate}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums">{LKR(row.credit)}</td>
+                          <td className="min-w-72 px-4 py-3 text-stone-500 dark:text-stone-400">{row.description || "—"}</td>
+                        </tr>
+                      ))}
+                      {creditControls.rows.length === 0 && credits.length > 0 && (
+                        <tr><td colSpan={3} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No credits match the current search.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </ListSurface>
+            ),
+          },
+          {
+            id: "candidates",
+            label: "Settlement candidates",
+            badge: ranked.length,
+            content: (
+              <SettlementCandidateList
+                key={credit.txnId}
+                credit={credit}
+                rows={ranked}
+                busy={isPending}
+                onLink={(match) => setLinking({ credit, match })}
+              />
+            ),
+          },
+          {
+            id: "audit",
+            label: "Audit trail",
+            badge: audit.length,
+            content: <WorkflowAuditList rows={audit} title="Bank decision audit" description="Search the recorded bank matching decisions and the confidence shown to the operator." />,
+          },
+        ]}
+      />
+
+      {linking && (
+        <WorkflowDecisionDialog
+          open
+          title="Confirm bank link"
+          description={<>Link the {LKR(linking.credit.credit)} credit on {linking.credit.txnDate} to settlement <span className="font-mono">{linking.match.settlement.contractNo}</span> (expected {LKR(linking.match.settlement.totalNetProceeds)})?</>}
+          reason={reason}
+          reasonPlaceholder="e.g. broker confirmed this transfer covers contract 0110"
+          confirmLabel="Confirm link"
+          busy={isPending}
+          onReasonChange={setReason}
+          onCancel={() => { setLinking(null); setReason(""); }}
+          onConfirm={confirmLink}
+        />
       )}
+    </section>
+  );
+}
 
-      {/* Credit card */}
-      <div className="mt-3 rounded-lg border border-amber-300/60 dark:border-amber-600/30 bg-amber-50 dark:bg-amber-950/40 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs text-stone-500 dark:text-stone-400">credit {credit.txnDate}</div>
-            <div className="text-base font-semibold text-stone-800 dark:text-stone-100">{LKR(credit.credit)}</div>
-          </div>
-          <div className="max-w-[55%] truncate text-right text-xs text-stone-500 dark:text-stone-400" title={credit.description}>
-            {credit.description || "—"}
-          </div>
-        </div>
-      </div>
-
-      {/* Settlement candidates */}
-      <div className="mt-3 space-y-2">
-        {ranked.map((r) => {
-          const b = band(r.confidence);
-          return (
-            <div key={r.settlement.settlementId} className={`rounded-lg border ${b.ring} bg-white dark:bg-stone-900 p-3`}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-stone-500 dark:text-stone-400">contract {r.settlement.contractNo}</span>
-                    <span className="text-sm font-semibold text-stone-800 dark:text-stone-100">{LKR(r.settlement.totalNetProceeds)}</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-                    {r.dims.map((d) => (
-                      <span key={d.key} className="inline-flex items-center gap-1.5">
-                        <span className="text-stone-400 dark:text-stone-500">{d.label}:</span>
-                        <span className={toneText[d.tone]}>{d.detail}</span>
-                      </span>
+function SettlementCandidateList({
+  credit,
+  rows,
+  busy,
+  onLink,
+}: {
+  credit: ResolverCredit;
+  rows: RankedSettlement[];
+  busy: boolean;
+  onLink: (match: RankedSettlement) => void;
+}) {
+  return (
+    <EntityList
+      scope={`bank-settlement-candidates-${credit.txnId}`}
+      initialRows={rows}
+      definition={SETTLEMENT_LIST}
+      getId={(row) => row.settlement.settlementId}
+      rowLabel={(row) => `Settlement ${row.settlement.contractNo}`}
+      emptyMessage="No unpaid settlement candidates are available."
+      renderMode="workflow"
+      render={({ controls, selection }) => {
+        const selected = rows.find((row) => row.settlement.settlementId === selection.selectedId);
+        return (
+          <ListSurface
+            title="Settlement candidates"
+            description={`Ranked matches for the ${LKR(credit.credit)} credit dated ${credit.txnDate}. Select one settlement before linking.`}
+          >
+            <ListCommandToolbar mode={SETTLEMENT_LIST.selectionMode ?? "single"} count={selection.selectedCount}>
+              <AppButton
+                type="button"
+                variant="primary"
+                size="sm"
+                className="min-h-10 rounded-full px-4"
+                disabled={!selected || busy}
+                onClick={() => selected && onLink(selected)}
+              >
+                Link selected settlement
+              </AppButton>
+            </ListCommandToolbar>
+            <ListSearchPanel columns={SETTLEMENT_LIST.columns} controls={controls} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
+                    {SETTLEMENT_LIST.columns.map((column) => (
+                      <th key={column.key} className={`px-4 py-3 ${["total", "cashOnly", "confidence"].includes(column.key) ? "text-right" : ""}`}>
+                        {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
+                      </th>
                     ))}
-                  </div>
-                </div>
-                <div className="w-32 shrink-0">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className={b.text}>{b.label}</span>
-                    <span className={`font-mono ${b.text}`}>{Math.round(r.confidence * 100)}%</span>
-                  </div>
-                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                    <div className={`h-full ${b.bar}`} style={{ width: `${Math.round(r.confidence * 100)}%` }} />
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 border-t border-stone-100 dark:border-stone-800 pt-2">
-                <button
-                  disabled={isPending}
-                  onClick={() => setLinking({ s: r.settlement, confidence: r.confidence })}
-                  className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
-                >
-                  Link this credit → {r.settlement.contractNo}
-                </button>
-              </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {controls.rows.map((row) => {
+                    const confidenceBand = matchBand(row.confidence);
+                    return (
+                      <tr
+                        key={row.settlement.settlementId}
+                        {...selection.rowProps(row.settlement.settlementId, busy)}
+                        className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(row.settlement.settlementId) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{row.settlement.contractNo}</td>
+                        <td className="whitespace-nowrap px-4 py-3">{row.settlement.brokerName ?? "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{LKR(row.settlement.totalNetProceeds)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{LKR(row.settlement.cashOnly)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 tabular-nums">{row.settlement.promptDate || "—"}</td>
+                        <td className="min-w-36 px-4 py-3">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className={confidenceBand === "high" ? "text-green-700 dark:text-green-400" : confidenceBand === "medium" ? "text-amber-700 dark:text-amber-400" : "text-stone-500 dark:text-stone-400"}>{confidenceBand}</span>
+                            <span className="font-mono">{Math.round(row.confidence * 100)}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+                            <div className={confidenceBand === "high" ? "h-full bg-green-600" : confidenceBand === "medium" ? "h-full bg-amber-500" : "h-full bg-stone-400"} style={{ width: `${Math.round(row.confidence * 100)}%` }} />
+                          </div>
+                        </td>
+                        <td className="min-w-80 px-4 py-3 text-xs">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {row.dims.map((dimension) => (
+                              <span key={dimension.key} className={toneText[dimension.tone]}>{dimension.label}: {dimension.detail}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {controls.rows.length === 0 && rows.length > 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No settlement candidates match the current search.</td></tr>
+                  )}
+                  {rows.length === 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No unpaid settlement candidates are available.</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-          );
-        })}
-      </div>
-
-      {/* Audit trail */}
-      {audit.length > 0 && (
-        <div className="mt-4">
-          <div className="mb-1.5 text-xs uppercase tracking-wide text-stone-400 dark:text-stone-500">Audit trail</div>
-          <ul className="divide-y divide-stone-100 dark:divide-stone-800 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            {audit.map((a, i) => (
-              <li key={i} className="px-3 py-2 text-xs">
-                <span className="font-medium text-stone-700 dark:text-stone-200">{a.action}</span>
-                <span className="text-stone-500 dark:text-stone-400"> · {a.detail}</span>
-                {a.confidenceShown != null && (
-                  <span className="text-stone-400 dark:text-stone-500"> · shown {Math.round(a.confidenceShown * 100)}%</span>
-                )}
-                {a.reason && <div className="text-stone-400 dark:text-stone-500">reason: {a.reason}</div>}
-                <div className="text-stone-400 dark:text-stone-500">by {a.actor} · {new Date(a.createdAt).toLocaleString()}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Confirm dialog */}
-      {linking && credit && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
-            <h3 className="text-base font-semibold text-stone-800 dark:text-stone-100">Confirm bank link</h3>
-            <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-              Link the {LKR(credit.credit)} credit on {credit.txnDate} to settlement{" "}
-              <span className="font-mono">{linking.s.contractNo}</span> (expected {LKR(linking.s.totalNetProceeds)})?
-            </p>
-            <label className="mt-3 block text-xs text-stone-500 dark:text-stone-400">Reason (optional, kept in the audit trail)</label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-              placeholder="e.g. broker confirmed this transfer covers contract 0110"
-              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-950 p-2 text-sm text-stone-700 dark:text-stone-200"
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => { setLinking(null); setReason(""); }}
-                className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmLink}
-                disabled={isPending}
-                className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
-              >
-                Confirm link
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+          </ListSurface>
+        );
+      }}
+    />
   );
 }

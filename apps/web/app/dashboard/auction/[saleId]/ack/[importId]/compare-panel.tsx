@@ -1,8 +1,27 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { TabView } from "@tea/ui";
 import { rankCandidates, matchBand, type OrphanLot, type CandidateLot } from "@tea/api";
+import { showAppToast } from "@/components/action-feedback";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { EntityList, type EntityListContext } from "@/components/entity-list";
+import {
+  ListCommandToolbar,
+  ListSearchPanel,
+  ListSurface,
+  SortButton,
+  type ColumnDef,
+  type ListDefinition,
+} from "@/components/list-controls";
+import { AppButton } from "@/components/ui/button";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import {
+  WorkflowAuditList,
+  type WorkflowAuditRow,
+} from "@/app/dashboard/auction/_components/workflow-audit-list";
+import { WorkflowDecisionDialog } from "@/app/dashboard/auction/_components/workflow-decision-dialog";
 import {
   linkOrphanLot,
   markShutout,
@@ -11,33 +30,79 @@ import {
   rejectCandidate,
 } from "../../../actions";
 
-// Orphan-resolver "Compare" panel (#19). Re-themed from the previous chat's
-// OrphanResolver (dark neutral/emerald → the app's light+dark stone/green) and fed
-// REAL reconciliation data: pending/invoiced lots (orphans) vs "unexpected" ack
-// lots (candidates). Ranking + per-dimension transparency come from @tea/api's
-// match-orphans scoring core — nothing auto-links; every decision is the user's
-// and is written to auction_audit.
+// Reconciliation ① resolver. Unresolved invoices, candidate catalogue lots,
+// and their decision history are shared framework lists. All mutations remain
+// explicit workflow transitions and are triggered from selection toolbars.
 
-// dispatchId = the orphan lot's OWN dispatch (may be a sibling dispatch in the
-// same sale group, not the one whose ack page is open).
 export type Orphan = { lotId: string; dispatchId?: string; invoiceNo: string; grade: string; netWt: number; markCode: string | null };
 export type Candidate = { key: string; lotNo: string | null; grade: string; netWt: number; markCode: string | null };
-export type AuditRow = {
-  action: string;
-  detail: string;
-  reason: string | null;
-  actor: string;
-  confidenceShown: number | null;
-  createdAt: string;
+export type AuditRow = WorkflowAuditRow;
+
+type RankedCandidate = ReturnType<typeof rankCandidates>[number] & { delta: number };
+type Outcome = "shutout" | "missing" | "pending";
+
+const ORPHAN_COLUMNS: ColumnDef<Orphan>[] = [
+  { key: "invoiceNo", label: "Invoice", accessor: (row) => row.invoiceNo, sortable: true, filter: "text" },
+  { key: "grade", label: "Grade", accessor: (row) => row.grade, sortable: true, filter: "select" },
+  { key: "netWt", label: "Net weight", accessor: (row) => row.netWt, sortable: true, lov: false, searchInput: "number" },
+  { key: "markCode", label: "Mark", accessor: (row) => row.markCode, sortable: true, filter: "select" },
+];
+
+const CANDIDATE_COLUMNS: ColumnDef<RankedCandidate>[] = [
+  { key: "lotNo", label: "Catalogue lot", accessor: (row) => row.candidate.lotNo, sortable: true, filter: "text" },
+  { key: "grade", label: "Grade", accessor: (row) => row.candidate.grade, sortable: true, filter: "select" },
+  { key: "netWt", label: "Net weight", accessor: (row) => row.candidate.netWt, sortable: true, lov: false, searchInput: "number" },
+  { key: "markCode", label: "Mark", accessor: (row) => row.candidate.markCode, sortable: true, filter: "select" },
+  { key: "delta", label: "Weight difference", accessor: (row) => row.delta, sortable: true, lov: false, searchInput: "number" },
+  { key: "confidence", label: "Confidence", accessor: (row) => Math.round(row.confidence * 100), sortable: true, lov: false, searchInput: "number" },
+  { key: "signals", label: "Match signals", accessor: (row) => row.dims.map((dimension) => `${dimension.label}: ${dimension.detail}`).join("; "), filter: "text", lov: false },
+];
+
+const ORPHAN_LIST: ListDefinition<Orphan> = {
+  columns: ORPHAN_COLUMNS,
+  selectionMode: "single",
+  commands: [
+    { id: "review", label: "Review candidates", requiresSelection: true },
+    { id: "shutout", label: "Mark shut out", requiresSelection: true, destructive: true },
+    { id: "missing", label: "Mark missing", requiresSelection: true },
+    { id: "pending", label: "Leave unresolved", requiresSelection: true },
+  ],
 };
 
-const band = (c: number) => {
-  const b = matchBand(c);
-  return b === "high"
-    ? { label: "High", text: "text-green-700 dark:text-green-400", bar: "bg-green-600", ring: "border-green-400/50 dark:border-green-600/40" }
-    : b === "medium"
-      ? { label: "Medium", text: "text-amber-700 dark:text-amber-400", bar: "bg-amber-500", ring: "border-amber-300/60 dark:border-amber-600/30" }
-      : { label: "Low", text: "text-stone-500 dark:text-stone-400", bar: "bg-stone-400", ring: "border-stone-200 dark:border-stone-700" };
+const CANDIDATE_LIST: ListDefinition<RankedCandidate> = {
+  columns: CANDIDATE_COLUMNS,
+  selectionMode: "single",
+  commands: [
+    { id: "link", label: "Link selected lot", requiresSelection: true },
+    { id: "reject", label: "Reject candidate", requiresSelection: true, destructive: true },
+  ],
+};
+
+const OUTCOME_ACTIONS: Record<Outcome, typeof markShutout> = {
+  shutout: markShutout,
+  missing: markMissing,
+  pending: markPending,
+};
+
+const OUTCOME_COPY: Record<Outcome, { title: string; description: string; confirm: string; notice: string }> = {
+  shutout: {
+    title: "Mark invoice as shut out?",
+    description: "The selected invoice will leave the unresolved queue and be recorded as shut out in the audit trail.",
+    confirm: "Mark shut out",
+    notice: "Invoice marked as shut out.",
+  },
+  missing: {
+    title: "Mark invoice as missing?",
+    description: "The selected invoice will leave the unresolved queue and be recorded as genuinely missing.",
+    confirm: "Mark missing",
+    notice: "Invoice marked as missing.",
+  },
+  pending: {
+    title: "Leave invoice unresolved?",
+    description: "The selected invoice will remain pending and the decision will be written to the audit trail.",
+    confirm: "Leave unresolved",
+    notice: "Invoice left unresolved.",
+  },
 };
 
 const toneText: Record<string, string> = {
@@ -57,302 +122,382 @@ export function ComparePanel({
   candidates: Candidate[];
   audit: AuditRow[];
 }) {
+  if (orphans.length === 0) return null;
+
+  return (
+    <EntityList
+      scope="acknowledgement-orphan-resolver"
+      initialRows={orphans}
+      definition={ORPHAN_LIST}
+      getId={(row) => row.lotId}
+      rowLabel={(row) => `Invoice ${row.invoiceNo}`}
+      emptyMessage="No unresolved invoices."
+      renderMode="workflow"
+      render={(list) => (
+        <CompareWorkflow
+          saleId={saleId}
+          candidates={candidates}
+          audit={audit}
+          list={list}
+        />
+      )}
+    />
+  );
+}
+
+function CompareWorkflow({
+  saleId,
+  candidates,
+  audit,
+  list,
+}: {
+  saleId: string;
+  candidates: Candidate[];
+  audit: AuditRow[];
+  list: EntityListContext<Orphan>;
+}) {
   const [open, setOpen] = useState(false);
-  const [idx, setIdx] = useState(0);
-  const [minConfidence, setMinConfidence] = useState(0);
-  const [rejected, setRejected] = useState<Set<string>>(() => new Set());
-  const [linking, setLinking] = useState<{ candidate: Candidate; confidence: number; delta: number } | null>(null);
+  const [activeTab, setActiveTab] = useState("orphans");
+  const [confirmingOutcome, setConfirmingOutcome] = useState<Outcome | null>(null);
+  const [linking, setLinking] = useState<{ orphan: Orphan; match: RankedCandidate } | null>(null);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const { rows: orphans, controls: orphanControls, selection: orphanSelection } = list;
+  const selectOrphan = orphanSelection.select;
 
-  const orphan = orphans[Math.min(idx, Math.max(0, orphans.length - 1))];
+  useEffect(() => {
+    if (!orphanSelection.selectedId && orphans[0]) selectOrphan(orphans[0].lotId);
+  }, [orphanSelection.selectedId, orphans, selectOrphan]);
 
-  const ranked = useMemo(() => {
+  const orphan = orphans.find((row) => row.lotId === orphanSelection.selectedId) ?? orphans[0];
+  const ranked = useMemo<RankedCandidate[]>(() => {
     if (!orphan) return [];
-    const o: OrphanLot = { invoiceNo: orphan.invoiceNo, grade: orphan.grade, netWt: orphan.netWt, markCode: orphan.markCode };
-    const pool: CandidateLot[] = candidates.map((c) => ({
-      key: c.key, lotNo: c.lotNo, grade: c.grade, netWt: c.netWt, markCode: c.markCode,
+    const source: OrphanLot = {
+      invoiceNo: orphan.invoiceNo,
+      grade: orphan.grade,
+      netWt: orphan.netWt,
+      markCode: orphan.markCode,
+    };
+    const pool: CandidateLot[] = candidates.map((candidate) => ({
+      key: candidate.key,
+      lotNo: candidate.lotNo,
+      grade: candidate.grade,
+      netWt: candidate.netWt,
+      markCode: candidate.markCode,
     }));
-    return rankCandidates(o, pool);
-  }, [orphan, candidates]);
+    return rankCandidates(source, pool).map((match) => ({
+      ...match,
+      delta: Number((match.candidate.netWt - orphan.netWt).toFixed(2)),
+    }));
+  }, [candidates, orphan]);
 
-  const visible = useMemo(
-    () => ranked.filter((r) => !rejected.has(r.candidate.key) && r.confidence >= minConfidence),
-    [ranked, rejected, minConfidence],
-  );
-
-  if (orphans.length === 0) {
-    return null; // nothing factory-side left to resolve
+  function runWorkflow(action: () => Promise<ListMutationResult>, notice: string, onSuccess?: () => void) {
+    startTransition(async () => {
+      try {
+        const result = await action();
+        if (!result.ok) {
+          showAppToast(result.error, "error");
+          return;
+        }
+        onSuccess?.();
+        showAppToast(result.notice ?? notice);
+        router.refresh();
+      } catch {
+        showAppToast("The reconciliation decision could not be saved. Please try again.", "error");
+      }
+    });
   }
-  // Note: we still render with zero candidates — there may be no "unexpected" ack
-  // lot to link to, but the user must still be able to record an outcome
-  // (shut out / missing / leave unresolved) for each unacknowledged invoiced lot.
 
-  const run = (fn: () => Promise<void>) => startTransition(() => { void fn().then(() => router.refresh()); });
-
-  const confirmLink = () => {
-    if (!linking || !orphan) return;
-    const c = linking.candidate;
-    run(() =>
-      linkOrphanLot({
-        saleId: orphan.dispatchId ?? saleId,
-        lotId: orphan.lotId,
-        invoiceNo: orphan.invoiceNo,
-        orphanNetWt: orphan.netWt,
-        candidateLotNo: c.lotNo,
-        candidateMarkCode: c.markCode,
-        candidateGrade: c.grade,
-        candidateNetWt: c.netWt,
-        confidence: linking.confidence,
+  function confirmLink() {
+    if (!linking) return;
+    const pendingLink = linking;
+    runWorkflow(
+      () => linkOrphanLot({
+        saleId: pendingLink.orphan.dispatchId ?? saleId,
+        lotId: pendingLink.orphan.lotId,
+        candidateLotNo: pendingLink.match.candidate.lotNo,
+        candidateMarkCode: pendingLink.match.candidate.markCode,
+        candidateNetWt: pendingLink.match.candidate.netWt,
+        confidence: pendingLink.match.confidence,
         reason: reason.trim() || undefined,
       }),
+      "Invoice and catalogue lot linked.",
+      () => {
+        setLinking(null);
+        setReason("");
+        setActiveTab("orphans");
+      },
     );
-    setLinking(null);
-    setReason("");
-    setIdx(0);
-  };
+  }
 
-  const doReject = (c: Candidate) => {
-    if (!orphan) return;
-    setRejected((s) => new Set(s).add(c.key));
-    run(() => rejectCandidate({ saleId: orphan.dispatchId ?? saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, candidateLotNo: c.lotNo }));
-  };
-
-  const outcome = (fn: typeof markShutout, label: string) => {
-    if (!orphan) return;
-    run(() => fn({ saleId: orphan.dispatchId ?? saleId, lotId: orphan.lotId, invoiceNo: orphan.invoiceNo, orphanGrade: orphan.grade, orphanNetWt: orphan.netWt }));
-    setIdx(0);
-  };
+  function confirmOutcome() {
+    if (!confirmingOutcome || !orphan) return;
+    const outcome = confirmingOutcome;
+    const copy = OUTCOME_COPY[outcome];
+    runWorkflow(
+      () => OUTCOME_ACTIONS[outcome]({
+        saleId: orphan.dispatchId ?? saleId,
+        lotId: orphan.lotId,
+      }),
+      copy.notice,
+      () => setConfirmingOutcome(null),
+    );
+  }
 
   return (
-    <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900/60">
-      <div className="flex items-center justify-between px-4 py-3">
+    <section className="rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+      <header className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="text-sm text-stone-600 dark:text-stone-300">
           <span className="font-medium">Compare &amp; resolve</span>{" "}
-          <span className="text-stone-400 dark:text-stone-500">
-            · {orphans.length} unresolved · {candidates.length} unexpected lot{candidates.length === 1 ? "" : "s"}
-          </span>
+          <span className="text-stone-400 dark:text-stone-500">· {orphans.length} unresolved · {candidates.length} unexpected lot{candidates.length === 1 ? "" : "s"}</span>
         </div>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-        >
-          {open ? "Hide" : "Compare"}
-        </button>
-      </div>
+        <AppButton type="button" variant="primary" size="sm" onClick={() => setOpen((current) => !current)}>{open ? "Hide" : "Compare"}</AppButton>
+      </header>
 
       {open && orphan && (
-        <div className={`space-y-4 border-t border-stone-200 dark:border-stone-700 p-4 ${isPending ? "opacity-60" : ""}`}>
+        <div className={`space-y-4 border-t border-stone-200 p-4 dark:border-stone-700 ${isPending ? "opacity-60" : ""}`} aria-busy={isPending}>
           <p className="text-xs text-stone-500 dark:text-stone-400">
-            Pick the acknowledged lot an invoiced-but-unacknowledged lot really is, or record that it has no match. Nothing
-            is auto-linked — every decision is yours and is logged.
+            Select an unresolved invoice, then link the correct acknowledged lot or record a no-match outcome. Every decision is logged.
           </p>
-
-          {/* Orphan selector */}
-          {orphans.length > 1 && (
-            <div className="flex flex-wrap gap-1.5">
-              {orphans.map((o, i) => (
-                <button
-                  key={o.lotId}
-                  onClick={() => setIdx(i)}
-                  className={`rounded-full px-2.5 py-1 text-xs ${
-                    i === idx
-                      ? "bg-green-700 dark:bg-green-600 text-white"
-                      : "border border-stone-300 dark:border-stone-600 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-                  }`}
-                >
-                  inv {o.invoiceNo}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Orphan card */}
-          <div className="rounded-lg border border-amber-300/60 dark:border-amber-600/30 bg-amber-50 dark:bg-amber-950/40 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-                  Invoice {orphan.invoiceNo}
-                  <span className="rounded-full bg-amber-200/70 dark:bg-amber-900 px-2 py-0.5 text-amber-800 dark:text-amber-300">
-                    unacknowledged
-                  </span>
-                </div>
-                <div className="text-base font-semibold text-stone-800 dark:text-stone-100">
-                  {orphan.grade} · {orphan.netWt.toFixed(2)} kg
-                </div>
-              </div>
-              <div className="text-right text-xs text-stone-500 dark:text-stone-400">
-                <div>mark {orphan.markCode ?? "—"}</div>
-                <div>catalogued lot: none</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Confidence control */}
-          <label className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-            Min confidence
-            <input
-              type="range" min="0" max="1" step="0.05" value={minConfidence}
-              onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
-              className="accent-green-600"
-            />
-            <span className="w-8 font-mono text-stone-600 dark:text-stone-300">{Math.round(minConfidence * 100)}%</span>
-            <span className="ml-auto">{visible.length} of {ranked.length} shown</span>
-          </label>
-
-          {/* Candidate cards */}
-          <div className="space-y-2">
-            {visible.map((r) => {
-              const b = band(r.confidence);
-              const delta = r.candidate.netWt - orphan.netWt;
-              return (
-                <div key={r.candidate.key} className={`rounded-lg border ${b.ring} bg-white dark:bg-stone-900 p-3`}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-stone-500 dark:text-stone-400">lot {r.candidate.lotNo ?? "—"}</span>
-                        <span className="rounded-full bg-purple-100 dark:bg-purple-900 px-2 py-0.5 text-xs text-purple-800 dark:text-purple-300">
-                          unexpected
-                        </span>
-                        <span className="text-sm font-semibold text-stone-800 dark:text-stone-100">
-                          {r.candidate.grade} · {r.candidate.netWt.toFixed(2)} kg
-                        </span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-                        {r.dims.map((d) => (
-                          <span key={d.key} className="inline-flex items-center gap-1.5">
-                            <span className="text-stone-400 dark:text-stone-500">{d.label}:</span>
-                            <span className={toneText[d.tone]}>{d.detail}</span>
-                          </span>
-                        ))}
-                      </div>
+          <TabView
+            label="Acknowledgement reconciliation lists"
+            activeTabId={activeTab}
+            onTabChange={setActiveTab}
+            tabs={[
+              {
+                id: "orphans",
+                label: "Unresolved invoices",
+                badge: orphans.length,
+                content: (
+                  <ListSurface title="Unresolved invoices" description="Select the invoiced lot whose acknowledgement outcome you want to resolve.">
+                    <ListCommandToolbar mode={ORPHAN_LIST.selectionMode ?? "single"} count={orphanSelection.selectedCount}>
+                      <AppButton type="button" size="sm" className="min-h-10 rounded-full px-4" disabled={!orphanSelection.selectedId || isPending} onClick={() => setActiveTab("candidates")}>Review candidates</AppButton>
+                      <AppButton type="button" variant="danger" size="sm" className="min-h-10 rounded-full px-4" disabled={!orphanSelection.selectedId || isPending} onClick={() => setConfirmingOutcome("shutout")}>Mark shut out</AppButton>
+                      <AppButton type="button" size="sm" className="min-h-10 rounded-full px-4" disabled={!orphanSelection.selectedId || isPending} onClick={() => setConfirmingOutcome("missing")}>Mark missing</AppButton>
+                      <AppButton type="button" variant="ghost" size="sm" className="min-h-10 rounded-full px-4" disabled={!orphanSelection.selectedId || isPending} onClick={() => setConfirmingOutcome("pending")}>Leave unresolved</AppButton>
+                    </ListCommandToolbar>
+                    <ListSearchPanel columns={ORPHAN_LIST.columns} controls={orphanControls} />
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
+                            {ORPHAN_LIST.columns.map((column) => (
+                              <th key={column.key} className={`px-4 py-3 ${column.key === "netWt" ? "text-right" : ""}`}>
+                                {column.sortable ? <SortButton col={column} controls={orphanControls} /> : column.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orphanControls.rows.map((row) => (
+                            <tr
+                              key={row.lotId}
+                              {...orphanSelection.rowProps(row.lotId, isPending)}
+                              className={`cursor-pointer border-b border-stone-100 last:border-0 dark:border-stone-800 ${orphanSelection.isSelected(row.lotId) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                            >
+                              <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{row.invoiceNo}</td>
+                              <td className="px-4 py-3 font-medium">{row.grade}</td>
+                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{row.netWt.toFixed(2)} kg</td>
+                              <td className="whitespace-nowrap px-4 py-3">{row.markCode ?? "—"}</td>
+                            </tr>
+                          ))}
+                          {orphanControls.rows.length === 0 && orphans.length > 0 && (
+                            <tr><td colSpan={4} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No unresolved invoices match the current search.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
                     </div>
-                    <div className="w-32 shrink-0">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className={b.text}>{b.label}</span>
-                        <span className={`font-mono ${b.text}`}>{Math.round(r.confidence * 100)}%</span>
-                      </div>
-                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                        <div className={`h-full ${b.bar}`} style={{ width: `${Math.round(r.confidence * 100)}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2 border-t border-stone-100 dark:border-stone-800 pt-2">
-                    <button
-                      disabled={isPending}
-                      onClick={() => setLinking({ candidate: r.candidate, confidence: r.confidence, delta })}
-                      className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
-                    >
-                      Link to invoice {orphan.invoiceNo}
-                    </button>
-                    <button
-                      disabled={isPending}
-                      onClick={() => doReject(r.candidate)}
-                      className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            {visible.length === 0 && (
-              <div className="rounded-lg border border-dashed border-stone-300 dark:border-stone-700 p-6 text-center text-xs text-stone-500 dark:text-stone-400">
-                No candidates above {Math.round(minConfidence * 100)}%. Lower the threshold, or record an outcome below.
-              </div>
-            )}
-          </div>
-
-          {/* Orphan-level outcomes */}
-          <div className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-            <div className="mb-2 text-xs uppercase tracking-wide text-stone-400 dark:text-stone-500">No lot fits?</div>
-            <div className="flex flex-wrap gap-2">
-              <button disabled={isPending} onClick={() => outcome(markShutout, "shutout")}
-                className="rounded-md border border-red-300 dark:border-red-700 px-3 py-1.5 text-xs text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50">
-                Mark as shut out
-              </button>
-              <button disabled={isPending} onClick={() => outcome(markMissing, "missing")}
-                className="rounded-md border border-amber-300 dark:border-amber-700 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950 disabled:opacity-50">
-                Mark as genuinely missing
-              </button>
-              <button disabled={isPending} onClick={() => outcome(markPending, "pending")}
-                className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">
-                Leave unresolved
-              </button>
-            </div>
-          </div>
-
-          {/* Audit trail */}
-          <div>
-            <div className="mb-1.5 text-xs uppercase tracking-wide text-stone-400 dark:text-stone-500">Audit trail</div>
-            <div className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-              {audit.length === 0 ? (
-                <div className="p-3 text-xs text-stone-400 dark:text-stone-500">No decisions recorded yet.</div>
-              ) : (
-                <ul className="divide-y divide-stone-100 dark:divide-stone-800">
-                  {audit.map((a, i) => (
-                    <li key={i} className="px-3 py-2 text-xs">
-                      <span className="font-medium text-stone-700 dark:text-stone-200">{a.action}</span>
-                      <span className="text-stone-500 dark:text-stone-400"> · {a.detail}</span>
-                      {a.confidenceShown != null && (
-                        <span className="text-stone-400 dark:text-stone-500"> · shown {Math.round(a.confidenceShown * 100)}%</span>
-                      )}
-                      {a.reason && <div className="text-stone-400 dark:text-stone-500">reason: {a.reason}</div>}
-                      <div className="text-stone-400 dark:text-stone-500">
-                        by {a.actor} · {new Date(a.createdAt).toLocaleString()}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+                  </ListSurface>
+                ),
+              },
+              {
+                id: "candidates",
+                label: "Candidate lots",
+                badge: ranked.length,
+                content: (
+                  <CandidateList
+                    key={orphan.lotId}
+                    orphan={orphan}
+                    rows={ranked}
+                    busy={isPending}
+                    onLink={(match) => setLinking({ orphan, match })}
+                    onReject={(match, onSuccess) => runWorkflow(
+                      () => rejectCandidate({
+                        saleId: orphan.dispatchId ?? saleId,
+                        lotId: orphan.lotId,
+                        candidateLotNo: match.candidate.lotNo,
+                      }),
+                      "Candidate rejected for this invoice.",
+                      onSuccess,
+                    )}
+                  />
+                ),
+              },
+              {
+                id: "audit",
+                label: "Audit trail",
+                badge: audit.length,
+                content: <WorkflowAuditList rows={audit} title="Acknowledgement decision audit" description="Search links, rejected candidates, and recorded no-match outcomes." />,
+              },
+            ]}
+          />
         </div>
       )}
 
-      {/* Link confirmation dialog */}
-      {linking && orphan && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
-            <h3 className="text-base font-semibold text-stone-800 dark:text-stone-100">Confirm link</h3>
-            <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-              Link invoice <span className="font-mono">{orphan.invoiceNo}</span> ({orphan.grade} ·{" "}
-              {orphan.netWt.toFixed(2)} kg) to lot <span className="font-mono">{linking.candidate.lotNo ?? "—"}</span>{" "}
-              ({linking.candidate.grade} · {linking.candidate.netWt.toFixed(2)} kg)?
-            </p>
-            {linking.delta !== 0 && (
-              <div className="mt-3 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 p-2.5 text-xs text-amber-800 dark:text-amber-300">
-                Weights differ by {linking.delta > 0 ? "+" : "−"}{Math.abs(linking.delta).toFixed(2)} kg. The link is
-                allowed, but the difference is filed as a weight mismatch in the audit trail so it isn&apos;t lost.
-              </div>
-            )}
-            <label className="mt-3 block text-xs text-stone-500 dark:text-stone-400">Reason (optional, kept in the audit trail)</label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-              placeholder="e.g. confirmed with broker — same chest, re-weighed at warehouse"
-              className="mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-950 p-2 text-sm text-stone-700 dark:text-stone-200"
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => { setLinking(null); setReason(""); }}
-                className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmLink}
-                disabled={isPending}
-                className="rounded-md bg-green-700 dark:bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50"
-              >
-                Confirm link
-              </button>
-            </div>
-          </div>
-        </div>
+      <ConfirmationDialog
+        open={confirmingOutcome !== null}
+        title={confirmingOutcome ? OUTCOME_COPY[confirmingOutcome].title : "Confirm outcome"}
+        description={confirmingOutcome ? OUTCOME_COPY[confirmingOutcome].description : "Confirm this reconciliation outcome."}
+        confirmLabel={confirmingOutcome ? OUTCOME_COPY[confirmingOutcome].confirm : "Confirm"}
+        destructive={confirmingOutcome === "shutout"}
+        busy={isPending}
+        onCancel={() => setConfirmingOutcome(null)}
+        onConfirm={confirmOutcome}
+      />
+
+      {linking && (
+        <WorkflowDecisionDialog
+          open
+          title="Confirm link"
+          description={<>Link invoice <span className="font-mono">{linking.orphan.invoiceNo}</span> ({linking.orphan.grade} · {linking.orphan.netWt.toFixed(2)} kg) to catalogue lot <span className="font-mono">{linking.match.candidate.lotNo ?? "—"}</span> ({linking.match.candidate.grade} · {linking.match.candidate.netWt.toFixed(2)} kg)?</>}
+          warning={linking.match.delta !== 0 ? <>Weights differ by {linking.match.delta > 0 ? "+" : "−"}{Math.abs(linking.match.delta).toFixed(2)} kg. The difference will be kept in the audit trail.</> : undefined}
+          reason={reason}
+          reasonPlaceholder="e.g. confirmed with broker — same chest, re-weighed at warehouse"
+          confirmLabel="Confirm link"
+          busy={isPending}
+          onReasonChange={setReason}
+          onCancel={() => { setLinking(null); setReason(""); }}
+          onConfirm={confirmLink}
+        />
       )}
-    </div>
+    </section>
+  );
+}
+
+function CandidateList({
+  orphan,
+  rows,
+  busy,
+  onLink,
+  onReject,
+}: {
+  orphan: Orphan;
+  rows: RankedCandidate[];
+  busy: boolean;
+  onLink: (match: RankedCandidate) => void;
+  onReject: (match: RankedCandidate, onSuccess: () => void) => void;
+}) {
+  const [minConfidence, setMinConfidence] = useState(0);
+  const [rejected, setRejected] = useState<Set<string>>(() => new Set());
+  const [confirmingReject, setConfirmingReject] = useState(false);
+  const eligibleRows = useMemo(
+    () => rows.filter((row) => !rejected.has(row.candidate.key) && row.confidence >= minConfidence),
+    [minConfidence, rejected, rows],
+  );
+
+  return (
+    <EntityList
+      scope={`acknowledgement-candidates-${orphan.lotId}`}
+      initialRows={eligibleRows}
+      definition={CANDIDATE_LIST}
+      getId={(row) => row.candidate.key}
+      rowLabel={(row) => `Catalogue lot ${row.candidate.lotNo ?? "unknown"}`}
+      emptyMessage={`No candidates are available above ${Math.round(minConfidence * 100)}% confidence.`}
+      renderMode="workflow"
+      render={({ controls, selection }) => {
+        const selected = eligibleRows.find((row) => row.candidate.key === selection.selectedId);
+        return (
+          <ListSurface
+            title="Candidate catalogue lots"
+            description={`Ranked matches for invoice ${orphan.invoiceNo} (${orphan.grade} · ${orphan.netWt.toFixed(2)} kg).`}
+          >
+            <ListCommandToolbar mode={CANDIDATE_LIST.selectionMode ?? "single"} count={selection.selectedCount}>
+              <label className="flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-300">
+                Min confidence
+                <input type="range" min="0" max="1" step="0.05" value={minConfidence} onChange={(event) => setMinConfidence(Number(event.target.value))} className="w-24 accent-green-600" />
+                <span className="w-8 font-mono">{Math.round(minConfidence * 100)}%</span>
+              </label>
+              <AppButton type="button" variant="primary" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => selected && onLink(selected)}>Link selected lot</AppButton>
+              <AppButton type="button" variant="danger" size="sm" className="min-h-10 rounded-full px-4" disabled={!selected || busy} onClick={() => setConfirmingReject(true)}>Reject candidate</AppButton>
+            </ListCommandToolbar>
+            <ListSearchPanel columns={CANDIDATE_LIST.columns} controls={controls} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
+                    {CANDIDATE_LIST.columns.map((column) => (
+                      <th key={column.key} className={`px-4 py-3 ${["netWt", "delta", "confidence"].includes(column.key) ? "text-right" : ""}`}>
+                        {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {controls.rows.map((row) => {
+                    const confidenceBand = matchBand(row.confidence);
+                    return (
+                      <tr
+                        key={row.candidate.key}
+                        {...selection.rowProps(row.candidate.key, busy)}
+                        className={`cursor-pointer border-b border-stone-100 align-top last:border-0 dark:border-stone-800 ${selection.isSelected(row.candidate.key) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{row.candidate.lotNo ?? "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium">{row.candidate.grade}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{row.candidate.netWt.toFixed(2)} kg</td>
+                        <td className="whitespace-nowrap px-4 py-3">{row.candidate.markCode ?? "—"}</td>
+                        <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${row.delta === 0 ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>
+                          {row.delta === 0 ? "Exact" : `${row.delta > 0 ? "+" : "−"}${Math.abs(row.delta).toFixed(2)} kg`}
+                        </td>
+                        <td className="min-w-36 px-4 py-3">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className={confidenceBand === "high" ? "text-green-700 dark:text-green-400" : confidenceBand === "medium" ? "text-amber-700 dark:text-amber-400" : "text-stone-500 dark:text-stone-400"}>{confidenceBand}</span>
+                            <span className="font-mono">{Math.round(row.confidence * 100)}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+                            <div className={confidenceBand === "high" ? "h-full bg-green-600" : confidenceBand === "medium" ? "h-full bg-amber-500" : "h-full bg-stone-400"} style={{ width: `${Math.round(row.confidence * 100)}%` }} />
+                          </div>
+                        </td>
+                        <td className="min-w-80 px-4 py-3 text-xs">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {row.dims.map((dimension) => (
+                              <span key={dimension.key} className={toneText[dimension.tone]}>{dimension.label}: {dimension.detail}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {controls.rows.length === 0 && eligibleRows.length > 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidate lots match the current search.</td></tr>
+                  )}
+                  {eligibleRows.length === 0 && (
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400 dark:text-stone-500">No candidates are available above {Math.round(minConfidence * 100)}% confidence.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <ConfirmationDialog
+              open={confirmingReject}
+              title="Reject selected candidate?"
+              description={`The selected catalogue lot will be excluded as a match for invoice ${orphan.invoiceNo}, and the rejection will be recorded in the audit trail.`}
+              confirmLabel="Reject candidate"
+              destructive
+              busy={busy}
+              onCancel={() => setConfirmingReject(false)}
+              onConfirm={() => {
+                if (!selected) return;
+                const rejectedKey = selected.candidate.key;
+                onReject(selected, () => {
+                  setRejected((current) => new Set(current).add(rejectedKey));
+                  selection.clear();
+                  setConfirmingReject(false);
+                });
+              }}
+            />
+          </ListSurface>
+        );
+      }}
+    />
   );
 }

@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { friendlyError } from "@/lib/errors";
+import { withTenantDataScope } from "@/lib/tenant-data";
 import { MANAGEMENT_ROLES, getDefaultRoles, roleHome, type Role } from "@/lib/roles";
 
 export type Profile = {
@@ -36,11 +38,14 @@ async function resolveProfile() {
   }
   if (!user) redirect("/login");
 
-  const { data } = await supabase
+  const { data, error: profileError } = await supabase
     .from("users")
     .select("id, name, role, factory_id, active")
     .eq("id", user.id)
     .single();
+  if (profileError && profileError.code !== "PGRST116") {
+    throw new Error(`Could not load your factory profile. ${friendlyError(profileError)}`);
+  }
   if (!data) {
     await supabase.auth.signOut();
     redirect("/login?error=no_profile");
@@ -51,7 +56,13 @@ async function resolveProfile() {
     redirect("/login?error=deactivated");
   }
 
-  return { supabase, profile };
+  return {
+    supabase: withTenantDataScope(supabase, {
+      factoryId: profile.factory_id,
+      actorUserId: profile.id,
+    }),
+    profile,
+  };
 }
 
 /**
@@ -74,16 +85,32 @@ export async function requireModuleAccess(moduleKey: string) {
 
   // Owner always has full access — no need to check overrides.
   if (profile.role !== "owner") {
-    const { data: override } = await supabase
+    const { data: override, error: permissionError } = await supabase
       .from("module_permissions")
       .select("allowed_roles")
       .eq("module_key", moduleKey)
       .maybeSingle();
+    // Permission lookup failures must fail closed. Falling back to defaults on
+    // a database error could grant access that this factory explicitly revoked.
+    if (permissionError) {
+      throw new Error(`Could not verify module permission. ${friendlyError(permissionError)}`);
+    }
 
     const allowed: string[] = override?.allowed_roles ?? [...getDefaultRoles(moduleKey)];
     if (!allowed.includes(profile.role)) redirect(roleHome(profile.role));
   }
 
+  return { supabase, profile };
+}
+
+/**
+ * Applies the factory's dynamic module permission first, then narrows a
+ * specific command to its allowed roles. Use this for mutations in modules
+ * that are readable by a wider audience (for example accountant read-only).
+ */
+export async function requireModuleRole(moduleKey: string, allowedRoles: readonly Role[]) {
+  const { supabase, profile } = await requireModuleAccess(moduleKey);
+  if (!allowedRoles.includes(profile.role)) redirect(roleHome(profile.role));
   return { supabase, profile };
 }
 
@@ -94,10 +121,11 @@ export async function collectorForUser(
   supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
   userId: string,
 ) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("collectors")
     .select("id, name, area")
     .eq("user_id", userId)
     .maybeSingle();
+  if (error) throw new Error(`Could not resolve the collector profile. ${friendlyError(error)}`);
   return data as { id: string; name: string; area: string | null } | null;
 }

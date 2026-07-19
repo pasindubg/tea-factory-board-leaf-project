@@ -71,19 +71,45 @@
 ## Lists And Search
 
 The shared list framework in `apps/web/components/list-controls.tsx` is the
-contract for every operational list, including tables, record selectors, and
-side panels. Define columns once, declare `selectionMode` (`"multi"` or
-`"single"`), and expose actions through `ListCommandToolbar` rather than
-duplicating row-specific controls. Use `ListSurface` for bordered table
-surfaces and `ListSidePanel` for persistent selectors. Rows must be selectable
-from any non-control area of the row and expose `aria-selected`; keyboard
-Enter/Space should perform the same selection. A list marked non-editable may
-still use the same search, sorting, and selection primitives without exposing
-edit commands.
+mandatory contract for every list implementation, including tables, record
+selectors, and side panels. Define columns once, declare `selectionMode`
+(`"multi"` or `"single"`), and expose actions through
+`ListCommandToolbar` rather than duplicating row-specific controls. Use
+`ListSurface` for bordered table surfaces and `ListSidePanel` for persistent
+selectors. Rows must be selectable from any non-control area of the row and
+expose `aria-selected`; keyboard Enter/Space should perform the same
+selection. A list marked non-editable may still use the same search, sorting,
+and selection primitives without exposing edit commands. Do not create an
+ad-hoc list outside this framework.
+
+For ordinary scalar CRUD collections, use `EntityList` from
+`apps/web/components/entity-list.tsx`. It takes the opaque resource identity,
+rows, a `ListDefinition`, permission result, and declarative columns, then
+owns the repeated refresh/search/selection/toolbar/create/delete/table wiring.
+The entity-specific form remains a `create.render` callback; column `edit`
+renderers own ordinary inline editing, `commands` own bulk/domain actions,
+`summary`/`footer` own aggregates, and `tabs` partitions one live entity into
+independent lanes. Ordinary linked-card selectors and side panels use
+`sideList`. All mutations remain typed tenant-scoped server actions. Reserve
+`EntityList.render` for genuine multi-record workflows and matrices; consume
+the controls supplied to that callback instead of importing list hooks in the
+page.
+
+CRUD-enabled lists give `EntityList` an opaque typed resource from
+`apps/web/lib/list-resources.ts`. Its internal shared controller dispatches
+through the server-only allowlist in `list-resource-registry.ts`, where module
+authorization, parameter validation, tenant/actor predicates, projection, and
+row mapping are defined. Do not create a refresh action per entity, and never
+let the browser select a table, tenant, columns, or arbitrary query filters.
+After successful CRUD, the framework replaces only matching mounted list rows
+plus explicitly invalidated dependent lists. Do not require a browser reload or
+use route-wide `router.refresh()` for ordinary list CRUD.
 
 List pages and list sections must use one consistent search pattern.
 
-- Use `useListControls`, `SortButton`, and `ListSearchPanel` from `apps/web/components/list-controls.tsx` for sortable/searchable tables.
+- Ordinary tables declare searchable/sortable columns on `EntityList`; only
+  approved `render` workflow/detail exceptions use the supplied
+  `controls` with `SortButton` and `ListSearchPanel`.
 - `ListSearchPanel` shows one always-visible LOV select for every column with an
   accessor. Omitting the accessor is the explicit way to make a list attribute
   non-searchable. Do not use a Google-style general text box for ordinary list
@@ -96,6 +122,10 @@ List pages and list sections must use one consistent search pattern.
   a list Search button.
 - Keep the search surface collapsed by default. LOV selections are drafts until
   the user selects the explicit `Search` action; only then update the visible rows.
+- Creation is owned by `ListSurface`: providing `onCreate` displays its built-in
+  `+ New` button, while `canCreate` and `createDisabledReason` express the real
+  permission. Open `ListCreatePanel` inside that same list. Do not duplicate New
+  in the page header, command toolbar, row, or a persistent adjacent form.
 - Editable lists use a selection toolbar above the list. Multi-select lists show a
   leading checkbox column and top-level Edit plus domain actions such as Deactivate
   and Reactivate; do not repeat text actions on every row. Edit requires exactly
@@ -103,8 +133,9 @@ List pages and list sections must use one consistent search pattern.
 - A list explicitly configured with `selectionMode: "single"` omits the checkbox
   column and bulk toolbar; it exposes the edit action only for its selected/current
   row. Multi-select is the default for editable operational lists.
-- When two or more related lists belong to the same work surface, use
-  `TabbedListSurface` with a top `tablist` instead of stacking full tables. Each
+- When one live entity is divided into lanes, use `EntityList.tabs`. When two
+  or more independent related lists belong to the same work surface, use
+  `EntityListTabs` with a top `tablist` instead of stacking full tables. Each
   tab retains its own list search, selection, and actions; arrow keys plus
   Home/End must navigate the tab bar.
 - Do not add inline filter rows inside `<thead>`. Put the top-right `Search` button/panel above the table inside the same bordered table surface.
@@ -125,7 +156,7 @@ Auction identifiers are similar but not interchangeable.
 - **Dispatch no.** uses four digits: `0001`, `0004`, `0123`.
 - **Invoice no.** and **lot no.** use four digits when numeric: `0951`, `0058`.
 - **Auction sale no. / target sale no.** uses three digits: `019`, `023`.
-- Code should use `formatFourDigitNo` only for dispatch, invoice, and lot numbers. Use `formatSaleNo` for `target_sale_no` and sales overview/detail display.
+- Code should use `formatFourDigitNo` for dispatch, invoice, and lot numbers, and `formatSaleNo` for `target_sale_no` and sales overview/detail display. Both functions render their numeric values as four digits.
 - Multiple brokers can participate in the same auction sale number. Any sale-level overview grouped by sale number must show all participating brokers, not a single overwritten broker.
 
 ## Detail Pages

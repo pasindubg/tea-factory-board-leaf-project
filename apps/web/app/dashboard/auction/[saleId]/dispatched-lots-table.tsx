@@ -1,539 +1,363 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { updateLot, deleteLot, markReprint } from "../actions";
-import { stateBucket } from "../state-buckets";
-import type { LotRow } from "./lot-row";
-import { ListCommandToolbar, ListSearchPanel, ListSelectionCell, ListSelectionHeader, ListSurface, SortButton, useListControls, useListSelection, type ColumnDef, type ListDefinition } from "@/components/list-controls";
-import { formatFourDigitNo } from "../sale-number";
+import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
+import { SubmitButton } from "@/components/submit-button";
+import { AppButton } from "@/components/ui/button";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import { createDispatchedLotForList, deleteLot, markReprint, updateLot } from "../actions";
 import { LOT_STATES } from "../lot-states";
-import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { showAppToast } from "@/components/action-feedback";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { stateBucket } from "../state-buckets";
+import { DispatchLotForm } from "./dispatch-lot-form";
+import type { LotRow } from "./lot-row";
 
-const COLUMNS: ColumnDef<LotRow>[] = [
-  { key: "invoice_no", label: "Invoice(s)", accessor: (r) => (r.lot_invoices ?? []).map((i) => i.invoice_no).join(", ") || r.invoice_no || null, sortable: true, filter: "text" },
-  { key: "lot_no", label: "Lot no.", accessor: (r) => r.lot_no ?? null, sortable: true, filter: "text" },
-  { key: "grade", label: "Grade", accessor: (r) => r.grade ?? null, sortable: true, filter: "select" },
-  { key: "bags", label: "Bags", accessor: (r) => r.bags ?? null, sortable: true },
-  { key: "kg_per_bag", label: "kg/bag", accessor: (r) => r.kg_per_bag ?? null, sortable: true },
-  { key: "sample_allowance", label: "Sample kg", accessor: (r) => Number(r.sample_allowance ?? 0), sortable: true },
-  { key: "net_wt", label: "Net kg", accessor: (r) => Number(r.net_wt ?? 0), sortable: true },
-  { key: "state", label: "State", accessor: (r) => r.state ?? null, sortable: true, filter: "select", filterOptions: LOT_STATES.map((s) => ({ value: s, label: s })) },
-];
+const REPRINTABLE_STATES = new Set(["acknowledged", "catalogued", "valued", "withdrawn"]);
+const inputClass = "w-20 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
+const numberInputClass = `${inputClass} text-right`;
 
-const LIST: ListDefinition<LotRow> = {
-  columns: COLUMNS,
-  selectionMode: "single",
-  editable: true,
-  commands: [{ id: "edit", label: "Edit selected lot", requiresSelection: true }],
-};
+function invoiceLabel(row: LotRow) {
+  const invoices = (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no);
+  return (invoices.length ? invoices : [row.invoice_no ?? ""])
+    .map(formatFourDigitNo)
+    .filter(Boolean)
+    .join(", ");
+}
 
-export function DispatchedLotsTable({
-  rows,
-  setRows,
-  saleId,
-  isOwner,
-  canEdit,
-  soldLotIds,
-}: {
-  rows: LotRow[];
-  setRows: Dispatch<SetStateAction<LotRow[]>>;
-  saleId: string;
-  isOwner: boolean;
-  canEdit: boolean;
-  soldLotIds: string[];
-}) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [reprintId, setReprintId] = useState<string | null>(null);
-  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [lotToDelete, setLotToDelete] = useState<{ id: string; cascade: boolean } | null>(null);
-  const controls = useListControls(rows, LIST.columns);
-  const selection = useListSelection(rows, { mode: LIST.selectionMode ?? "single", getId: (row) => row.id });
-  const visibleRows = controls.rows;
-  const selectedLot = rows.find((row) => row.id === selection.selectedId) ?? null;
-
-  useEffect(() => {
-    setEditingId(null);
-    setReprintId(null);
-    setPendingIds(new Set());
-  }, [rows, canEdit]);
-
-  async function confirmLotDelete() {
-    if (!lotToDelete) return;
-    const id = lotToDelete.id;
-    setPendingIds((prev) => new Set(prev).add(id));
-    try {
-      await deleteLot(id, saleId);
-      setRows((curr) => curr.filter((row) => row.id !== id));
-      setLotToDelete(null);
-      showAppToast("Lot deleted.");
-    } catch {
-      showAppToast("Could not delete the lot. Please try again.", "error");
-    } finally {
-      setPendingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
-  }
+function statusCell(row: LotRow, soldLotIds: Set<string>) {
+  const displayState = soldLotIds.has(row.id) ? "sold" : row.state;
+  const bucket = stateBucket(displayState);
+  const netWeight = Number(row.net_wt ?? 0);
+  const minNetKg = row.threshold_min_net_kg ?? 0;
+  const hasMinimumWeightIssue =
+    row.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
 
   return (
-    <ListSurface>
-      <ListCommandToolbar mode={LIST.selectionMode ?? "single"} count={selection.selectedCount}>
-        {canEdit && isOwner && (
-          <button
-            type="button"
-            disabled={!selectedLot || pendingIds.has(selectedLot.id)}
-            onClick={() => selectedLot && setEditingId(selectedLot.id)}
-            className="inline-flex min-h-9 items-center rounded-full bg-green-700 px-4 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-green-600 dark:hover:bg-green-500"
-          >
-            Edit selected lot
-          </button>
-        )}
-      </ListCommandToolbar>
-      <ListSearchPanel columns={LIST.columns} controls={controls} />
-      <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            <ListSelectionHeader mode={LIST.selectionMode ?? "single"} scope="dispatch-lots" />
-            {LIST.columns.map((col) => (
-              <th key={col.key} className={`px-3 py-3 ${["bags", "kg_per_bag", "sample_allowance", "net_wt"].includes(col.key) ? "text-right" : ""}`}>
-                {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
-              </th>
-            ))}
-            <th className="px-3 py-3"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleRows.map((l) => {
-            const isEditing = editingId === l.id;
-            const invoices = (l.lot_invoices ?? []).map((i) => i.invoice_no);
-            const invoiceLabel = (invoices.length ? invoices : [l.invoice_no ?? ""]).map(formatFourDigitNo).filter(Boolean).join(", ");
-            const displayState = soldLotIds.includes(l.id) ? "sold" : l.state;
-            const bucket = stateBucket(displayState);
-            const netWeight = Number(l.net_wt ?? 0);
-            const minNetKg = l.threshold_min_net_kg ?? 0;
-            const hasMinimumWeightIssue = l.threshold_applies && minNetKg > 0 && netWeight > 0 && netWeight < minNetKg;
-            const minimumWeightTitle = `Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`;
-            const removable = l.state === "invoiced" || l.state === "pending";
-            // The owner may delete a lot at ANY lifecycle stage (e.g. cleaning up a
-            // wrongly imported ack lot after the dispatch is confirmed) — the server
-            // cascades the lot's dependent records. Non-owners keep the old rule.
-            const deletable = removable || isOwner;
-            const reprintable = l.state === "acknowledged" || l.state === "catalogued" || l.state === "valued" || l.state === "withdrawn";
-
-            return (
-              <tr
-                key={l.id}
-                {...selection.rowProps(l.id)}
-                className={`cursor-pointer border-b border-stone-100 dark:border-stone-800 last:border-0 align-top ${selection.isSelected(l.id) ? "bg-green-50/60 dark:bg-green-950/20" : ""}`}
-              >
-                {isEditing ? (
-                  <EditRow
-                    lot={l}
-                    saleId={saleId}
-                    isOwner={isOwner}
-                    onCancel={() => setEditingId(null)}
-                    onSaved={(patch) => {
-                      setRows((curr) => curr.map((row) => (row.id === l.id ? { ...row, ...patch } : row)));
-                      setEditingId(null);
-                    }}
-                    onBusy={(busy) => {
-                      setPendingIds((prev) => {
-                        const next = new Set(prev);
-                        if (busy) next.add(l.id);
-                        else next.delete(l.id);
-                        return next;
-                      });
-                    }}
-                  />
-                ) : (
-                  <>
-                    <ListSelectionCell
-                      mode={LIST.selectionMode ?? "single"}
-                      scope="dispatch-lots"
-                      name="selected_dispatch_lot"
-                      id={l.id}
-                      label={`lot ${invoiceLabel || l.lot_no || l.id}`}
-                      checked={selection.isSelected(l.id)}
-                      onChange={() => selection.select(l.id)}
-                    />
-                    <td className="px-3 py-2 font-medium">
-                      {invoiceLabel}
-                      {invoices.length > 1 && (
-                        <span className="ml-1 rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 text-xs text-stone-500 dark:text-stone-400">
-                          {invoices.length} invoices
-                        </span>
-                      )}
-                      {l.lot_source === "acknowledgement" && (
-                        <span
-                          className="ml-1 rounded-full bg-purple-100 dark:bg-purple-900 px-1.5 py-0.5 text-xs text-purple-800 dark:text-purple-300"
-                          title="This lot was not in the factory-entered dispatch — it was added from the broker's acknowledgement PDF."
-                        >
-                          From ack
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">{l.lot_no ?? "—"}</td>
-                    <td className="px-3 py-2">{l.grade}</td>
-                    <td className="px-3 py-2 text-right">{l.bags ?? "—"}</td>
-                    <td className="px-3 py-2 text-right">
-                      {l.kg_per_bag != null ? Number(l.kg_per_bag).toFixed(2) : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {l.sample_allowance != null ? Number(l.sample_allowance).toFixed(2) : "0.00"}
-                    </td>
-                    <td className="px-3 py-2 text-right">{netWeight.toFixed(2)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs ${bucket?.style ?? "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400"}`}
-                          title={l.shutout_reason ? `${displayState}: ${l.shutout_reason}` : displayState ?? ""}
-                        >
-                          {bucket?.label ?? l.state}
-                        </span>
-                        {hasMinimumWeightIssue && (
-                          <span
-                            className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-300"
-                            title={minimumWeightTitle}
-                          >
-                            Min kg
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {canEdit && isOwner && deletable && (
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => setEditingId(l.id)}
-                            disabled={pendingIds.has(l.id)}
-                            className="rounded p-1 text-stone-400 hover:text-stone-600 hover:bg-stone-100 dark:text-stone-500 dark:hover:text-stone-300 dark:hover:bg-stone-800 disabled:opacity-40"
-                            title="Edit"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                              <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
-                              <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={pendingIds.has(l.id)}
-                            onClick={() => setLotToDelete({ id: l.id, cascade: !removable })}
-                            className="rounded p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-40"
-                            title="Delete"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        </div>
-                      )}
-                      {canEdit && isOwner && reprintable && (
-                        <div className="text-right">
-                          {reprintId === l.id ? (
-                            <ReprintForm
-                              lotId={l.id}
-                              saleId={saleId}
-                              invoices={invoices}
-                              existingSampleKg={Number(l.sample_allowance ?? 0)}
-                              onCancel={() => setReprintId(null)}
-                              onSaved={(patch) => {
-                                setRows((curr) => curr.map((row) => (row.id === l.id ? { ...row, ...patch } : row)));
-                                setReprintId(null);
-                              }}
-                              onBusy={(busy) => {
-                                setPendingIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (busy) next.add(l.id);
-                                  else next.delete(l.id);
-                                  return next;
-                                });
-                              }}
-                            />
-                          ) : (
-                            <button
-                              onClick={() => setReprintId(l.id)}
-                              disabled={pendingIds.has(l.id)}
-                              className="rounded px-2 py-1 text-xs text-orange-700 hover:bg-orange-50 hover:underline dark:text-orange-400 dark:hover:bg-orange-950 disabled:opacity-40"
-                            >
-                              Re-print
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </>
-                )}
-              </tr>
-            );
-          })}
-          {visibleRows.length === 0 && rows.length > 0 && (
-            <tr>
-              <td colSpan={9} className="px-6 py-12 text-center">
-                <p className="text-sm text-stone-400 dark:text-stone-500">No lots match these filters.</p>
-                <button type="button" onClick={controls.clearFilters} className="mt-1 text-xs text-green-700 hover:underline dark:text-green-400">
-                  Clear filters
-                </button>
-              </td>
-            </tr>
-          )}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={9} className="px-6 py-12 text-center">
-                <p className="text-2xl mb-2">📦</p>
-                <p className="text-sm text-stone-400 dark:text-stone-500">No lots yet.</p>
-                <p className="text-xs text-stone-300 dark:text-stone-600 mt-1">Click + Add lot above to enter the lots you dispatched.</p>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      </div>
-      <ConfirmationDialog
-        open={lotToDelete !== null}
-        title="Delete lot?"
-        description={lotToDelete?.cascade ? "This will permanently remove the lot and its acknowledgement, valuation, and sale records. This cannot be undone." : "This will permanently remove the lot and its invoice records. This cannot be undone."}
-        confirmLabel="Delete lot"
-        destructive
-        busy={lotToDelete ? pendingIds.has(lotToDelete.id) : false}
-        onCancel={() => setLotToDelete(null)}
-        onConfirm={confirmLotDelete}
-      />
-    </ListSurface>
+    <div className="flex flex-wrap gap-1.5">
+      <span
+        className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`}
+        title={row.shutout_reason ? `${displayState}: ${row.shutout_reason}` : displayState ?? ""}
+      >
+        {bucket.label}
+      </span>
+      {hasMinimumWeightIssue && (
+        <span
+          className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+          title={`Net weight ${netWeight.toFixed(2)} kg is below the ${minNetKg.toFixed(2)} kg broker/grade threshold.`}
+        >
+          Min kg
+        </span>
+      )}
+    </div>
   );
 }
 
-export function EditRow({
-  lot,
+function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<LotRow>[] {
+  return [
+    {
+      key: "invoice_no",
+      label: "Invoice(s)",
+      accessor: (row) => (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no).join(", ") || row.invoice_no || null,
+      sortable: true,
+      filter: "text",
+      render: (row) => {
+        const invoices = row.lot_invoices ?? [];
+        return (
+          <div className="font-medium">
+            {invoiceLabel(row) || "—"}
+            {invoices.length > 1 && (
+              <span className="ml-1 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
+                {invoices.length} invoices
+              </span>
+            )}
+            {row.lot_source === "acknowledgement" && (
+              <span
+                className="ml-1 rounded-full bg-purple-100 px-1.5 py-0.5 text-xs text-purple-800 dark:bg-purple-900 dark:text-purple-300"
+                title="This lot was added from the broker acknowledgement PDF."
+              >
+                From ack
+              </span>
+            )}
+          </div>
+        );
+      },
+      edit: (row, { formId }) => (
+        <input
+          form={formId}
+          name="invoice_no"
+          defaultValue={formatFourDigitNo(row.invoice_no)}
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
+          className={inputClass}
+        />
+      ),
+    },
+    {
+      key: "sale_no",
+      label: "Sale",
+      accessor: (row) => row.final_sale_no ?? row.provisional_sale_no ?? null,
+      sortable: true,
+      filter: "text",
+      render: (row) => (
+        <div className="flex items-center gap-1.5">
+          <span className="tabular-nums">{formatSaleNo(row.final_sale_no ?? row.provisional_sale_no) || "—"}</span>
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+            row.final_sale_no
+              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+              : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"
+          }`}>
+            {row.final_sale_no ? "Final" : "Temporary"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "lot_no",
+      label: "Lot no.",
+      accessor: (row) => row.lot_no ?? null,
+      sortable: true,
+      filter: "text",
+      edit: (row, { formId }) => (
+        <input
+          form={formId}
+          name="lot_no"
+          defaultValue={formatFourDigitNo(row.lot_no)}
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
+          className={inputClass}
+          placeholder="Lot no."
+        />
+      ),
+    },
+    {
+      key: "grade",
+      label: "Grade",
+      accessor: (row) => row.grade ?? null,
+      sortable: true,
+      filter: "select",
+      edit: (row, { formId }) => (
+        <input form={formId} name="grade" defaultValue={row.grade ?? ""} className={inputClass} />
+      ),
+    },
+    {
+      key: "bags",
+      label: "Bags",
+      accessor: (row) => row.bags ?? null,
+      sortable: true,
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      edit: (row, { formId }) => (
+        <input form={formId} name="bags" type="number" min="0" step="1" defaultValue={row.bags ?? ""} className={numberInputClass} />
+      ),
+    },
+    {
+      key: "kg_per_bag",
+      label: "kg/bag",
+      accessor: (row) => row.kg_per_bag ?? null,
+      sortable: true,
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      render: (row) => row.kg_per_bag == null ? "—" : Number(row.kg_per_bag).toFixed(2),
+      edit: (row, { formId }) => (
+        <input form={formId} name="kg_per_bag" type="number" min="0" step="0.01" defaultValue={row.kg_per_bag == null ? "" : Number(row.kg_per_bag)} className={numberInputClass} />
+      ),
+    },
+    {
+      key: "sample_allowance",
+      label: "Sample kg",
+      accessor: (row) => Number(row.sample_allowance ?? 0),
+      sortable: true,
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      render: (row) => Number(row.sample_allowance ?? 0).toFixed(2),
+      edit: (row, { formId }) => (
+        <input form={formId} name="sample_allowance" type="number" min="0" step="0.01" defaultValue={row.sample_allowance == null ? "" : Number(row.sample_allowance)} className={numberInputClass} />
+      ),
+    },
+    {
+      key: "net_wt",
+      label: "Net kg",
+      accessor: (row) => Number(row.net_wt ?? 0),
+      sortable: true,
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      render: (row) => Number(row.net_wt ?? 0).toFixed(2),
+    },
+    {
+      key: "state",
+      label: "State",
+      accessor: (row) => soldLotIds.has(row.id) ? "sold" : row.state ?? null,
+      sortable: true,
+      filter: "select",
+      filterOptions: LOT_STATES.map((state) => ({ value: state, label: state })),
+      render: (row) => statusCell(row, soldLotIds),
+      edit: isOwner
+        ? (row, { formId }) => (
+            <select form={formId} name="state" defaultValue={row.state ?? "invoiced"} className={inputClass}>
+              {LOT_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+            </select>
+          )
+        : undefined,
+    },
+  ];
+}
+
+async function deleteLots(ids: string[], saleId: string): Promise<ListMutationResult> {
+  let succeeded = 0;
+  const failures: string[] = [];
+  for (const id of ids) {
+    const result = await deleteLot(id, saleId);
+    if (result.ok) succeeded += 1;
+    else failures.push(result.error);
+  }
+  if (succeeded === 0) {
+    return { ok: false, error: failures[0] ?? "No lots were deleted." };
+  }
+  return {
+    ok: true,
+    notice: `${succeeded} lot${succeeded === 1 ? "" : "s"} deleted${failures.length ? `; ${failures.length} could not be deleted` : ""}.`,
+  };
+}
+
+export function DispatchedLotsTable({
+  initialRows,
   saleId,
   isOwner,
-  onCancel,
-  onSaved,
-  onBusy,
+  canEdit,
+  canAdd,
+  grades,
+  soldLotIds,
+  title = "Lot invoices",
+  onRowsChange,
 }: {
-  lot: LotRow;
+  initialRows: LotRow[];
   saleId: string;
   isOwner: boolean;
-  onCancel: () => void;
-  onSaved: (patch: Partial<Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">>) => void;
-  onBusy: (busy: boolean) => void;
+  canEdit: boolean;
+  canAdd: boolean;
+  grades: { code: string; name: string }[];
+  soldLotIds: string[];
+  title?: string;
+  onRowsChange?: (rows: LotRow[]) => void;
 }) {
-  const formId = `edit-${lot.id}`;
-  const [saving, setSaving] = useState(false);
+  const soldIds = new Set(soldLotIds);
+  const definition: ListDefinition<LotRow> = {
+    columns: columns(isOwner, soldIds),
+    selectionMode: canEdit ? "multi" : "single",
+    add: canAdd,
+    edit: canEdit,
+    delete: canEdit,
+  };
+  const commands: EntityListCommand<LotRow>[] = [{
+    id: "mark-reprint",
+    label: "Re-print",
+    pendingLabel: "Marking…",
+    visible: canEdit && isOwner,
+    disabled: ({ selectedRows }) =>
+      selectedRows.length !== 1 || !REPRINTABLE_STATES.has(selectedRows[0]?.state ?? ""),
+    disabledReason: ({ selectedRows }) => {
+      if (selectedRows.length !== 1) return "Select exactly one lot.";
+      if (!REPRINTABLE_STATES.has(selectedRows[0]?.state ?? "")) {
+        return "Only acknowledged, catalogued, valued, or withdrawn lots can be marked as re-prints.";
+      }
+      return undefined;
+    },
+    panel: {
+      title: "Mark selected lot as re-print",
+      action: (formData, { selectedRows }) => markReprint(selectedRows[0]!.id, saleId, formData),
+      render: ({ action, close, command }) => (
+        <ReprintForm lot={command.selectedRows[0]!} action={action} onCancel={close} />
+      ),
+    },
+  }];
 
-  const invoices = (lot.lot_invoices ?? []).map((i) => i.invoice_no);
   return (
-    <>
-      <td className="px-3 py-2 font-medium">
-        <input
-          name="invoice_no"
-          form={formId}
-          defaultValue={formatFourDigitNo(lot.invoice_no)}
-          onBlur={(event) => {
-            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
-          }}
-          className="w-20 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-        {invoices.length > 1 && (
-          <span className="ml-1 rounded bg-stone-100 dark:bg-stone-800 px-1.5 py-0.5 text-xs text-stone-500">
-            {invoices.length} inv
-          </span>
-        )}
-      </td>
-      <td className="px-3 py-2">
-        <input
-          name="lot_no"
-          form={formId}
-          defaultValue={formatFourDigitNo(lot.lot_no)}
-          placeholder="Lot no."
-          onBlur={(event) => {
-            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
-          }}
-          className="w-16 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-      </td>
-      <td className="px-3 py-2">
-        <input
-          name="grade"
-          form={formId}
-          defaultValue={lot.grade ?? ""}
-          className="w-20 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-      </td>
-      <td className="px-3 py-2 text-right">
-        <input
-          name="bags"
-          form={formId}
-          type="number"
-          min="0"
-          defaultValue={lot.bags ?? ""}
-          className="w-16 rounded border border-stone-300 px-1.5 py-1 text-right text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-      </td>
-      <td className="px-3 py-2 text-right">
-        <input
-          name="kg_per_bag"
-          form={formId}
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={lot.kg_per_bag != null ? Number(lot.kg_per_bag) : ""}
-          className="w-16 rounded border border-stone-300 px-1.5 py-1 text-right text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-      </td>
-      <td className="px-3 py-2 text-right">
-        <input
-          name="sample_allowance"
-          form={formId}
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={lot.sample_allowance != null ? Number(lot.sample_allowance) : ""}
-          className="w-20 rounded border border-stone-300 px-1.5 py-1 text-right text-xs dark:border-stone-600 dark:bg-stone-800"
-        />
-      </td>
-      <td className="px-3 py-2 text-right text-xs">
-        {Number(lot.net_wt ?? 0).toFixed(2)}
-      </td>
-      <td className="px-3 py-2">
-        {isOwner ? (
-          <select
-            name="state"
-            form={formId}
-            defaultValue={lot.state ?? "invoiced"}
-            className="w-24 rounded border border-stone-300 px-1.5 py-1 text-xs dark:border-stone-600 dark:bg-stone-800"
-          >
-            {LOT_STATES.map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        ) : (
-          <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(lot.state).style}`}>
-            {stateBucket(lot.state).label}
-          </span>
-        )}
-      </td>
-      <td className="px-3 py-2 text-right">
-        <form
-          id={formId}
-          action={async (formData) => {
-            setSaving(true);
-            onBusy(true);
-            try {
-              const saved = await updateLot(lot.id, saleId, formData);
-              if (!saved) return;
-              onSaved({
-                invoice_no: saved.invoice_no as string | null,
-                lot_no: saved.lot_no as string | null,
-                grade: saved.grade as string | null,
-                bags: saved.bags as number | null,
-                kg_per_bag: saved.kg_per_bag as number | null,
-                sample_allowance: saved.sample_allowance as number | null,
-                net_wt: saved.net_wt as number | null,
-                state: saved.state as string | null,
-              });
-            } finally {
-              setSaving(false);
-              onBusy(false);
-            }
-          }}
-          className="flex items-center justify-end gap-1"
-        >
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-60"
-          >
-            <span className={`h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent ${saving ? "" : "opacity-0"}`} />
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded border border-stone-300 px-2.5 py-1 text-xs text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-400 dark:hover:bg-stone-800"
-          >
-            Cancel
-          </button>
-        </form>
-      </td>
-    </>
+    <EntityList
+      resource={{ key: "auction.dispatch-lots", params: { saleId } }}
+      initialRows={initialRows}
+      definition={definition}
+      getId={(row) => row.id}
+      rowLabel={(row) => `lot ${invoiceLabel(row) || row.lot_no || row.id}`}
+      title={title}
+      description={(rows) => {
+        const totalNet = rows.reduce((sum, row) => sum + Number(row.net_wt ?? 0), 0);
+        return `${rows.length} lot${rows.length === 1 ? "" : "s"} · ${totalNet.toFixed(2)} kg net`;
+      }}
+      emptyMessage="No lots yet. Use New lot to enter the invoices under this broker invoice."
+      filteredEmptyMessage="No lots match these filters."
+      canCreate={canAdd}
+      create={canAdd ? {
+        action: (formData) => createDispatchedLotForList(saleId, formData),
+        label: "New lot",
+        panelTitle: "New lot",
+        disabledReason: "Finish the current lot action first.",
+        render: ({ action, close }) => (
+          <DispatchLotForm open action={action} grades={grades} onCancel={close} />
+        ),
+      } : undefined}
+      edit={canEdit ? {
+        action: (row, formData) => updateLot(row.id, saleId, formData),
+        label: "Edit",
+        saveLabel: "Save changes",
+      } : undefined}
+      canDelete={canEdit}
+      deleteAction={canEdit ? {
+        action: (ids) => deleteLots(ids, saleId),
+        disabled: (rows) => rows.some((row) => !isOwner && row.state !== "invoiced" && row.state !== "pending"),
+        disabledReason: (rows) =>
+          rows.some((row) => !isOwner && row.state !== "invoiced" && row.state !== "pending")
+            ? "Only owners can delete lots after invoicing."
+            : undefined,
+        title: (count) => `Delete ${count} lot${count === 1 ? "" : "s"}?`,
+        description: () => "Owned invoice and valuation records are removed. Financial sale or VAT records safely block deletion. This cannot be undone.",
+        confirmLabel: "Delete",
+      } : undefined}
+      commands={commands}
+      onRowsChange={onRowsChange}
+    />
   );
 }
 
 function ReprintForm({
-  lotId,
-  saleId,
+  lot,
+  action,
   onCancel,
-  onSaved,
-  onBusy,
-  invoices,
-  existingSampleKg,
 }: {
-  lotId: string;
-  saleId: string;
+  lot: LotRow;
+  action: (formData: FormData) => Promise<void>;
   onCancel: () => void;
-  onSaved: (patch: Partial<LotRow>) => void;
-  onBusy: (busy: boolean) => void;
-  invoices: string[];
-  existingSampleKg: number;
 }) {
-  const [saving, setSaving] = useState(false);
-  const invLabel = invoices.length > 1 ? `Invoices: ${invoices.join(", ")}` : `Invoice: ${invoices[0] ?? ""}`;
+  const invoices = (lot.lot_invoices ?? []).map((invoice) => invoice.invoice_no);
+  const label = invoices.length > 1 ? `Invoices: ${invoices.join(", ")}` : `Invoice: ${invoices[0] ?? lot.invoice_no ?? ""}`;
 
   return (
-    <form
-      action={async (formData) => {
-        setSaving(true);
-        onBusy(true);
-        try {
-          await markReprint(lotId, saleId, formData);
-          onSaved({
-            state: "re-print",
-            reprint_target_sale_id: null,
-            reprint_target_label: null,
-          });
-        } finally {
-          setSaving(false);
-          onBusy(false);
-        }
-      }}
-      className="mt-1 space-y-2 rounded-lg border border-stone-200 p-2 text-left dark:border-stone-700"
-    >
-      <p className="text-[10px] text-stone-400 dark:text-stone-500">{invLabel}</p>
-      <p className="text-[11px] leading-4 text-stone-500 dark:text-stone-400">
-        This keeps the lot in this sale as history. When the same invoice is added to a later dispatch, the new lot is linked as the re-print.
+    <form action={action} className="mt-1 space-y-3 rounded-lg border border-stone-200 p-3 text-left dark:border-stone-700">
+      <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
+      <p className="text-xs leading-5 text-stone-600 dark:text-stone-300">
+        This keeps the lot in this sale as history. Adding the same invoice to a later broker invoice links the new lot as the re-print.
       </p>
-      <label className="block text-[11px] text-stone-500 dark:text-stone-400">
+      <label className="block text-xs font-medium text-stone-600 dark:text-stone-300">
         Additional sample kg
         <input
           name="additional_sample_kg"
           type="number"
           min="0"
           step="0.01"
-          defaultValue={existingSampleKg || ""}
+          defaultValue={Number(lot.sample_allowance ?? 0) || ""}
           placeholder="0.00"
-          className="mt-1 w-full rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          className="mt-1 w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
         />
       </label>
-      <div className="flex gap-1">
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center gap-1 rounded-md bg-orange-600 px-2 py-1 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-60"
+      <div className="flex justify-end gap-2">
+        <AppButton type="button" size="sm" onClick={onCancel}>Cancel</AppButton>
+        <SubmitButton
+          pendingText="Marking…"
+          className="min-h-9 rounded-xl border-transparent bg-orange-600 px-3 text-xs text-white hover:bg-orange-700"
         >
-          <span className={`h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent ${saving ? "" : "opacity-0"}`} />
-          {saving ? "Marking..." : "Mark re-print"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-400 dark:hover:bg-stone-800"
-        >
-          Cancel
-        </button>
+          Mark re-print
+        </SubmitButton>
       </div>
     </form>
   );

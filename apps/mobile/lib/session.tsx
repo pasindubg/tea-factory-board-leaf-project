@@ -24,7 +24,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [collector, setCollector] = useState<CollectorRow | null>(null);
 
   async function loadProfile(userId: string) {
-    // Factory + role for this login. RLS scopes every read to the user's factory.
+    // Bootstrap exception: the authenticated auth user ID is the authority for
+    // resolving its own profile; factory_id is not known until this row loads.
     const { data: prof } = await supabase
       .from("users")
       .select("id, name, role, factory_id, supplier_id")
@@ -40,6 +41,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         .from("suppliers")
         .select("id, name, area")
         .eq("id", profileRow.supplier_id)
+        .eq("factory_id", profileRow.factory_id)
         .maybeSingle();
       setSupplier((sup as LinkedSupplier) ?? null);
     } else {
@@ -51,6 +53,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .from("collectors")
       .select("id, name, area")
       .eq("user_id", userId)
+      .eq("factory_id", profileRow.factory_id)
       .maybeSingle();
     setCollector((col as CollectorRow) ?? null);
   }

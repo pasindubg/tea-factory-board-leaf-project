@@ -1,6 +1,11 @@
 "use client";
 
-import { Children, useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
+import { showAppToast } from "@/components/action-feedback";
+import { refreshListResource } from "@/lib/list-resource-action";
+import type { ListMutationResult, ListRefreshResult } from "@/lib/list-mutations";
+import { listResourceIdentity, type ListInvalidation, type ListResourceKey, type ListResourceRequest, type ListResourceRow } from "@/lib/list-resources";
 
 // Shared column-sort + column-filter primitives for the app's hand-rolled
 // tables. Deliberately headless: each table keeps its own <table> markup,
@@ -38,7 +43,10 @@ export type ListSelectionMode = "multi" | "single";
 export type ListDefinition<T> = {
   columns: ColumnDef<T>[];
   selectionMode?: ListSelectionMode;
-  editable?: boolean;
+  /** CRUD commands are independently opt-in. A disabled command is not rendered. */
+  add?: boolean;
+  edit?: boolean;
+  delete?: boolean;
   commands?: { id: string; label: string; requiresSelection?: boolean; destructive?: boolean }[];
 };
 
@@ -48,69 +56,124 @@ export type ListTab = {
   count?: string;
 };
 
+type ListMutationOptions = {
+  notice?: string;
+  onSuccess?: () => void;
+};
+
+type ListResourceListener = () => Promise<boolean>;
+const listResourceListeners = new Map<string, Set<ListResourceListener>>();
+
+function subscribeToListResource(identity: string, listener: ListResourceListener) {
+  const listeners = listResourceListeners.get(identity) ?? new Set<ListResourceListener>();
+  listeners.add(listener);
+  listResourceListeners.set(identity, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) listResourceListeners.delete(identity);
+  };
+}
+
+async function refreshOtherListInstances(
+  resource: ListResourceRequest,
+  source?: ListResourceListener,
+) {
+  const listeners = listResourceListeners.get(listResourceIdentity(resource));
+  if (!listeners) return;
+  await Promise.all([...listeners].filter((listener) => listener !== source).map((listener) => listener()));
+}
+
+async function refreshInvalidatedListInstances(invalidation: ListInvalidation) {
+  if (invalidation.kind === "exact") {
+    await refreshOtherListInstances(invalidation.resource);
+    return;
+  }
+  const matchingListeners = [...listResourceListeners.entries()]
+    .filter(([identity]) => identity === invalidation.key || identity.startsWith(`${invalidation.key}?`))
+    .flatMap(([, listeners]) => [...listeners]);
+  await Promise.all([...new Set(matchingListeners)].map((listener) => listener()));
+}
+
+/**
+ * Owns the live rows for one framework list. After a successful mutation it
+ * asks the central server registry for this allowlisted resource and replaces
+ * only subscribed list instances; it never reloads the browser or refreshes
+ * the route tree.
+ */
+export function useFrameworkListData<Key extends ListResourceKey>(
+  { initialRows, resource }: { initialRows: ListResourceRow<Key>[]; resource: ListResourceRequest<Key> },
+) {
+  const [rows, setRows] = useState(initialRows);
+  const [refreshing, setRefreshing] = useState(false);
+  const identity = listResourceIdentity(resource);
+  const resourceRef = useRef(resource);
+  const refreshGeneration = useRef(0);
+  resourceRef.current = resource;
+
+  useEffect(() => setRows(initialRows), [initialRows]);
+
+  const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    setRefreshing(true);
+    try {
+      const result = await refreshListResource(resourceRef.current) as ListRefreshResult<ListResourceRow<Key>>;
+      if (!result.ok) {
+        if (generation === refreshGeneration.current) showAppToast(result.error, "error");
+        return false;
+      }
+      if (generation === refreshGeneration.current) setRows(result.rows);
+      return true;
+    } catch {
+      if (generation === refreshGeneration.current) {
+        showAppToast("The list changed, but its latest rows could not be loaded. Please try again.", "error");
+      }
+      return false;
+    } finally {
+      if (generation === refreshGeneration.current) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => subscribeToListResource(identity, refresh), [identity, refresh]);
+
+  const mutate = useCallback(async (
+    action: () => Promise<ListMutationResult>,
+    options: ListMutationOptions = {},
+  ) => {
+    try {
+      const result = await action();
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return false;
+      }
+      options.onSuccess?.();
+      showAppToast(result.notice ?? options.notice ?? "List updated.");
+      const refreshed = await refresh();
+      await refreshOtherListInstances(resourceRef.current, refresh);
+      await Promise.all((result.invalidate ?? []).map((invalidation) => refreshInvalidatedListInstances(invalidation)));
+      if (!refreshed) return true;
+      return true;
+    } catch {
+      showAppToast("The change could not be saved. Please try again.", "error");
+      return false;
+    }
+  }, [refresh]);
+
+  const mutationAction = useCallback((
+    action: (formData: FormData) => Promise<ListMutationResult>,
+    options: ListMutationOptions = {},
+  ) => async (formData: FormData) => {
+    await mutate(() => action(formData), options);
+  }, [mutate]);
+
+  return { rows, refreshing, refresh, mutate, mutationAction };
+}
+
 /** A reusable top-navigation tab bar for related list work surfaces. The
  * individual tables keep their own controls while the user sees one focused
  * list area at a time. */
 export function TabbedListSurface({ tabs, children, defaultTab }: { tabs: ListTab[]; children: ReactNode; defaultTab?: string }) {
-  const panels = Children.toArray(children);
-  const firstTab = tabs[0]?.id ?? "list";
-  const [activeTab, setActiveTab] = useState(defaultTab && tabs.some((tab) => tab.id === defaultTab) ? defaultTab : firstTab);
-  const tabSetId = useId().replace(/:/g, "");
-  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
-
-  function activate(index: number) {
-    const tab = tabs[index];
-    if (tab) setActiveTab(tab.id);
-  }
-
-  return (
-    <section className="space-y-3">
-      <div role="tablist" aria-label="Sale lists" className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-stone-200 bg-stone-50 p-1.5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
-        {tabs.map((tab, index) => {
-          const selected = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              id={`${tabSetId}-tab-${tab.id}`}
-              role="tab"
-              type="button"
-              aria-selected={selected}
-              aria-controls={`${tabSetId}-panel-${tab.id}`}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => activate(index)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight") activate((index + 1) % tabs.length);
-                else if (event.key === "ArrowLeft") activate((index - 1 + tabs.length) % tabs.length);
-                else if (event.key === "Home") activate(0);
-                else if (event.key === "End") activate(tabs.length - 1);
-                else return;
-                event.preventDefault();
-              }}
-              className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                selected
-                  ? "bg-white text-green-800 shadow-sm dark:bg-stone-800 dark:text-green-300"
-                  : "text-stone-600 hover:bg-white/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800/70 dark:hover:text-stone-100"
-              }`}
-            >
-              {tab.label}
-              {tab.count && <span className={`rounded-full px-2 py-0.5 text-xs ${selected ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" : "bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300"}`}>{tab.count}</span>}
-            </button>
-          );
-        })}
-      </div>
-      {tabs.map((tab, index) => (
-        <div
-          key={tab.id}
-          id={`${tabSetId}-panel-${tab.id}`}
-          role="tabpanel"
-          aria-labelledby={`${tabSetId}-tab-${tab.id}`}
-          hidden={tab.id !== activeTab}
-        >
-          {panels[index]}
-        </div>
-      ))}
-    </section>
-  );
+  const panels = Array.isArray(children) ? children : [children];
+  return <TabView label="Related lists" defaultTabId={defaultTab} tabs={tabs.map((tab, index) => ({ ...tab, badge: tab.count, content: panels[index] ?? null }))} />;
 }
 
 export function ListSelectionHeader({ mode, scope, checked, onChange, disabled = false }: { mode: ListSelectionMode; scope: string; checked?: boolean; onChange?: () => void; disabled?: boolean }) {
@@ -200,19 +263,142 @@ export function ListSelectionSummary({ mode, count = 0 }: { mode: ListSelectionM
   return <p className="text-sm font-medium text-stone-500 dark:text-stone-400" aria-live="polite">{count > 0 ? `${count} selected` : mode === "multi" ? "Select rows to manage records" : "Select one row to manage the record"}</p>;
 }
 
-export function ListCommandToolbar({ mode, count = 0, children }: { mode: ListSelectionMode; count?: number; children: React.ReactNode }) {
-  return <div className="flex items-center justify-between gap-3 border-b border-stone-100 px-4 py-3 dark:border-stone-800"><ListSelectionSummary mode={mode} count={count} /><div className="flex flex-wrap justify-end gap-2">{children}</div></div>;
+type ListHeaderAction = {
+  label?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+};
+
+/** The one action presentation for operational lists. Consumers declare which
+ * header actions are enabled; individual row action columns are not needed. */
+export function ListCommandToolbar({
+  mode,
+  count = 0,
+  enableEdit = false,
+  enableDelete = false,
+  showSelectionSummary = true,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  mode: ListSelectionMode;
+  count?: number;
+  enableEdit?: boolean;
+  enableDelete?: boolean;
+  showSelectionSummary?: boolean;
+  onEdit?: ListHeaderAction;
+  onDelete?: ListHeaderAction;
+  children?: React.ReactNode;
+}) {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [hasSearch, setHasSearch] = useState(false);
+
+  useEffect(() => {
+    const surface = toolbarRef.current?.closest("[data-list-surface]");
+    setHasSearch(Boolean(surface?.querySelector("[data-list-search-trigger]")));
+  }, []);
+
+  function openSearch() {
+    const surface = toolbarRef.current?.closest("[data-list-surface]");
+    (surface?.querySelector("[data-list-search-trigger]") as HTMLButtonElement | null)?.click();
+  }
+
+  return (
+    <div ref={toolbarRef} className="flex min-h-16 items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
+      {showSelectionSummary ? <ListSelectionSummary mode={mode} count={count} /> : <span />}
+      <div className="flex flex-wrap justify-end gap-2">
+        {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
+        {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
+        {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
+        {children}
+      </div>
+    </div>
+  );
 }
 
-export function ListSurface({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div data-list-surface className={`overflow-hidden rounded-[1.25rem] border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 ${className}`}>{children}</div>;
+function SearchGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><circle cx="8.5" cy="8.5" r="4.75" /><path strokeLinecap="round" d="m12 12 4.25 4.25" /></svg>;
 }
 
-export function ListSidePanel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <aside data-list-side-panel className={`flex overflow-hidden rounded-[1.5rem] border border-stone-200 bg-white shadow-lg shadow-stone-950/5 dark:border-stone-700 dark:bg-stone-900 dark:shadow-black/20 ${className}`}>{children}</aside>;
+function ListHeaderButton({ kind, action }: { kind: "edit" | "delete"; action: ListHeaderAction }) {
+  const destructive = kind === "delete";
+  return (
+    <button
+      type="button"
+      onClick={action.onClick}
+      disabled={action.disabled || action.busy}
+      className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+        destructive
+          ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
+          : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+      }`}
+    >
+      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
+      {action.busy ? "Working…" : action.label ?? (kind === "edit" ? "Edit" : "Delete")}
+    </button>
+  );
+}
+
+/** Collapsible creation area owned by a list. It keeps create forms with the
+ * records they affect instead of requiring a persistent adjacent form panel. */
+export function ListCreatePanel({
+  open,
+  title = "Add record",
+  children,
+  className = "",
+}: {
+  open: boolean;
+  title?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  if (!open) return null;
+  return <section className={`border-b border-stone-100 bg-green-50/50 px-4 py-4 dark:border-stone-800 dark:bg-green-950/10 ${className}`} aria-label={title}>
+    <h3 className="mb-3 text-sm font-semibold text-stone-800 dark:text-stone-100">{title}</h3>
+    {children}
+  </section>;
+}
+
+function EditGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" /><path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" /></svg>;
+}
+
+function DeleteGlyph() {
+  return <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c-.84 0-1.673.025-2.5.075V3.75c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25v.325C11.673 4.025 10.84 4 10 4ZM8.58 7.72a.75.75 0 0 1 .7.647l.467 3.265a.75.75 0 0 1-1.494.106l-.466-3.265a.75.75 0 0 1 .792-.853Zm3.336.002a.75.75 0 0 1 .763.916l-.465 3.25a.75.75 0 0 1-1.478-.253l.464-3.25a.75.75 0 0 1 .716-.663ZM9.373 7.08a.75.75 0 0 1 .734.765l-.209 3.132a.75.75 0 0 1-1.498-.04l.21-3.131a.75.75 0 0 1 .763-.726Zm1.503 0a.75.75 0 0 1 .763.726l.209 3.132a.75.75 0 1 1-1.498.04l-.209-3.131a.75.75 0 0 1 .735-.767Z" clipRule="evenodd" /></svg>;
+}
+
+export function ListSurface({ children, className = "", refreshing = false, ...frame }: Omit<FrameworkListProps, "children" | "className"> & { children: React.ReactNode; className?: string; refreshing?: boolean }) {
+  return <FrameworkList {...frame} className={`rounded-[1.25rem] shadow-sm ${className}`}><div data-list-surface aria-busy={refreshing}>{refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}{children}</div></FrameworkList>;
+}
+
+export function ListSidePanel({
+  children,
+  className = "",
+  refreshing = false,
+  ...frame
+}: Omit<FrameworkListProps, "children" | "className"> & { children: React.ReactNode; className?: string; refreshing?: boolean }) {
+  return (
+    <aside data-list-side-panel className={`flex overflow-hidden rounded-[1.5rem] border border-stone-200 bg-white shadow-lg shadow-stone-950/5 dark:border-stone-700 dark:bg-stone-900 dark:shadow-black/20 ${className}`}>
+      <FrameworkList {...frame} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-inherit shadow-none">
+        <div data-list-surface aria-busy={refreshing} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}
+          {children}
+        </div>
+      </FrameworkList>
+    </aside>
+  );
 }
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;
+type StoredListControls = {
+  filters: Record<string, string>;
+  columnSearches: Record<string, string>;
+  appliedColumnSearches: Record<string, string>;
+  advancedQuery: string;
+  appliedAdvancedQuery: string;
+  sort: SortState;
+};
 type SearchOperator = ":" | "=" | ">" | ">=" | "<" | "<=";
 type SearchToken<T> =
   | { kind: "free"; value: string }
@@ -285,13 +471,51 @@ function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: Colu
   return left <= right;
 }
 
-export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
+export function useListControls<T>(
+  rows: T[],
+  columns: ColumnDef<T>[],
+  options: { initialFilters?: Record<string, string>; storageKey?: string } = {},
+) {
   const [sort, setSort] = useState<SortState>(null);
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, string>>(options.initialFilters ?? {});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [appliedColumnSearches, setAppliedColumnSearches] = useState<Record<string, string>>({});
   const [advancedQuery, setAdvancedQuery] = useState("");
   const [appliedAdvancedQuery, setAppliedAdvancedQuery] = useState("");
+  const [storageHydrated, setStorageHydrated] = useState(!options.storageKey);
+
+  useEffect(() => {
+    if (!options.storageKey) return;
+    const stored = window.sessionStorage.getItem(options.storageKey);
+    if (stored !== null) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          // Support the status-only shape stored by the earlier implementation.
+          if ("filters" in parsed) {
+            const saved = parsed as Partial<StoredListControls>;
+            if (saved.filters) setFilters(saved.filters);
+            if (saved.columnSearches) setColumnSearches(saved.columnSearches);
+            if (saved.appliedColumnSearches) setAppliedColumnSearches(saved.appliedColumnSearches);
+            if (typeof saved.advancedQuery === "string") setAdvancedQuery(saved.advancedQuery);
+            if (typeof saved.appliedAdvancedQuery === "string") setAppliedAdvancedQuery(saved.appliedAdvancedQuery);
+            if (saved.sort === null || (saved.sort && typeof saved.sort.key === "string" && (saved.sort.dir === "asc" || saved.sort.dir === "desc"))) setSort(saved.sort);
+          } else {
+            setFilters(parsed as Record<string, string>);
+          }
+        }
+      } catch {
+        window.sessionStorage.removeItem(options.storageKey);
+      }
+    }
+    setStorageHydrated(true);
+  }, [options.storageKey]);
+
+  useEffect(() => {
+    if (!options.storageKey || !storageHydrated) return;
+    const saved: StoredListControls = { filters, columnSearches, appliedColumnSearches, advancedQuery, appliedAdvancedQuery, sort };
+    window.sessionStorage.setItem(options.storageKey, JSON.stringify(saved));
+  }, [advancedQuery, appliedAdvancedQuery, appliedColumnSearches, columnSearches, filters, options.storageKey, sort, storageHydrated]);
 
   function toggleSort(key: string) {
     setSort((prev) => {
@@ -302,7 +526,9 @@ export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
   }
 
   function setFilter(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      return { ...prev, [key]: value };
+    });
   }
 
   function setColumnSearch(key: string, value: string) {
@@ -351,9 +577,8 @@ export function useListControls<T>(rows: T[], columns: ColumnDef<T>[]) {
         activeColumnSearches.every((c) => {
           const raw = searchableValue(c.accessor!(row));
           const needle = appliedColumnSearches[c.key]!.toLowerCase();
-          // LOV columns: exact match (user picked from a dropdown)
-          if (c.lov !== false) return raw === needle;
-          // Free-text columns: substring match
+          // A column combines an LOV datalist with direct typing, so both
+          // selection and partial manual entry use the same contains match.
           return raw.includes(needle);
         }),
       );
@@ -482,17 +707,12 @@ export function ListSearchPanel<T>({
   if (searchCols.length === 0) return null;
 
   return (
-    <div data-list-search-panel className="border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
-      <div className="flex items-center justify-between gap-3">
-        <button type="button" popoverTarget={searchPanelId} popoverTargetAction="toggle" className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-green-50 hover:text-green-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950">
-            {label}
-            {controls.activeFilterCount > 0 && <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] text-green-800 dark:bg-green-900 dark:text-green-200">{controls.activeFilterCount}</span>}
-            <span aria-hidden="true">⌄</span>
-        </button>
+    <>
+        <button type="button" data-list-search-trigger popoverTarget={searchPanelId} popoverTargetAction="toggle" tabIndex={-1} aria-hidden="true" className="sr-only">{label}</button>
         <div id={searchPanelId} popover="auto" className="fixed left-1/2 top-16 z-[90] m-0 max-h-[calc(100dvh-5rem)] w-[min(58rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-2xl backdrop:bg-stone-950/25 dark:border-stone-700 dark:bg-stone-950">
             <div className="mb-4">
               <h3 className="text-base font-semibold text-stone-900 dark:text-stone-100">{label} criteria</h3>
-              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">Choose LOV values, then select Search to apply them.</p>
+              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">Type a value or choose an LOV suggestion, then select Search to apply it.</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label={`${label} by column`}>
               {searchCols.map((col) => (
@@ -535,42 +755,42 @@ export function ListSearchPanel<T>({
               >Search</button>
             </div>
         </div>
-        {controls.activeFilterCount > 0 && (
-          <button type="button" onClick={controls.clearFilters} className="min-h-9 rounded-full px-3 text-xs text-stone-500 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800">Clear search</button>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
 function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: ListControls<T> }) {
   const value = controls.columnSearches[col.key] ?? "";
-  // Non-LOV columns: render a text input
-  if (col.lov === false) {
-    const inputType = col.searchInput ?? "text";
+  const lovId = useId().replace(/:/g, "");
+  const inputType = col.searchInput ?? "text";
+  // Dates are intentionally picker-only: a date's native picker is the LOV.
+  if (inputType === "date") {
     return (
       <input
-        type={inputType}
+        type="date"
         value={value}
         onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
-        placeholder={inputType === "date" ? undefined : `Search ${col.label.toLowerCase()}`}
         className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
       />
     );
   }
-  // LOV columns (default): render a select dropdown
+  const listId = `list-lov-${lovId}`;
   return (
-    <select
-      data-list-lov
+    <>
+      <input
+      list={listId}
+      type={inputType}
       value={value}
       onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
+      placeholder={`Search ${col.label.toLowerCase()}`}
       className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
-    >
-      <option value="">All {col.label}</option>
+      />
+      <datalist id={listId} data-list-lov>
       {controls.optionsFor(col).map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>
       ))}
-    </select>
+      </datalist>
+    </>
   );
 }
 

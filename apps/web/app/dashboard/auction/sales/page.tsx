@@ -5,6 +5,7 @@ import { SalesOverviewTable, type SaleOverviewRow } from "./sales-overview-table
 
 type LineRow = {
   id: string;
+  lot_id: string | null;
   proceeds: number | string | null;
   net_wt: number | string | null;
   vat_amount: number | string | null;
@@ -20,16 +21,14 @@ type LineRow = {
   } | null;
 };
 
-type DispatchRow = {
+type AssignmentLot = {
   id: string;
-  sale_no: string;
-  target_sale_no: string | null;
-  dispatch_date: string | null;
-  sale_date: string | null;
-  prompt_date: string | null;
-  status: string;
-  brokers: { name: string } | null;
+  provisional_sale_no: string | null;
+  final_sale_no: string | null;
+  auction_sales: LineRow["auction_sales"];
 };
+
+type DispatchRow = NonNullable<LineRow["auction_sales"]>;
 
 type SaleSummary = {
   saleNo: string;
@@ -44,12 +43,10 @@ type SaleSummary = {
   guaranteeLots: number;
 };
 
-function saleKey(sale: LineRow["auction_sales"]) {
-  return formatSaleNo(sale?.target_sale_no || sale?.sale_no) || "Unassigned";
-}
-
-function dispatchKey(dispatch: DispatchRow) {
-  return formatSaleNo(dispatch.target_sale_no || dispatch.sale_no);
+function saleKey(sale: LineRow["auction_sales"], assignment?: AssignmentLot | null) {
+  const rawSaleNo = assignment?.final_sale_no || assignment?.provisional_sale_no || sale?.target_sale_no || sale?.sale_no;
+  const key = saleNoKey(rawSaleNo);
+  return formatSaleNo(key) || "Unassigned";
 }
 
 function saleHref(saleNo: string) {
@@ -60,17 +57,20 @@ function saleHref(saleNo: string) {
 export default async function SalesPage() {
   const { supabase } = await requireModuleAccess("auction");
 
-  const [{ data: dispatches }, { data: lines }] = await Promise.all([
+  const [{ data: dispatches }, { data: assignmentLots }, { data: lines }] = await Promise.all([
     supabase
       .from("auction_sales")
-      .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+      .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name)")
       .eq("sale_kind", "dispatch")
       .not("target_sale_no", "is", null)
       .order("dispatch_date", { ascending: false }),
     supabase
+      .from("auction_lots")
+      .select("id, provisional_sale_no, final_sale_no, auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name))"),
+    supabase
       .from("sale_lines")
       .select(
-        "id, proceeds, net_wt, vat_amount, on_guarantee, " +
+        "id, lot_id, proceeds, net_wt, vat_amount, on_guarantee, " +
           "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name))",
       )
       .order("created_at", { ascending: false }),
@@ -78,10 +78,39 @@ export default async function SalesPage() {
 
   const rows = (lines ?? []) as unknown as LineRow[];
   const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
+  const assignmentRows = (assignmentLots ?? []) as unknown as AssignmentLot[];
+  const assignmentByLotId = new Map(assignmentRows.map((lot) => [lot.id, lot]));
   const summaries = new Map<string, SaleSummary>();
 
+  // Broker invoices establish an auction sale before individual lots have been
+  // reconciled and assigned. Include them first, then enrich the same sale with
+  // assignment and sale-line information below.
   for (const dispatch of dispatchRows) {
-    const key = dispatchKey(dispatch);
+    const key = saleKey(dispatch);
+    const current = summaries.get(key) ?? {
+      saleNo: key,
+      saleDate: dispatch.sale_date,
+      promptDate: dispatch.prompt_date,
+      brokers: new Set<string>(),
+      dispatches: new Map<string, string>(),
+      lotsSold: 0,
+      netKg: 0,
+      proceeds: 0,
+      vat: 0,
+      guaranteeLots: 0,
+    };
+
+    current.dispatches.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
+    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
+    current.saleDate ??= dispatch.sale_date;
+    current.promptDate ??= dispatch.prompt_date;
+    summaries.set(key, current);
+  }
+
+  for (const assignment of assignmentRows) {
+    const dispatch = assignment.auction_sales;
+    if (!dispatch) continue;
+    const key = saleKey(dispatch, assignment);
     const current = summaries.get(key) ?? {
       saleNo: key,
       saleDate: dispatch.sale_date,
@@ -104,7 +133,8 @@ export default async function SalesPage() {
 
   for (const line of rows) {
     const sale = line.auction_sales;
-    const key = saleKey(sale);
+    const assignment = line.lot_id ? assignmentByLotId.get(line.lot_id) : null;
+    const key = saleKey(sale, assignment);
     const current = summaries.get(key) ?? {
       saleNo: key,
       saleDate: sale?.sale_date ?? null,

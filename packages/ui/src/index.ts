@@ -27,3 +27,9 @@ export type { PageHeaderProps } from "./components/PageHeader";
 
 export { Table } from "./components/Table";
 export type { TableProps, TableColumn } from "./components/Table";
+
+export { FrameworkList } from "./components/FrameworkList";
+export type { FrameworkListProps } from "./components/FrameworkList";
+
+export { TabView } from "./components/TabView";
+export type { TabViewProps, TabViewTab } from "./components/TabView";

@@ -4,6 +4,7 @@ export const LOT_STATES = [
   "pending",
   "missing",
   "shutout",
+  "not-valued",
   "valued",
   "withdrawn",
   "re-print",

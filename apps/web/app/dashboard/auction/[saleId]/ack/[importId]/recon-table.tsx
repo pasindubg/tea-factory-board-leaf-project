@@ -1,7 +1,8 @@
 "use client";
 
 import type { ReconRow, ReconStatus } from "@tea/api";
-import { useListControls, SortButton, ListSearchPanel, type ColumnDef } from "@/components/list-controls";
+import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import type { ListDefinition } from "@/components/list-controls";
 
 const STATUS_STYLE: Record<ReconStatus, string> = {
   catalogued: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400",
@@ -12,69 +13,42 @@ const STATUS_STYLE: Record<ReconStatus, string> = {
 
 const STATUS_OPTIONS: ReconStatus[] = ["catalogued", "shutout", "pending", "unexpected"];
 
-const COLUMNS: ColumnDef<ReconRow>[] = [
-  { key: "invoiceNo", label: "Invoice", accessor: (r) => r.invoiceNo, sortable: true, filter: "text" },
-  { key: "status", label: "Result", accessor: (r) => r.status, sortable: true, filter: "select", filterOptions: STATUS_OPTIONS.map((s) => ({ value: s, label: s })) },
-  { key: "invoiced", label: "Invoiced", accessor: (r) => (r.invoiced ? `${r.invoiced.grade} · ${r.invoiced.netWt.toFixed(2)} kg` : null), sortable: true },
-  { key: "lotNo", label: "Lot no.", accessor: (r) => r.ack?.lotNo ?? null, sortable: true, filter: "text" },
-  { key: "ack", label: "Catalogued (ack)", accessor: (r) => (r.ack ? `${r.ack.grade} · ${r.ack.netWt.toFixed(2)} kg` : null), sortable: true },
-  { key: "weightDelta", label: "Δ net kg", accessor: (r) => r.weightDelta ?? null, sortable: true },
+const COLUMNS: EntityListColumn<ReconRow>[] = [
+  { key: "invoiceNo", label: "Invoice", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", cellClassName: "font-medium" },
+  { key: "status", label: "Result", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: STATUS_OPTIONS.map((status) => ({ value: status, label: status })), render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[row.status]}`}>{row.status}</span> },
+  { key: "invoiced", label: "Invoiced", accessor: (row) => row.invoiced ? `${row.invoiced.grade} · ${row.invoiced.netWt.toFixed(2)} kg` : null, sortable: true, render: (row) => row.invoiced ? `${row.invoiced.grade} · ${row.invoiced.netWt.toFixed(2)} kg` : "—" },
+  { key: "lotNo", label: "Lot no.", accessor: (row) => row.ack?.lotNo ?? null, sortable: true, filter: "text", render: (row) => row.ack?.lotNo ?? "—" },
+  { key: "ack", label: "Catalogued (ack)", accessor: (row) => row.ack ? `${row.ack.grade} · ${row.ack.netWt.toFixed(2)} kg` : null, sortable: true, render: (row) => row.ack ? `${row.ack.grade} · ${row.ack.netWt.toFixed(2)} kg` : "—" },
+  { key: "weightDelta", label: "Δ net kg", accessor: (row) => row.weightDelta ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.weightDelta == null ? "—" : `${row.weightDelta > 0 ? "+" : ""}${row.weightDelta.toFixed(2)}` },
+  { key: "notes", label: "Notes", accessor: (row) => reconciliationNotes(row), filter: "text", lov: false, cellClassName: "text-xs text-stone-500 dark:text-stone-400", render: reconciliationNotes },
 ];
 
-export function ReconTable({ rows }: { rows: ReconRow[] }) {
-  const controls = useListControls(rows, COLUMNS);
-  const visibleRows = controls.rows;
+const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<ReconRow>;
+
+export function ReconTable({ rows, warningInvoiceNos = [] }: { rows: ReconRow[]; warningInvoiceNos?: string[] }) {
+  const warningInvoices = new Set(warningInvoiceNos);
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-      <ListSearchPanel columns={COLUMNS} controls={controls} />
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-            {COLUMNS.map((col) => (
-              <th key={col.key} className={`px-3 py-3 ${col.key === "weightDelta" ? "text-right" : ""}`}>
-                {col.sortable ? <SortButton col={col} controls={controls} /> : col.label}
-              </th>
-            ))}
-            <th className="px-3 py-3">Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleRows.map((r) => (
-            <tr key={r.invoiceNo} className="border-b border-stone-100 dark:border-stone-800 last:border-0">
-              <td className="px-3 py-2 font-medium">{r.invoiceNo}</td>
-              <td className="px-3 py-2">
-                <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[r.status]}`}>{r.status}</span>
-              </td>
-              <td className="px-3 py-2">
-                {r.invoiced ? `${r.invoiced.grade} · ${r.invoiced.netWt.toFixed(2)} kg` : "—"}
-              </td>
-              <td className="px-3 py-2">{r.ack?.lotNo ?? "—"}</td>
-              <td className="px-3 py-2">
-                {r.ack ? `${r.ack.grade} · ${r.ack.netWt.toFixed(2)} kg` : "—"}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {r.weightDelta == null ? "—" : `${r.weightDelta > 0 ? "+" : ""}${r.weightDelta.toFixed(2)}`}
-              </td>
-              <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
-                {r.status === "pending" && "Invoiced, not in this ack — may roll to a later sale"}
-                {r.status === "unexpected" && "In the acknowledgement but never invoiced"}
-                {r.gradeMismatch && <span className="text-amber-700 dark:text-amber-400"> grade differs</span>}
-                {r.weightDelta != null && Math.abs(r.weightDelta) > 0.01 && (
-                  <span className="text-amber-700 dark:text-amber-400"> weight differs</span>
-                )}
-              </td>
-            </tr>
-          ))}
-          {visibleRows.length === 0 && rows.length > 0 && (
-            <tr>
-              <td colSpan={7} className="px-3 py-8 text-center text-stone-400 dark:text-stone-500">
-                No rows match these filters.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    <EntityList
+      scope="acknowledgement-reconciliation"
+      initialRows={rows}
+      definition={LIST}
+      getId={(row) => row.invoiceNo}
+      rowLabel={(row) => `invoice ${row.invoiceNo}`}
+      title="Acknowledgement reconciliation"
+      description="Invoiced lots compared with the staged broker acknowledgement."
+      emptyMessage="No acknowledgement rows."
+      rowClassName={(row) => warningInvoices.has(row.invoiceNo) ? "bg-amber-50/80 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700" : ""}
+    />
   );
+}
+
+function reconciliationNotes(row: ReconRow) {
+  const notes = [
+    row.status === "pending" ? "Invoiced, not in this ack — may roll to a later sale" : "",
+    row.status === "unexpected" ? "In the acknowledgement but never invoiced" : "",
+    row.gradeMismatch ? "grade differs" : "",
+    row.weightDelta != null && Math.abs(row.weightDelta) > 0.01 ? "weight differs" : "",
+  ].filter(Boolean);
+  return notes.join(" · ") || "—";
 }

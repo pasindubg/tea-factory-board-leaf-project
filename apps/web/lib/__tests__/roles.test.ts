@@ -27,6 +27,12 @@ describe("modulesForRole", () => {
       expect(m.entitlement).toBeTruthy();
     });
   });
+
+  it("keeps physical dispatch creation inside Dispatch Overview", () => {
+    expect(MODULES.some((module) => module.href === "/dashboard/auction/dispatches/new")).toBe(false);
+    expect(MODULES.find((module) => module.key === "auction-dispatch-overview")?.roles)
+      .toEqual(["owner", "manager", "accountant"]);
+  });
 });
 
 describe("roleHome", () => {

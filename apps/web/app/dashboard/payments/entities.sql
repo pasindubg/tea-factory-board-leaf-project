@@ -1,0 +1,9 @@
+-- Payments owns payment configuration, tiers, adjustments and statements.
+-- Diagram-only; never a migration.
+CREATE TABLE price_rates (id uuid PRIMARY KEY, factory_id uuid NOT NULL, grade text NOT NULL, price_per_kg numeric(10,2) NOT NULL, effective_from date NOT NULL, effective_to date);
+CREATE TABLE quality_tiers (id uuid PRIMARY KEY, factory_id uuid NOT NULL, name text NOT NULL, bonus_kind text NOT NULL, bonus_value numeric(10,2) NOT NULL, sort_order integer NOT NULL, active boolean NOT NULL);
+CREATE TABLE supplier_tiers (id uuid PRIMARY KEY, factory_id uuid NOT NULL, supplier_id uuid NOT NULL, tier_id uuid NOT NULL REFERENCES quality_tiers(id), source text NOT NULL, effective_from date NOT NULL, effective_to date, assigned_by uuid);
+CREATE TABLE payment_settings (factory_id uuid PRIMARY KEY, transport_per_kg numeric(10,2) NOT NULL, water_penalty_mode text NOT NULL, water_penalty_per_kg numeric(10,2) NOT NULL, default_water_penalty_pct numeric(5,2) NOT NULL);
+CREATE TABLE supplier_adjustments (id uuid PRIMARY KEY, factory_id uuid NOT NULL, supplier_id uuid NOT NULL, kind text NOT NULL, label text, amount numeric(12,2), percent numeric(5,2), occurred_on date NOT NULL, created_by uuid);
+CREATE TABLE payments (id uuid PRIMARY KEY, factory_id uuid NOT NULL, supplier_id uuid NOT NULL, period_year integer NOT NULL, period_month integer NOT NULL, total_kg numeric(12,2) NOT NULL, gross_amount numeric(14,2) NOT NULL, bonus_amount numeric(14,2) NOT NULL, deduction_amount numeric(14,2) NOT NULL, total_amount numeric(14,2) NOT NULL, status text, UNIQUE(supplier_id, period_year, period_month));
+CREATE TABLE payment_lines (id uuid PRIMARY KEY, payment_id uuid NOT NULL REFERENCES payments(id) ON DELETE CASCADE, factory_id uuid NOT NULL, line_type text NOT NULL, label text, quantity numeric(12,2), rate numeric(10,2), amount numeric(14,2) NOT NULL);

@@ -1,10 +1,15 @@
 import { notFound } from "next/navigation";
-import { requireProfile } from "@/lib/profile";
+import { requireModuleAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { lkr, MONTHS } from "@/lib/money";
-import { SubmitButton } from "@/components/submit-button";
-import { setPaymentStatus } from "../actions";
 import { PrintButton } from "./print-button";
+import { StatementLinesList, type StatementLineRow } from "./statement-lines-list";
+import {
+  StatementGeneratedMeta,
+  StatementStatusBadge,
+  StatementStatusButton,
+  StatementStatusProvider,
+} from "./statement-status-button";
 
 type Payment = {
   id: string;
@@ -32,7 +37,7 @@ type Line = {
 };
 
 export default async function StatementPage({ params }: { params: Promise<{ id: string }> }) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+  const { supabase, profile } = await requireModuleAccess("payments");
   const { id } = await params;
 
   const [{ data: payment }, { data: lines }, { data: factory }] = await Promise.all([
@@ -40,32 +45,35 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
       .from("payments")
       .select("id, period_year, period_month, total_kg, gross_amount, bonus_amount, bonus_missed, deduction_amount, total_amount, status, paid_at, generated_at, suppliers(name, area, phone)")
       .eq("id", id)
+      .eq("factory_id", profile.factory_id)
       .maybeSingle(),
-    supabase.from("payment_lines").select("id, line_type, label, quantity, rate, amount, sort_order").eq("payment_id", id).order("sort_order"),
+    supabase.from("payment_lines").select("id, line_type, label, quantity, rate, amount, sort_order").eq("payment_id", id).eq("factory_id", profile.factory_id).order("sort_order"),
     supabase.from("factories").select("name, location").eq("id", profile.factory_id).maybeSingle(),
   ]);
   if (!payment) notFound();
   const p = payment as unknown as Payment;
-  const lineRows = (lines ?? []) as Line[];
+  const lineRows: StatementLineRow[] = ((lines ?? []) as Line[]).map((line) => ({
+    id: line.id,
+    lineType: line.line_type,
+    label: line.label,
+    quantity: line.quantity,
+    rate: line.rate,
+    amount: line.amount,
+    sortOrder: line.sort_order,
+  }));
   const f = factory as { name: string; location: string | null } | null;
   const paid = p.status === "paid";
   const bonusMissed = Number(p.bonus_missed);
 
   return (
+    <StatementStatusProvider paymentId={p.id} initialPaid={paid} initialPaidAt={p.paid_at}>
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-center justify-between print:hidden">
         <a href={`/dashboard/payments?year=${p.period_year}&month=${p.period_month}`} className="text-sm text-green-700 dark:text-green-400 hover:underline">
           ← Back to statements
         </a>
         <div className="flex gap-3">
-          <form action={setPaymentStatus}>
-            <input type="hidden" name="payment_id" value={p.id} />
-            <input type="hidden" name="paid" value={paid ? "false" : "true"} />
-            <input type="hidden" name="return_to" value={`/dashboard/payments/${p.id}`} />
-            <SubmitButton pendingText="…" className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
-              {paid ? "Mark pending" : "Mark paid"}
-            </SubmitButton>
-          </form>
+          {MANAGEMENT_ROLES.includes(profile.role) && <StatementStatusButton />}
           <PrintButton />
         </div>
       </div>
@@ -79,9 +87,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
           </div>
           <div className="text-right text-sm">
             <p className="font-medium">{MONTHS[p.period_month - 1]} {p.period_year}</p>
-            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${paid ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400"}`}>
-              {p.status}
-            </span>
+            <StatementStatusBadge />
           </div>
         </div>
 
@@ -97,29 +103,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
           </div>
         </div>
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-y border-stone-200 dark:border-stone-700 text-left text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              <th className="py-2">Description</th>
-              <th className="py-2 text-right">Kg</th>
-              <th className="py-2 text-right">Rate</th>
-              <th className="py-2 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lineRows.map((l) => {
-              const amt = Number(l.amount);
-              return (
-                <tr key={l.id} className="border-b border-stone-100 dark:border-stone-800">
-                  <td className="py-2">{l.label ?? l.line_type}</td>
-                  <td className="py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{l.quantity ? Number(l.quantity).toFixed(2) : ""}</td>
-                  <td className="py-2 text-right tabular-nums text-stone-500 dark:text-stone-400">{l.rate ? Number(l.rate).toFixed(2) : ""}</td>
-                  <td className={`py-2 text-right tabular-nums ${amt < 0 ? "text-red-700 dark:text-red-400" : ""}`}>{lkr(amt)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <StatementLinesList rows={lineRows} />
 
         <div className="mt-4 space-y-1 text-sm">
           <div className="flex justify-between"><span className="text-stone-500 dark:text-stone-400">Gross (leaf + bonus)</span><span className="tabular-nums">{lkr(p.gross_amount)}</span></div>
@@ -136,9 +120,10 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
         )}
 
         <p className="mt-6 text-xs text-stone-400 dark:text-stone-500">
-          Generated {new Date(p.generated_at).toLocaleString()}{p.paid_at ? ` · Paid ${new Date(p.paid_at).toLocaleString()}` : ""}
+          <StatementGeneratedMeta generatedAt={p.generated_at} />
         </p>
       </div>
     </div>
+    </StatementStatusProvider>
   );
 }

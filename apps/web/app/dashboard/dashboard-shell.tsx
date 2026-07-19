@@ -9,6 +9,7 @@ import Link from "next/link";
 import type { ModuleDef } from "@/lib/roles";
 import { SidebarNav } from "./sidebar-nav";
 import { groupForSectionSlug, sectionSlugForGroup } from "./section-routes";
+import { moduleForPath } from "./navigation-matches";
 
 const STORAGE_KEY = "dashboard-sidebar-collapsed";
 
@@ -131,9 +132,7 @@ function DashboardBreadcrumbs({ pathname, nav }: { pathname: string; nav: readon
 
   const sectionSlug = pathname.match(/^\/dashboard\/sections\/([^/]+)/)?.[1];
   const routeGroup = groupForSectionSlug(sectionSlug);
-  const currentModule = [...nav]
-    .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
-    .sort((a, b) => b.href.length - a.href.length)[0];
+  const currentModule = moduleForPath(nav, pathname);
   const group = routeGroup ?? currentModule?.group ?? null;
   const currentLabel = routeGroup ?? currentModule?.label ?? "Current page";
 

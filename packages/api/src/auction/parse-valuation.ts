@@ -18,6 +18,27 @@ export type ValuationLot = {
   tastingNote: string;
 };
 
+export const VALUATION_PROCEEDS_TOLERANCE = 1;
+
+export type ValuationProceedsValidation = {
+  rows: {
+    invoiceNo: string;
+    lotNo: string;
+    expectedProceeds: number;
+    reportedProceeds: number;
+    variance: number;
+    tallies: boolean;
+  }[];
+  summary: {
+    expectedTotal: number;
+    reportedTotal: number;
+    variance: number;
+    tallyingLots: number;
+    nonTallyingLots: number;
+    tallies: boolean;
+  };
+};
+
 export type ParsedValuation = {
   docType: "valuation";
   saleNo: string | null;
@@ -27,6 +48,49 @@ export type ParsedValuation = {
 };
 
 const num = (s: string) => Number(s.replace(/,/g, ""));
+const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+/**
+ * A broker valuation is internally consistent when its reported proceeds are
+ * the lower-end valuation per kg multiplied by the document net weight. This
+ * calculation applies to both the BPML and Asia Siyaka layouts.
+ */
+export function validateValuationProceeds(lots: readonly ValuationLot[]): ValuationProceedsValidation {
+  const rows = lots.map((lot) => {
+    const expectedProceeds = money(lot.netWt * lot.priceMin);
+    const reportedProceeds = money(lot.projectedProceeds);
+    const variance = money(reportedProceeds - expectedProceeds);
+    return {
+      invoiceNo: lot.invoiceNo,
+      lotNo: lot.lotNo,
+      expectedProceeds,
+      reportedProceeds,
+      variance,
+      tallies: Math.abs(variance) <= VALUATION_PROCEEDS_TOLERANCE,
+    };
+  });
+  const expectedTotal = money(rows.reduce((sum, row) => sum + row.expectedProceeds, 0));
+  const reportedTotal = money(rows.reduce((sum, row) => sum + row.reportedProceeds, 0));
+  const variance = money(reportedTotal - expectedTotal);
+  const nonTallyingLots = rows.filter((row) => !row.tallies).length;
+  return {
+    rows,
+    summary: {
+      expectedTotal,
+      reportedTotal,
+      variance,
+      tallyingLots: rows.length - nonTallyingLots,
+      nonTallyingLots,
+      tallies: Math.abs(variance) <= VALUATION_PROCEEDS_TOLERANCE && nonTallyingLots === 0,
+    },
+  };
+}
+
+function proceedsIssues(lots: readonly ValuationLot[]) {
+  return validateValuationProceeds(lots).rows
+    .filter((row) => !row.tallies)
+    .map((row) => `Lot ${row.invoiceNo}: reported ${row.reportedProceeds} ≠ lower valuation×net wt (${row.expectedProceeds}).`);
+}
 
 const MARK_HEADER = /(MF\d+[A-Z]?)\s+([A-Z][A-Z ]*?)\s+Valuation Report/g;
 const ROW =
@@ -76,10 +140,7 @@ function parseAsiaSiyaka(text: string): ParsedValuation {
 
   const issues: string[] = [];
   if (lots.length === 0) issues.push("No ASIA SIYAKA valuation rows could be parsed.");
-  for (const lot of lots) {
-    if (Math.abs(lot.projectedProceeds - lot.priceMin * lot.netWt) > 1)
-      issues.push(`Lot ${lot.invoiceNo}: projected ${lot.projectedProceeds} ≠ priceMin×netWt.`);
-  }
+  issues.push(...proceedsIssues(lots));
   return { docType: "valuation", saleNo, saleDate, lots, issues };
 }
 
@@ -133,10 +194,8 @@ export function parseValuation(rawText: string): ParsedValuation {
   for (const l of lots) {
     if (Math.abs(l.netWt - l.bags * l.kgPerBag) > 0.01)
       issues.push(`Lot ${l.invoiceNo}: net wt ${l.netWt} ≠ bags×kg/bag.`);
-    // projected proceeds = low-end valuation × net wt
-    if (Math.abs(l.projectedProceeds - l.priceMin * l.netWt) > 1)
-      issues.push(`Lot ${l.invoiceNo}: projected ${l.projectedProceeds} ≠ priceMin×netWt.`);
   }
+  issues.push(...proceedsIssues(lots));
 
   return { docType: "valuation", saleNo, saleDate, lots, issues };
 }

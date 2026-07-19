@@ -2,15 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { ListSearchPanel, ListSidePanel, SortButton, useListControls, type ColumnDef } from "@/components/list-controls";
-import { confirmDispatchDraft, updateSale } from "../actions";
+import { showAppToast } from "@/components/action-feedback";
+import { EntityList } from "@/components/entity-list";
+import type { ColumnDef, ListDefinition } from "@/components/list-controls";
+import { completeGrn, confirmDispatchDraft, createDispatch, updateSale } from "../actions";
 import { stateBucket } from "../state-buckets";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
+import type { AuctionDispatchListRow } from "@/lib/list-resources";
+import { NewDispatchForm, type DispatchCreationOptions } from "../new-dispatch-form";
 
 type SaleDetail = {
   id: string;
@@ -20,19 +24,17 @@ type SaleDetail = {
   sale_date: string | null;
   prompt_date: string | null;
   status: string | null;
+  selling_mark_id: string | null;
+  selling_mark: string | null;
+  broker_lorry_no: string | null;
+  driver_name: string | null;
+  bundle_dispatch_no: string | null;
+  created_date: string | null;
 };
 
-type MarkOption = { id: string; code: string; name: string };
+type MarkOption = { id: string; code: string; name: string | null };
 type GradeOption = { code: string; name: string };
-type DispatchListItem = {
-  id: string;
-  sale_no: string | null;
-  target_sale_no: string | null;
-  broker: string;
-  dispatch_date: string | null;
-  sale_date: string | null;
-  status: string | null;
-};
+type DispatchListItem = AuctionDispatchListRow;
 type DispatchStats = {
   totalLots: number;
   cataloguedLots: number;
@@ -47,18 +49,27 @@ type DispatchStep = {
 
 const DISPATCH_STEPS: DispatchStep[] = [
   { key: "draft", label: "Draft", metric: (stats) => `${stats.totalLots} lots` },
-  { key: "grn", label: "GRN", metric: () => "Store notice" },
+  { key: "invoiced", label: "Invoiced", metric: (stats) => `${stats.totalLots} lot invoices` },
+  { key: "grn", label: "GRN", metric: () => "Document or manual" },
   { key: "catalogued", label: "Catalogued", metric: (stats) => `${stats.cataloguedLots}/${stats.totalLots} lots` },
 ];
 
 const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
-  { key: "sale_no", label: "Dispatch", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
-  { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  { key: "sale_no", label: "Broker invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
+  { key: "broker", label: "Broker", accessor: (row) => row.brokers?.name ?? null, sortable: true, filter: "select" },
   { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
-  { key: "dispatch_date", label: "Dispatched", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
+  { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
   { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select" },
 ];
+
+const DISPATCH_LIST = {
+  columns: DISPATCH_LIST_COLUMNS,
+  selectionMode: "single",
+  add: true,
+  edit: false,
+  delete: false,
+} satisfies ListDefinition<DispatchListItem>;
 
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
@@ -83,7 +94,6 @@ function statusStepClass(index: number, currentIndex: number, editing: boolean, 
 
 function effectiveDispatchStatus(status: string | null, stats: DispatchStats) {
   if (stats.cataloguedLots > 0) return "catalogued";
-  if (status === "grn") return "grn";
   return status === "dispatched" ? "draft" : status;
 }
 
@@ -99,8 +109,8 @@ export function DispatchDetailEditor({
   marks,
   grades,
   isOwner,
-  addAction,
   soldLotIds,
+  creation,
 }: {
   sale: SaleDetail;
   dispatches: DispatchListItem[];
@@ -109,11 +119,13 @@ export function DispatchDetailEditor({
   marks: MarkOption[];
   grades: GradeOption[];
   isOwner: boolean;
-  addAction: (formData: FormData) => Promise<string | null>;
   soldLotIds: string[];
+  creation: DispatchCreationOptions;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [grnOpen, setGrnOpen] = useState(false);
+  const [liveRows, setLiveRows] = useState(rows);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
   const canDelete = isOwner && (sale.status === "dispatched" || sale.status === "draft");
@@ -121,12 +133,12 @@ export function DispatchDetailEditor({
   const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
   const canConfirmDraft = !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
-  const cataloguedLots = rows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
-  const issueLots = rows.filter((row) => ["pending", "missing", "shutout", "withdrawn"].includes(row.state ?? "")).length;
-  const reprintLots = rows.filter((row) => row.state === "re-print").length;
-  const appliedThresholdGrades = new Set(rows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
+  const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
+  const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
+  const reprintLots = liveRows.filter((row) => row.state === "re-print").length;
+  const appliedThresholdGrades = new Set(liveRows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
   const dispatchStats: DispatchStats = {
-    totalLots: rows.length,
+    totalLots: liveRows.length,
     cataloguedLots,
     issueLots,
     reprintLots,
@@ -134,17 +146,30 @@ export function DispatchDetailEditor({
   const displayStatus = effectiveDispatchStatus(sale.status, dispatchStats);
   const bucket = stateBucket(displayStatus);
   const currentStatusIndex = statusIndex(displayStatus);
-  const detailConfirmed = currentStatusIndex >= statusIndex("grn");
+  const detailConfirmed = currentStatusIndex >= statusIndex("invoiced");
+  const canProceedToGrn = currentStatusIndex >= statusIndex("invoiced") && currentStatusIndex < statusIndex("catalogued");
+  const handleRowsChange = useCallback((nextRows: LotRow[]) => setLiveRows(nextRows), []);
+
+  useEffect(() => setLiveRows(rows), [rows]);
 
   async function saveDispatch(formData: FormData) {
-    await updateSale(sale.id, formData);
+    const result = await updateSale(sale.id, formData);
+    if (!result.ok) {
+      showAppToast(result.error, "error");
+      return;
+    }
     setIsEditing(false);
+    router.refresh();
   }
 
   async function confirmDraft() {
     setIsConfirming(true);
     try {
-      await confirmDispatchDraft(sale.id);
+      const result = await confirmDispatchDraft(sale.id);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return;
+      }
       router.refresh();
     } finally {
       setIsConfirming(false);
@@ -152,25 +177,26 @@ export function DispatchDetailEditor({
   }
 
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
       <DispatchSideList
         rows={dispatches}
         currentId={sale.id}
         currentDisplayStatus={displayStatus}
-        title="Dispatches"
+        title="Invoice Overview"
+        creation={creation}
       />
       <div className="min-w-0 space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
-            ← Dispatches Overview
+            ← Invoice Overview
           </Link>
           <h2 className="mt-1 text-xl font-semibold">
-            Dispatch {sale.sale_no}
+            Invoice Details · {sale.sale_no}
           </h2>
           <p className="text-sm text-stone-500 dark:text-stone-400">
             {broker}
-            {sale.dispatch_date ? ` · dispatched ${sale.dispatch_date}` : ""}
+            {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
             {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
             {" · "}
             <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`} title={`Actual status: ${sale.status}`}>
@@ -180,7 +206,7 @@ export function DispatchDetailEditor({
         </div>
 
         <div className="w-full max-w-md lg:ml-auto lg:w-[26rem]">
-          <ol className="grid grid-cols-3 gap-1.5">
+          <ol className="grid grid-cols-4 gap-1.5">
             {DISPATCH_STEPS.map((step, index) => {
               const selected = index === currentStatusIndex;
               const stepCard = (
@@ -196,11 +222,38 @@ export function DispatchDetailEditor({
               );
               return (
                 <li key={step.key}>
-                  {stepCard}
+                  {step.key === "grn" && canProceedToGrn ? (
+                    <button type="button" className="w-full" onClick={() => setGrnOpen((open) => !open)}>
+                      {stepCard}
+                    </button>
+                  ) : stepCard}
                 </li>
               );
             })}
           </ol>
+          {grnOpen && canProceedToGrn && (
+            <form
+              action={completeGrn.bind(null, sale.id)}
+              className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left dark:border-blue-900 dark:bg-blue-950"
+            >
+              <label className="block text-xs font-semibold text-blue-900 dark:text-blue-200">GRN image or PDF</label>
+              <input
+                type="file"
+                name="grn_file"
+                accept="image/*,application/pdf"
+                className="mt-2 block w-full text-xs text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-stone-300 dark:file:bg-stone-900"
+              />
+              <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">
+                Upload the physical GRN now, or continue without one. Parsing and GRN-specific automation will be added later.
+              </p>
+              <SubmitButton
+                pendingText="Proceeding…"
+                className="mt-3 inline-flex h-8 items-center justify-center rounded-md bg-blue-700 px-3 text-xs font-semibold text-white hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-700"
+              >
+                Save GRN and proceed
+              </SubmitButton>
+            </form>
+          )}
         </div>
       </div>
 
@@ -210,13 +263,12 @@ export function DispatchDetailEditor({
             rows={rows}
             saleId={sale.id}
             isOwner={isOwner}
-            marks={marks}
             grades={grades}
-            addAction={addAction}
-            canEdit={isEditing}
+            canEdit={canAddLots}
             canAdd={canAddLots}
             soldLotIds={soldLotIds}
-            title="Dispatched lots"
+            title="Lot invoices"
+            onRowsChange={handleRowsChange}
           />
         </div>
 
@@ -224,7 +276,7 @@ export function DispatchDetailEditor({
           <aside className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900 xl:sticky xl:top-6">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Dispatch details</h3>
+                <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Invoice Details</h3>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   <span className={`rounded-full px-2 py-0.5 text-xs ${detailConfirmed ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
                     {detailConfirmed ? "Confirmed" : "Unconfirmed"}
@@ -248,9 +300,14 @@ export function DispatchDetailEditor({
 
             <div className="mt-4 space-y-2 text-sm">
               <DetailRow label="Broker" value={broker} />
-              <DetailRow label="Dispatch" value={sale.sale_no ?? "—"} />
+              <DetailRow label="Broker invoice" value={sale.sale_no ?? "—"} />
+              <DetailRow label="Created date" value={sale.created_date ?? "—"} />
+              <DetailRow label="Bundle dispatch" value={sale.bundle_dispatch_no ?? "—"} />
+              <DetailRow label="Dispatch date" value={sale.dispatch_date ?? "—"} />
+              <SellingMarkField marks={marks} defaultValue={sale.selling_mark_id ?? ""} displayValue={sale.selling_mark ?? "—"} disabled={!isEditing} />
+              <CompactField label="Lorry no." name="broker_lorry_no" defaultValue={sale.broker_lorry_no ?? ""} disabled={!isEditing} />
+              <CompactField label="Driver" name="driver_name" defaultValue={sale.driver_name ?? ""} disabled={!isEditing} />
               <CompactField label="Sale no." name="target_sale_no" defaultValue={sale.target_sale_no ?? ""} format="sale-no" disabled={!isEditing} />
-              <CompactField label="Dispatch date" name="dispatch_date" type="date" defaultValue={sale.dispatch_date ?? ""} disabled={!isEditing} />
               <CompactField label="Sale date" name="sale_date" type="date" defaultValue={sale.sale_date ?? ""} disabled={!isEditing} />
               <DetailRow label="Issues" value={`${issueLots} lots`} />
               <DetailRow label="Re-print" value={`${reprintLots} lots`} />
@@ -265,7 +322,7 @@ export function DispatchDetailEditor({
                   disabled={isConfirming}
                   className="inline-flex h-9 w-full items-center justify-center rounded-md bg-green-700 px-3 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-green-600 dark:hover:bg-green-700"
                 >
-                  {isConfirming ? "Confirming..." : "Confirm draft"}
+                  {isConfirming ? "Confirming..." : "Confirm broker invoice"}
                 </button>
               </div>
             )}
@@ -306,53 +363,80 @@ function DispatchSideList({
   currentId,
   currentDisplayStatus,
   title,
+  creation,
 }: {
   rows: DispatchListItem[];
   currentId: string;
   currentDisplayStatus: string | null;
   title: string;
+  creation: DispatchCreationOptions;
 }) {
-  const controls = useListControls(rows, DISPATCH_LIST_COLUMNS);
   return (
-    <ListSidePanel className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col">
-      <div className="border-b border-stone-200 px-4 py-3 dark:border-stone-800">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">{title}</h3>
-          <SortButton col={DISPATCH_LIST_COLUMNS[0]} controls={controls} />
-        </div>
-      </div>
-      <ListSearchPanel columns={DISPATCH_LIST_COLUMNS} controls={controls} label="Search" variant="popover" />
-      <div className="max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1">
-        {controls.rows.map((dispatch) => {
-          const active = dispatch.id === currentId;
+    <EntityList
+      resource={{ key: "auction.dispatches" }}
+      initialRows={rows}
+      definition={DISPATCH_LIST}
+      getId={(row) => row.id}
+      rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
+      title={title}
+      description={(liveRows) => `${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
+      create={{
+        action: createDispatch,
+        label: "New broker invoice",
+        panelTitle: "New broker invoice",
+        panelClassName: "max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain",
+        disabledReason: "Finish creating the current broker invoice first.",
+        render: ({ action, close, rows: liveRows }) => {
+          const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
+          const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
+          const liveDispatchHistory = liveRows.map((row) => ({
+            saleNo: row.sale_no,
+            targetSaleNo: row.target_sale_no,
+            dispatchDate: row.dispatch_date,
+            saleDate: row.sale_date,
+          }));
+          return (
+            <NewDispatchForm
+              {...creation}
+              nextDispatchNo={liveNextDispatchNo}
+              dispatchHistory={liveDispatchHistory}
+              action={action}
+              onCancel={close}
+            />
+          );
+        },
+      }}
+      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      listControls={{
+        initialFilters: { status: "Draft" },
+        storageKey: "auction.invoice-overview.filters",
+      }}
+      emptyMessage="No broker invoices."
+      filteredEmptyMessage="No broker invoices match."
+      sideList={{
+        href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
+        isActive: (dispatch) => dispatch.id === currentId,
+        sortColumnKey: "sale_no",
+        searchLabel: "Search",
+        showSelectionSummary: false,
+        content: (dispatch, { active }) => {
           const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
           return (
-            <Link
-              key={dispatch.id}
-              href={`/dashboard/auction/${dispatch.id}`}
-              className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
-                active
-                  ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
-                  : "hover:bg-stone-50 dark:hover:bg-stone-800/60"
-              }`}
-            >
+            <>
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
                 {active && <span className="text-stone-400">‹</span>}
               </div>
-              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.broker}</p>
+              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {dispatch.target_sale_no ?? "—"}</span>
+                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
                 <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
               </div>
-            </Link>
+            </>
           );
-        })}
-        {controls.rows.length === 0 && (
-          <p className="px-4 py-8 text-center text-sm text-stone-400 dark:text-stone-500">No dispatches match.</p>
-        )}
-      </div>
-    </ListSidePanel>
+        },
+      }}
+    />
   );
 }
 
@@ -385,6 +469,29 @@ function CompactField({
         }}
         className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
       />
+    </div>
+  );
+}
+
+function SellingMarkField({
+  marks,
+  defaultValue,
+  displayValue,
+  disabled,
+}: {
+  marks: MarkOption[];
+  defaultValue: string;
+  displayValue: string;
+  disabled: boolean;
+}) {
+  if (disabled) return <DetailRow label="Selling mark" value={displayValue} />;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
+      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
+        <option value="" disabled>Select selling mark</option>
+        {marks.map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
+      </select>
     </div>
   );
 }

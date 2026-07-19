@@ -1,15 +1,19 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
+  contractValidationIssues,
   reconcileValuation,
+  repairLegacyContractLines,
+  validateContractLine,
   type ParsedContract,
   type ValuationInput,
   type SaleInput,
 } from "@tea/api";
 import { confirmContract, rejectImport } from "../../../actions";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
-import { formatFourDigitNo, saleNoKey } from "../../../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
 import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
 export default async function ContractReviewPage({
@@ -54,10 +58,12 @@ export default async function ContractReviewPage({
 
   const aliases = await gradeAliasMap(supabase, profile.factory_id);
   const rawParsed = imp.parsed_json as ParsedContract;
+  const repairedLines = repairLegacyContractLines(rawParsed.lines);
   const parsed: ParsedContract = {
     ...rawParsed,
-    lines: rawParsed.lines.map((line) => ({ ...line, grade: canonicalGrade(line.grade, aliases) })),
+    lines: repairedLines.map((line) => ({ ...line, grade: canonicalGrade(line.grade, aliases) })),
   };
+  const reviewIssues = [...new Set([...parsed.issues, ...contractValidationIssues(parsed.lines)])];
   const confirmed = imp.status === "confirmed";
 
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
@@ -86,6 +92,10 @@ export default async function ContractReviewPage({
   const saleInputs: SaleInput[] = parsed.lines
     .filter((l) => l.sold !== false && invoiceToLotId.has(formatFourDigitNo(l.invoiceNo)))
     .map((l) => ({ lotId: invoiceToLotId.get(formatFourDigitNo(l.invoiceNo))!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
+  const unmatchedLines = parsed.lines.filter((line) => !invoiceToLotId.has(formatFourDigitNo(line.invoiceNo)));
+  const parsedSoldCount = parsed.lines.filter((line) => line.sold !== false).length;
+  const parsedNotSoldCount = parsed.lines.length - parsedSoldCount;
+  const canConfirm = reviewIssues.length === 0 && unmatchedLines.length === 0;
 
   const recon = reconcileValuation(valInputs, saleInputs);
   const reconByLot = new Map(recon.rows.map((r) => [r.lotId, r]));
@@ -95,16 +105,22 @@ export default async function ContractReviewPage({
   const contractLineRows: ContractLineRow[] = parsed.lines.map((l) => {
     const lotId = invoiceToLotId.get(formatFourDigitNo(l.invoiceNo));
     const r = lotId ? reconByLot.get(lotId) : undefined;
+    const validation = validateContractLine(l);
     return {
       sold: l.sold !== false,
       status: l.sold !== false ? "Sold" : confirmed ? "Re-print" : "Not sold",
       invoiceNo: l.invoiceNo,
+      invoiceMatched: lotId != null,
       buyerName: l.buyerName,
+      netWt: l.netWt,
       pricePerKg: l.pricePerKg,
       priceMin: r?.priceMin ?? null,
       priceMax: r?.priceMax ?? null,
       classification: r?.classification ?? "no-valuation",
       proceeds: l.proceeds,
+      expectedProceeds: validation.expectedProceeds,
+      proceedsVariance: validation.proceedsVariance,
+      proceedsMatch: validation.proceedsMatch,
       variance: r?.variance ?? null,
       vatAmount: l.vatAmount,
       onGuarantee: l.onGuarantee,
@@ -115,11 +131,11 @@ export default async function ContractReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {(sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null) ?? ""}
+          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} contract lines · {saleInputs.length} sold · prompt {parsed.promptDate ?? "—"}
+          {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} contract lines · {parsedSoldCount} sold · {parsedNotSoldCount} not sold · {parsed.lines.length - unmatchedLines.length} matched · prompt {parsed.promptDate ?? "—"}
         </p>
       </div>
 
@@ -142,14 +158,23 @@ export default async function ContractReviewPage({
           confirm the sale prices.
         </p>
       )}
-      {parsed.issues.length > 0 && (
+      {reviewIssues.length > 0 && (
         <div className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
           <p className="font-medium">Parse warnings:</p>
           <ul className="ml-4 list-disc">
-            {parsed.issues.map((i, idx) => (
+            {reviewIssues.map((i, idx) => (
               <li key={idx}>{i}</li>
             ))}
           </ul>
+        </div>
+      )}
+      {unmatchedLines.length > 0 && (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">
+          <p className="font-medium">Invoice matching required before confirmation:</p>
+          <p className="mt-1">
+            {unmatchedLines.length} contract line{unmatchedLines.length === 1 ? "" : "s"} could not be matched to a lot in this broker sale:{" "}
+            {unmatchedLines.map((line) => formatFourDigitNo(line.invoiceNo)).join(", ")}.
+          </p>
         </div>
       )}
 
@@ -175,18 +200,22 @@ export default async function ContractReviewPage({
           <form action={confirmContract.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="Saving…"
+              disabled={!canConfirm}
+              title={!canConfirm ? "Resolve the contract validation and invoice-matching warnings before confirming." : undefined}
               className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
             >
-              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false).length} re-print
+              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false && invoiceToLotId.has(formatFourDigitNo(line.invoiceNo))).length} re-print
             </SubmitButton>
           </form>
           <form action={rejectImport.bind(null, importId, saleId)}>
-            <SubmitButton
-              pendingText="…"
+            <ConfirmSubmitButton
+              title="Reject Sellers Contract?"
+              description="This discards the staged contract only. The sale, Broker Invoice, and lots will remain unchanged."
+              confirmLabel="Reject contract"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Reject
-            </SubmitButton>
+            </ConfirmSubmitButton>
           </form>
         </div>
       )}

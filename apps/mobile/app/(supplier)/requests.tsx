@@ -1,102 +1,109 @@
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useRouter } from "expo-router";
+import type { FrameworkListController } from "@tea/ui/list-controller";
+import { NativeEntityList } from "@/components/NativeEntityList";
+import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
-import type { RequestType, SupplierRequest } from "@/lib/types";
 import { colors, s } from "@/lib/theme";
+import type { SupplierRequest } from "@/lib/types";
 
-// A supplier's own requests (RLS scopes the table to their supplier_id, so no
-// explicit filter is needed). The Acknowledge button closes the money-handover
-// trust loop: confirming receipt flips handed_to_driver → acknowledged.
 export default function MyRequests() {
-  const [rows, setRows] = useState<SupplierRequest[]>([]);
+  const { profile, supplier } = useSession();
+  const router = useRouter();
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    const [{ data: reqs }, { data: types }] = await Promise.all([
+  const loadRows = useCallback(async () => {
+    if (!profile || profile.role !== "supplier" || !supplier) return [];
+    const [requestsResult, typesResult] = await Promise.all([
       supabase
         .from("supplier_requests")
         .select("id, supplier_id, type_key, amount, status, note, requested_at, handed_at, acknowledged_at")
+        .eq("factory_id", profile.factory_id)
+        .eq("supplier_id", supplier.id)
         .order("requested_at", { ascending: false }),
-      supabase.from("request_types").select("key, label"),
+      supabase
+        .from("request_types")
+        .select("key, label")
+        .eq("factory_id", profile.factory_id),
     ]);
-    setRows((reqs as SupplierRequest[]) ?? []);
-    setLabels(new Map(((types as { key: string; label: string }[]) ?? []).map((t) => [t.key, t.label])));
-  }, []);
+    if (requestsResult.error) throw requestsResult.error;
+    if (typesResult.error) throw typesResult.error;
 
-  useFocusEffect(useCallback(() => {
-    load();
-  }, [load]));
-
-  async function onRefresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
-
-  async function acknowledge(id: string) {
+    setLabels(new Map(
+      ((typesResult.data as { key: string; label: string }[]) ?? []).map((type) => [type.key, type.label]),
+    ));
+    return (requestsResult.data as SupplierRequest[]) ?? [];
+  }, [profile, supplier]);
+  async function acknowledge(id: string, list: FrameworkListController<SupplierRequest>) {
+    if (!profile || profile.role !== "supplier" || !supplier) return;
     setBusyId(id);
-    // Guard the transition so only a handed-to-driver row can be acknowledged.
-    await supabase
-      .from("supplier_requests")
-      .update({ status: "acknowledged", acknowledged_at: new Date().toISOString() })
-      .eq("id", id)
-      .eq("status", "handed_to_driver");
+    await list.runMutation(async () => {
+      const { data, error } = await supabase
+        .from("supplier_requests")
+        .update({ status: "acknowledged", acknowledged_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("factory_id", profile.factory_id)
+        .eq("supplier_id", supplier.id)
+        .eq("status", "handed_to_driver")
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("This request is no longer awaiting acknowledgement. Pull down to refresh.");
+    });
     setBusyId(null);
-    await load();
   }
 
   return (
     <SafeAreaView style={s.screen} edges={["bottom"]}>
-      <ScrollView
+      <NativeEntityList
+        loadRows={loadRows}
+        title="Request history"
+        description="Requests sent to your factory and their current status."
+        onCreate={() => router.replace("/(supplier)/home")}
+        canCreate={Boolean(profile?.role === "supplier" && supplier)}
+        createDisabledReason="Your supplier profile must be loaded before creating a request."
+        createLabel="New request"
+        keyExtractor={(item) => item.id}
         contentContainerStyle={s.pad}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.green} />}
-      >
-        <View style={{ gap: 12 }}>
-          {rows.map((r) => (
-            <View key={r.id} style={s.card}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={s.h2}>{labels.get(r.type_key) ?? r.type_key}</Text>
-                <StatusBadge status={r.status} />
-              </View>
-              {r.amount != null && (
-                <Text style={[s.muted, { marginTop: 4 }]}>LKR {Number(r.amount).toLocaleString()}</Text>
-              )}
-              <Text style={[s.faint, { marginTop: 4 }]}>
-                Requested {new Date(r.requested_at).toLocaleDateString()}
-                {r.note ? ` · ${r.note}` : ""}
-              </Text>
+        emptyMessage="No requests yet. Raise one from the home screen."
+        renderItem={({ item }, list) => (
+          <View style={[s.card, { marginBottom: 12 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={s.h2}>{labels.get(item.type_key) ?? item.type_key}</Text>
+              <StatusBadge status={item.status} />
+            </View>
+            {item.amount != null && (
+              <Text style={[s.muted, { marginTop: 4 }]}>LKR {Number(item.amount).toLocaleString()}</Text>
+            )}
+            <Text style={[s.faint, { marginTop: 4 }]}>
+              Requested {new Date(item.requested_at).toLocaleDateString()}
+              {item.note ? ` · ${item.note}` : ""}
+            </Text>
 
-              {r.status === "handed_to_driver" && (
-                <Pressable
-                  style={[s.button, { marginTop: 12 }, busyId === r.id && s.buttonDisabled]}
-                  disabled={busyId === r.id}
-                  onPress={() => acknowledge(r.id)}
-                >
-                  {busyId === r.id ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={s.buttonText}>✓ Confirm I received the money</Text>
-                  )}
-                </Pressable>
-              )}
-              {r.status === "acknowledged" && r.acknowledged_at && (
-                <Text style={{ marginTop: 8, color: colors.greenDark, fontSize: 13 }}>
-                  ✓ You confirmed receipt on {new Date(r.acknowledged_at).toLocaleDateString()}
-                </Text>
-              )}
-            </View>
-          ))}
-          {rows.length === 0 && (
-            <View style={s.card}>
-              <Text style={s.muted}>No requests yet. Raise one from the home screen.</Text>
-            </View>
-          )}
-        </View>
-      </ScrollView>
+            {item.status === "handed_to_driver" && (
+              <Pressable
+                style={[s.button, { marginTop: 12 }, busyId === item.id && s.buttonDisabled]}
+                disabled={busyId === item.id}
+                onPress={() => { void acknowledge(item.id, list); }}
+              >
+                {busyId === item.id ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={s.buttonText}>✓ Confirm I received the money</Text>
+                )}
+              </Pressable>
+            )}
+            {item.status === "acknowledged" && item.acknowledged_at && (
+              <Text style={{ marginTop: 8, color: colors.greenDark, fontSize: 13 }}>
+                ✓ You confirmed receipt on {new Date(item.acknowledged_at).toLocaleDateString()}
+              </Text>
+            )}
+          </View>
+        )}
+      />
     </SafeAreaView>
   );
 }
@@ -110,10 +117,10 @@ function StatusBadge({ status }: { status: string }) {
     acknowledged: { bg: "#dcfce7", fg: "#166534", label: "Received" },
     cancelled: { bg: "#f5f5f4", fg: "#78716c", label: "Cancelled" },
   };
-  const t = map[status] ?? { bg: "#f5f5f4", fg: "#78716c", label: status };
+  const tone = map[status] ?? { bg: "#f5f5f4", fg: "#78716c", label: status };
   return (
-    <View style={{ backgroundColor: t.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
-      <Text style={{ color: t.fg, fontSize: 12, fontWeight: "600" }}>{t.label}</Text>
+    <View style={{ backgroundColor: tone.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+      <Text style={{ color: tone.fg, fontSize: 12, fontWeight: "600" }}>{tone.label}</Text>
     </View>
   );
 }

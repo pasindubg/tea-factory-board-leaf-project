@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import { AppButton } from "@/components/ui/button";
 
 export function ConfirmationDialog({
@@ -33,7 +34,7 @@ export function ConfirmationDialog({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <>
       <button type="button" aria-label="Cancel confirmation" disabled={busy} onClick={onCancel} className="fixed inset-0 z-[140] cursor-default bg-stone-950/35 backdrop-blur-[2px]" />
       <section role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description" className="fixed left-1/2 top-1/2 z-[150] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-[1.5rem] border border-stone-200 bg-white p-6 shadow-2xl dark:border-stone-700 dark:bg-stone-900">
@@ -44,7 +45,8 @@ export function ConfirmationDialog({
           <AppButton type="button" variant={destructive ? "danger" : "primary"} busy={busy} busyLabel="Working…" onClick={onConfirm}>{confirmLabel}</AppButton>
         </div>
       </section>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -78,7 +80,10 @@ export function ConfirmSubmitButton({
         confirmLabel={confirmLabel}
         destructive={destructive}
         onCancel={() => setOpen(false)}
-        onConfirm={() => form?.requestSubmit()}
+        onConfirm={() => {
+          setOpen(false);
+          form?.requestSubmit();
+        }}
       />
     </>
   );

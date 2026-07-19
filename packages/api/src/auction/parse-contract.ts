@@ -41,8 +41,12 @@ const num = (s: string) => Number(s.replace(/,/g, ""));
 
 const HEADER =
   /(\d{4}\/\d{3}\/\d{4})\s+TEA SELLERS CONTRACT[\s\S]*?AUCTION SALE\s+(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
-const CORE =
-  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+Bags\s+([\d,]+\.\d{2})\s+([\d.]+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(\d{9}-\d{4})\s+(YES|NO)/g;
+// BPML sold rows end with a buyer VAT number; NOT SOLD rows leave that column
+// blank. The optional VAT group is what lets both row types participate in the
+// same ordered scan, so a skipped NOT SOLD row cannot leak into the next buyer.
+const BPML_ROW =
+  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+Bags\s+([\d,]+\.\d{2})\s+([\d.]+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:(\d{9}-\d{4}))?\s*(YES|NO)/g;
+const NOT_SOLD_LABEL = /\*{3}\s*N O T S O L D\s*\*{3}/;
 
 const ASIA_HEADER =
   /(\d{4}\/\d{3}\/\d{4})\s+Miriswatte,?-?\s*Ittapana\.\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
@@ -167,19 +171,21 @@ export function parseContract(rawText: string): ParsedContract {
 
   const lines: ContractLine[] = [];
   let prevEnd = 0;
-  for (const m of text.matchAll(CORE)) {
+  for (const m of text.matchAll(BPML_ROW)) {
     const start = m.index ?? 0;
     // Buyer name = text since the previous line, after the last "Bank Guarantee" label.
     const gap = text.slice(prevEnd, start);
-    const buyerName = (gap.split("Bank Guarantee").pop() ?? "").replace(/\s+/g, " ").trim();
+    const rawBuyer = (gap.split("Bank Guarantee").pop() ?? "").replace(/\s+/g, " ").trim();
+    const sold = !NOT_SOLD_LABEL.test(rawBuyer);
+    const buyerName = sold ? rawBuyer : "Not sold";
     const h = headerAt(start);
     lines.push({
-      sold: true,
+      sold,
       contractNo: h?.contractNo ?? "",
       markCode: h?.markCode ?? "",
       markName: h?.markName ?? "",
       buyerName,
-      buyerVatNo: m[12],
+      buyerVatNo: m[12] ?? "",
       lotNo: m[1],
       invoiceNo: m[2],
       grade: m[3],
@@ -205,15 +211,96 @@ function validateContractLines(lines: ContractLine[], emptyMessage: string): str
   const issues: string[] = [];
   if (lines.length === 0) issues.push(emptyMessage);
   for (const l of lines) {
-    if (Math.abs(l.netWt - (l.grossWt - l.sampleAllowance)) > 0.01)
+    const validation = validateContractLine(l);
+    if (!validation.netWeightMatches)
       issues.push(`Lot ${l.invoiceNo}: net ≠ gross − sample allowance.`);
-    if (Math.abs(l.proceeds - l.netWt * l.pricePerKg) > 0.5)
+    if (!validation.proceedsMatch)
       issues.push(`Lot ${l.invoiceNo}: proceeds ≠ net × price/kg.`);
-    if (Math.abs(l.vatAmount - l.proceeds * 0.18) > 0.5)
+    if (!validation.vatMatches)
       issues.push(`Lot ${l.invoiceNo}: VAT ≠ 18% of proceeds.`);
-    if (Math.abs(l.proceedsPlusVat - (l.proceeds + l.vatAmount)) > 0.01)
+    if (!validation.proceedsPlusVatMatches)
       issues.push(`Lot ${l.invoiceNo}: proceeds+VAT mismatch.`);
     if (!l.buyerName) issues.push(`Lot ${l.invoiceNo}: buyer name not captured.`);
+    if (l.sold && NOT_SOLD_LABEL.test(l.buyerName))
+      issues.push(`Lot ${l.invoiceNo}: buyer name contains a NOT SOLD row; re-upload the contract to re-parse it.`);
+    if (l.sold && !l.buyerVatNo) issues.push(`Lot ${l.invoiceNo}: buyer VAT number not captured.`);
+    if (!l.sold && (l.pricePerKg !== 0 || l.proceeds !== 0 || l.vatAmount !== 0 || l.proceedsPlusVat !== 0))
+      issues.push(`Lot ${l.invoiceNo}: NOT SOLD row contains non-zero sale values.`);
   }
   return issues;
+}
+
+export type ContractLineValidation = {
+  expectedNetWt: number;
+  expectedProceeds: number;
+  proceedsVariance: number;
+  netWeightMatches: boolean;
+  proceedsMatch: boolean;
+  vatMatches: boolean;
+  proceedsPlusVatMatches: boolean;
+};
+
+/** Numeric checks shared by parser warnings, confirmation guards and the review list. */
+export function validateContractLine(line: ContractLine): ContractLineValidation {
+  const expectedNetWt = Number((line.grossWt - line.sampleAllowance).toFixed(2));
+  const expectedProceeds = Number((line.netWt * line.pricePerKg).toFixed(2));
+  const proceedsVariance = Number((line.proceeds - expectedProceeds).toFixed(2));
+  return {
+    expectedNetWt,
+    expectedProceeds,
+    proceedsVariance,
+    netWeightMatches: Math.abs(line.netWt - expectedNetWt) <= 0.01,
+    proceedsMatch: Math.abs(proceedsVariance) <= 0.5,
+    vatMatches: Math.abs(line.vatAmount - line.proceeds * 0.18) <= 0.5,
+    proceedsPlusVatMatches: Math.abs(line.proceedsPlusVat - (line.proceeds + line.vatAmount)) <= 0.01,
+  };
+}
+
+export function contractValidationIssues(lines: ContractLine[]): string[] {
+  return validateContractLines(lines, "No contract lines could be parsed.");
+}
+
+/**
+ * Repairs BPML rows staged by the older parser. That parser skipped a NOT SOLD
+ * numeric row and stored its complete text at the front of the following sold
+ * buyer name. The skipped row still contains every field needed to reconstruct
+ * it, so existing staged imports can be reviewed and confirmed safely without
+ * requiring the original PDF bytes.
+ */
+export function repairLegacyContractLines(lines: ContractLine[]): ContractLine[] {
+  return lines.flatMap((line) => {
+    if (!line.sold) return [line];
+    const marker = line.buyerName.match(NOT_SOLD_LABEL);
+    if (!marker || marker.index == null) return [line];
+
+    const afterMarker = line.buyerName.slice(marker.index + marker[0].length).trim();
+    const rowMatch = new RegExp(BPML_ROW.source).exec(afterMarker);
+    if (!rowMatch || rowMatch.index !== 0) return [line];
+
+    const repairedBuyerName = afterMarker.slice(rowMatch[0].length).trim();
+    if (!repairedBuyerName) return [line];
+
+    const notSoldLine: ContractLine = {
+      sold: false,
+      contractNo: line.contractNo,
+      markCode: line.markCode,
+      markName: line.markName,
+      buyerName: "Not sold",
+      buyerVatNo: "",
+      lotNo: rowMatch[1],
+      invoiceNo: rowMatch[2],
+      grade: rowMatch[3],
+      bags: Number(rowMatch[4]),
+      grossWt: num(rowMatch[5]),
+      sampleAllowance: num(rowMatch[6]),
+      netWt: num(rowMatch[7]),
+      pricePerKg: num(rowMatch[8]),
+      proceeds: num(rowMatch[9]),
+      vatAmount: num(rowMatch[10]),
+      proceedsPlusVat: num(rowMatch[11]),
+      onGuarantee: rowMatch[13] === "YES",
+    };
+
+    return [notSoldLine, { ...line, buyerName: repairedBuyerName }];
+  });
 }

@@ -15,13 +15,19 @@ export function DeleteDispatchButton({ saleId }: { saleId: string }) {
   async function deleteDispatch() {
     setDeleting(true);
     try {
-      await deleteSale(saleId);
-      showAppToast("Dispatch deleted.");
+      const result = await deleteSale(saleId);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        setDeleting(false);
+        setConfirming(false);
+        return;
+      }
+      showAppToast(result.notice ?? "Broker invoice deleted.");
       router.replace(AUC);
     } catch {
       setDeleting(false);
       setConfirming(false);
-      showAppToast("Could not delete the dispatch. Please try again.", "error");
+      showAppToast("Could not delete the broker invoice. Please try again.", "error");
     }
   }
 
@@ -34,13 +40,13 @@ export function DeleteDispatchButton({ saleId }: { saleId: string }) {
         className="inline-flex items-center gap-1.5 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
       >
         {deleting && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-stone-400 border-t-transparent" />}
-        {deleting ? "Deleting…" : "Delete dispatch"}
+        {deleting ? "Deleting…" : "Delete broker invoice"}
       </button>
       <ConfirmationDialog
         open={confirming}
-        title="Delete dispatch?"
-        description="This will permanently remove the dispatch and all of its lots. This cannot be undone."
-        confirmLabel="Delete dispatch"
+        title="Delete broker invoice?"
+        description="This removes the broker invoice and its operational lot records. Financial sale, VAT, or settlement records will safely block deletion instead. This cannot be undone."
+        confirmLabel="Delete broker invoice"
         destructive
         busy={deleting}
         onCancel={() => setConfirming(false)}

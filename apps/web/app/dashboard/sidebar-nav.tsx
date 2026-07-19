@@ -4,30 +4,13 @@ import { usePathname } from "next/navigation";
 import { useCallback, useMemo } from "react";
 import { MODULE_GROUP_ORDER, type ModuleDef, type ModuleGroup } from "@/lib/roles";
 import { groupForSectionSlug, sectionSlugForGroup } from "./section-routes";
+import { moduleMatchesPath } from "./navigation-matches";
 import { AppNavLink } from "@/components/ui/navigation";
 
 export function SidebarNav({ items }: { items: readonly ModuleDef[] }) {
   const pathname = usePathname() ?? "";
 
-  const itemMatches = useCallback((item: ModuleDef): boolean => {
-    if (item.key === "auction-sale-detail") return pathname.startsWith("/dashboard/auction/sales/");
-    if (item.key === "auction-sales") return pathname === "/dashboard/auction/sales";
-    if (item.key === "auction-reprints") return pathname === "/dashboard/auction/reprints";
-    if (item.key === "auction-dispatch-detail") {
-      return pathname.startsWith("/dashboard/auction/") &&
-        !pathname.startsWith("/dashboard/auction/dashboard") &&
-        !pathname.startsWith("/dashboard/auction/sales") &&
-        !pathname.startsWith("/dashboard/auction/reprints") &&
-        !pathname.startsWith("/dashboard/auction/reports") &&
-        !pathname.startsWith("/dashboard/auction/registry") &&
-        !pathname.startsWith("/dashboard/auction/settings") &&
-        !pathname.startsWith("/dashboard/auction/new") &&
-        pathname !== "/dashboard/auction";
-    }
-    if (item.key === "auction") return pathname === "/dashboard/auction" || pathname.startsWith("/dashboard/auction/new");
-    if (item.key === "overview") return pathname === "/dashboard";
-    return pathname === item.href || pathname.startsWith(`${item.href}/`);
-  }, [pathname]);
+  const itemMatches = useCallback((item: ModuleDef): boolean => moduleMatchesPath(item, pathname), [pathname]);
 
   const groupModules = useMemo(() => {
     const map = new Map<ModuleGroup, ModuleDef[]>();

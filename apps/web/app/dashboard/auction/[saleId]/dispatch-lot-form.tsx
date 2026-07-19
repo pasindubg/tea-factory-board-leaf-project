@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { formatFourDigitNo } from "../sale-number";
 
@@ -9,40 +9,20 @@ const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
 export function DispatchLotForm({
   action,
-  marks,
   grades,
+  open,
+  onCancel,
 }: {
   action: (formData: FormData) => void | Promise<void>;
-  marks: { id: string; code: string; name: string }[];
   grades: { code: string; name: string }[];
+  open: boolean;
+  onCancel: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(1);
-  const ref = useRef<HTMLFormElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  if (!open) return null;
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-      >
-        + Add lot
-      </button>
-      <form
-        ref={ref}
-        action={action}
-        className={`absolute right-0 top-10 z-20 w-96 grid gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 shadow-lg ${open ? "" : "hidden"}`}
-      >
+    <form action={action} className="grid gap-3">
         <div>
           <label className={label}>Invoice no.</label>
           {Array.from({ length: invoiceCount }).map((_, i) => (
@@ -65,27 +45,16 @@ export function DispatchLotForm({
             + add another invoice
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className={label}>Lot no.</label>
-            <input
-              name="lot_no"
-              placeholder="optional"
-              onBlur={(event) => {
-                event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
-              }}
-              className={input}
-            />
-          </div>
-          <div>
-            <label className={label}>Mark</label>
-            <select name="mark_id" className={`${input} appearance-none`} defaultValue="">
-              <option value="">Choose mark</option>
-              {marks.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({m.code})</option>
-              ))}
-            </select>
-          </div>
+        <div>
+          <label className={label}>Lot no.</label>
+          <input
+            name="lot_no"
+            placeholder="optional"
+            onBlur={(event) => {
+              event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+            }}
+            className={input}
+          />
         </div>
         <div>
           <label className={label}>Grade</label>
@@ -115,13 +84,17 @@ export function DispatchLotForm({
           <label className={label}>Sample kg</label>
           <input name="sample_allowance" type="number" min="0" step="0.01" placeholder="0.00" className={input} />
         </div>
+      <div className="flex flex-wrap gap-2">
         <SubmitButton
           pendingText="Adding…"
           className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
           Add lot
         </SubmitButton>
-      </form>
-    </div>
+        <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

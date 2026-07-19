@@ -22,6 +22,6 @@ export function formatFourDigitNo(value: string | number | null | undefined): st
 export function formatSaleNo(value: string | number | null | undefined): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
-  if (/^\d+$/.test(raw)) return raw.padStart(3, "0");
-  return raw.replace(/\d+$/, (digits) => digits.padStart(3, "0"));
+  if (/^\d+$/.test(raw)) return raw.padStart(4, "0");
+  return raw.replace(/\d+$/, (digits) => digits.padStart(4, "0"));
 }

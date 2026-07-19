@@ -4,11 +4,13 @@
  * Simulates Supabase auth by setting request.jwt.claims and switching to the
  * `authenticated` / `anon` roles, then checks:
  *   1. Factory A's owner sees only factory A weighings (and same for B)
- *   2. Anonymous sees zero rows
+ *   2. Collector weighing access is tied to the authenticated actor
+ *   3. Anonymous sees zero rows
  *
  *   DATABASE_URL=postgres://... pnpm db:verify-rls   (run db:seed first)
  */
 import postgres from "postgres";
+import { randomUUID } from "node:crypto";
 import { SEED_IDS } from "./seed-ids";
 
 const url = process.env.DATABASE_URL;
@@ -43,6 +45,15 @@ async function main() {
   }
   const ownerA: string = ownerARow.id;
   const ownerB: string = ownerBRow.id;
+  const [collectorAUser] = await sql`select id from users where email = 'collector-a@example.com'`;
+  const [collectorA] = collectorAUser
+    ? await sql`select id from collectors where user_id = ${collectorAUser.id} and factory_id = ${SEED_IDS.factoryA}`
+    : [];
+  const [collectorB] = await sql`select id from collectors where factory_id = ${SEED_IDS.factoryB} limit 1`;
+  const [supplierA] = await sql`select id from suppliers where factory_id = ${SEED_IDS.factoryA} and active is distinct from false limit 1`;
+  if (!collectorAUser || !collectorA || !collectorB || !supplierA) {
+    throw new Error("Seed collector/supplier rows not found — run db:seed (and db:link-auth against cloud) first");
+  }
 
   // 1. Factory A owner
   const a = await asUser(ownerA);
@@ -71,22 +82,129 @@ async function main() {
   );
 
   // 3. Cross-tenant write must be rejected
-  const crossWrite = await sql
+  let crossWriteAllowed = false;
+  await sql
     .begin(async (tx) => {
       await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: ownerA, role: "authenticated" })}, true)`;
       await tx.unsafe(`set local role authenticated`);
       await tx`insert into suppliers (factory_id, name) values (${SEED_IDS.factoryB}, 'Intruder')`;
+      crossWriteAllowed = true;
+      throw new Error("ROLLBACK_CROSS_TENANT_TEST");
     })
-    .then(() => false)
-    .catch(() => true);
-  check("owner A cannot insert a supplier into factory B", crossWrite, crossWrite ? "insert rejected" : "insert was ALLOWED");
+    .catch((error) => {
+      if (crossWriteAllowed && (error as Error).message !== "ROLLBACK_CROSS_TENANT_TEST") throw error;
+    });
+  check(
+    "owner A cannot insert a supplier into factory B",
+    !crossWriteAllowed,
+    crossWriteAllowed ? "insert was ALLOWED" : "insert rejected",
+  );
 
-  // 4. Anonymous sees nothing
+  // 4. The field client writes directly with the authenticated collector JWT.
+  // RLS must derive collector identity from auth.uid(), not trust the payload.
+  let validCollectorInsert = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      await tx`
+        insert into weighings (id, factory_id, supplier_id, collector_id, weight_kg, collected_at)
+        values (${randomUUID()}, ${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorA.id}, 1.00, now())
+      `;
+      validCollectorInsert = true;
+      throw new Error("ROLLBACK_VALID_COLLECTOR_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_VALID_COLLECTOR_TEST") throw error;
+    });
+  check("collector can insert a weighing as their linked collector", validCollectorInsert, validCollectorInsert ? "insert allowed" : "insert rejected");
+
+  let forgedCollectorAllowed = false;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      await tx`
+        insert into weighings (id, factory_id, supplier_id, collector_id, weight_kg, collected_at)
+        values (${randomUUID()}, ${SEED_IDS.factoryA}, ${supplierA.id}, ${collectorB.id}, 1.00, now())
+      `;
+      forgedCollectorAllowed = true;
+      throw new Error("ROLLBACK_FORGED_COLLECTOR_TEST");
+    })
+    .catch((error) => {
+      if (forgedCollectorAllowed && (error as Error).message !== "ROLLBACK_FORGED_COLLECTOR_TEST") throw error;
+    });
+  check(
+    "collector cannot forge another collector on a weighing",
+    !forgedCollectorAllowed,
+    forgedCollectorAllowed ? "insert was ALLOWED" : "insert rejected",
+  );
+
+  const [ownWeighing] = await sql`
+    select id from weighings
+    where factory_id = ${SEED_IDS.factoryA} and collector_id = ${collectorA.id}
+    limit 1
+  `;
+  if (!ownWeighing) throw new Error("Seed weighing for collector A not found — run db:seed first");
+  let alteredRowCount = 0;
+  await sql
+    .begin(async (tx) => {
+      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: collectorAUser.id, role: "authenticated" })}, true)`;
+      await tx.unsafe(`set local role authenticated`);
+      const alteredRows = await tx`update weighings set weight_kg = 999 where id = ${ownWeighing.id} returning id`;
+      alteredRowCount = alteredRows.length;
+      throw new Error("ROLLBACK_WEIGHING_UPDATE_TEST");
+    })
+    .catch((error) => {
+      if ((error as Error).message !== "ROLLBACK_WEIGHING_UPDATE_TEST") throw error;
+    });
+  check("collector cannot rewrite weighing history", alteredRowCount === 0, `${alteredRowCount} row(s) updated`);
+
+  // 5. Anonymous sees nothing
   const anonRows = await sql.begin(async (tx) => {
     await tx.unsafe(`set local role anon`);
     return tx`select * from weighings`;
   });
   check("anonymous sees zero weighings", anonRows.length === 0, `rows: ${anonRows.length}`);
+
+  // 6. Delete semantics are part of the tenant boundary: application code
+  // issues one scoped root delete and PostgreSQL must own every relationship.
+  const expectedDeleteRules = new Map<string, string>([
+    ["broker_rates_broker_id_brokers_id_fk", "c"],
+    ["broker_grade_thresholds_broker_id_brokers_id_fk", "c"],
+    ["broker_grade_thresholds_grade_id_auction_grades_id_fk", "c"],
+    ["auction_lots_sale_id_auction_sales_id_fk", "c"],
+    ["auction_sales_parent_sale_id_fk", "c"],
+    ["reprint_source_lot_id_fk", "n"],
+    ["valuations_lot_id_auction_lots_id_fk", "c"],
+    ["lot_invoices_lot_id_auction_lots_id_fk", "c"],
+    ["doc_imports_sale_id_auction_sales_id_fk", "n"],
+    ["auction_audit_lot_id_auction_lots_id_fk", "n"],
+    ["auction_audit_sale_id_auction_sales_id_fk", "c"],
+    ["sale_lines_lot_id_auction_lots_id_fk", "a"],
+    ["settlements_sale_id_auction_sales_id_fk", "a"],
+    ["vat_ledger_sale_line_id_sale_lines_id_fk", "a"],
+    ["collectors_user_id_users_id_fk", "n"],
+    ["supplier_messages_created_by_users_id_fk", "n"],
+    ["supplier_requests_decided_by_users_id_fk", "n"],
+    ["supplier_requests_handed_by_users_id_fk", "n"],
+    ["settlement_charges_settlement_id_settlements_id_fk", "c"],
+    ["bank_txns_matched_settlement_id_settlements_id_fk", "n"],
+  ]);
+  const deleteRules = await sql<{ conname: string; confdeltype: string }[]>`
+    select conname, confdeltype
+    from pg_constraint
+    where conname in ${sql([...expectedDeleteRules.keys()])}
+  `;
+  const actualDeleteRules = new Map(deleteRules.map((row) => [row.conname, row.confdeltype]));
+  for (const [constraint, expected] of expectedDeleteRules) {
+    const actual = actualDeleteRules.get(constraint);
+    check(
+      `delete rule ${constraint}`,
+      actual === expected,
+      `expected ${expected}, got ${actual ?? "missing"}`,
+    );
+  }
 
   await sql.end();
   console.log(failures === 0 ? "\nRLS verification: ALL CHECKS PASSED" : `\nRLS verification: ${failures} FAILURE(S)`);

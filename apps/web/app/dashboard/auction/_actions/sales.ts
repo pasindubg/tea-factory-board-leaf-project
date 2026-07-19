@@ -1,22 +1,109 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireModuleAccess, requireProfile } from "@/lib/profile";
-import { AUC, str, num, back, nextDispatchNo, saleDetailPath, writeAudit } from "./_shared";
+import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/profile";
+import { deleteTenantRow } from "@/lib/tenant-data";
+import { friendlyError } from "@/lib/errors";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
-// ---------- Sales (dispatches) ----------
-export async function createSale(formData: FormData) {
+async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
+  const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
+  const maximum = (data ?? []).reduce((max, row) => {
+    const suffix = String(row.dispatch_no ?? "").match(/\d+$/)?.[0];
+    return suffix ? Math.max(max, Number(suffix)) : max;
+  }, 0);
+  return formatFourDigitNo(maximum + 1);
+}
+
+/** Creates one physical bundle for a factory calendar day, or returns the existing one. */
+async function ensureDailyBundledDispatch(
+  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  factoryId: string,
+  dispatchDate: string,
+) {
+  const findExisting = () => supabase
+    .from("auction_bundled_dispatches")
+    .select("id")
+    .eq("factory_id", factoryId)
+    .eq("auto_created", true)
+    .eq("dispatch_date_from", dispatchDate)
+    .eq("dispatch_date_to", dispatchDate)
+    .maybeSingle();
+  const { data: existing } = await findExisting();
+  if (existing?.id) return existing.id as string;
+
+  const { data: warehouses } = await supabase
+    .from("auction_warehouses")
+    .select("name")
+    .eq("factory_id", factoryId)
+    .eq("active", true)
+    .order("name");
+  const warehouseRows = (warehouses ?? []) as { name: string }[];
+  const warehouse = warehouseRows.find((row) => row.name.toLowerCase() === "main warehouse") ?? warehouseRows[0];
+  if (!warehouse) throw new Error("Add an active warehouse before creating a Broker Invoice.");
+
+  const dispatchNo = await nextBundledDispatchNo(supabase);
+  const { data: created, error } = await supabase
+    .from("auction_bundled_dispatches")
+    .insert({
+      factory_id: factoryId,
+      dispatch_no: dispatchNo,
+      dispatch_date: dispatchDate,
+      dispatch_date_from: dispatchDate,
+      dispatch_date_to: dispatchDate,
+      warehouse: warehouse.name,
+      auto_created: true,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+  if (created?.id) return created.id as string;
+
+  // The partial unique index makes simultaneous first invoices safe: the loser
+  // simply reads the dispatch created by the other request.
+  if (error?.code === "23505") {
+    const { data: concurrent } = await findExisting();
+    if (concurrent?.id) return concurrent.id as string;
+  }
+  throw new Error(error?.message ?? "Could not create the bundled dispatch.");
+}
+
+// ---------- Broker invoices ----------
+async function insertDispatch(formData: FormData): Promise<
+  | { ok: true; id: string }
+  | { ok: false; error: string }
+> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const np = `${AUC}/new`;
   const brokerId = str(formData.get("broker_id"));
   const saleNo = await nextDispatchNo(supabase);
   const targetSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
-  if (!brokerId) back(np, "Pick a broker.");
-  if (!targetSaleNo) back(np, "Sale number is required.");
-  if (!saleDate) back(np, "Sale date is required.");
+  const dispatchDate = str(formData.get("dispatch_date"));
+  const sellingMarkId = str(formData.get("selling_mark_id"));
+  const brokerLorryNo = str(formData.get("broker_lorry_no"));
+  const driverName = str(formData.get("driver_name"));
+  if (!brokerId) return { ok: false, error: "Pick a broker." };
+  if (!targetSaleNo) return { ok: false, error: "Sale number is required." };
+  if (!saleDate) return { ok: false, error: "Sale date is required." };
+  if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
+  if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
+  const [{ data: broker }, { data: mark }] = await Promise.all([
+    supabase.from("brokers").select("id").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle(),
+    supabase.from("marks").select("id").eq("id", sellingMarkId).eq("factory_id", profile.factory_id).maybeSingle(),
+  ]);
+  if (!broker) return { ok: false, error: "Unknown broker." };
+  if (!mark) return { ok: false, error: "Unknown selling mark." };
+  let bundleId = "";
+  try {
+    bundleId = await ensureDailyBundledDispatch(supabase, profile.factory_id, dispatchDate);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not create the bundled dispatch." };
+  }
+  if (!bundleId) return { ok: false, error: "Could not create the bundled dispatch." };
   const { data, error } = await supabase
     .from("auction_sales")
     .insert({
@@ -25,78 +112,201 @@ export async function createSale(formData: FormData) {
       sale_no: saleNo,
       sale_date: saleDate,
       target_sale_no: targetSaleNo,
-      dispatch_date: str(formData.get("dispatch_date")) || new Date().toISOString().slice(0, 10),
+      dispatch_date: dispatchDate,
+      selling_mark_id: sellingMarkId,
+      broker_lorry_no: brokerLorryNo || null,
+      driver_name: driverName || null,
+      bundled_dispatch_id: bundleId,
       status: "draft",
     })
     .select("id")
     .single();
-  if (error || !data) return back(np, error?.message ?? "Could not create the sale.");
+  if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have a Broker Invoice in this bundled dispatch." };
+  if (error || !data) return { ok: false, error: friendlyError(error ?? { message: "Could not create the broker invoice." }) };
+  const { error: linkError } = await supabase.from("auction_bundled_dispatch_invoices").insert({
+    factory_id: profile.factory_id,
+    bundled_dispatch_id: bundleId,
+    broker_invoice_id: data.id,
+  });
+  if (linkError) {
+    const rollback = await deleteTenantRow(supabase, "auction_sales", data.id as string);
+    if (rollback.error) {
+      return {
+        ok: false,
+        error: "The Broker Invoice could not be linked, and its temporary record could not be cleaned up. Refresh and review the invoice list before retrying.",
+      };
+    }
+    return { ok: false, error: friendlyError(linkError) };
+  }
   revalidatePath(AUC);
-  redirect(`${AUC}/${data.id}`);
+  revalidatePath(`${AUC}/dispatches`);
+  revalidatePath(`${AUC}/dispatches/details`);
+  return { ok: true, id: data.id as string };
+}
+
+export async function createSale(formData: FormData): Promise<ListMutationResult> {
+  const result = await insertDispatch(formData);
+  if (!result.ok) return result;
+  return { ok: true, notice: "Broker invoice created." };
 }
 
 export { createSale as createDispatch };
 
-export async function deleteSale(id: string) {
-  const { supabase, profile } = await requireProfile(["owner"]);
-  // Guard: the sale must belong to this factory (RLS enforces it too — this
-  // makes the cross-tenant case a clean no-op instead of a partial cascade).
+export async function deleteSale(id: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  // Preserve the entity-specific role and tenant guard. PostgreSQL then owns
+  // the atomic relationship behavior: operational lots/configuration cascade,
+  // while sale proceeds, VAT and settlements reject deletion with a readable
+  // dependent-record error.
   const { data: sale } = await supabase
     .from("auction_sales").select("id").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
-  if (!sale) return;
-  // Cascade: remove all dependent records before the sale.
-  const { data: lotIds } = await supabase.from("auction_lots").select("id").eq("sale_id", id);
-  const ids = (lotIds ?? []).map((l) => l.id as string);
-  if (ids.length > 0) {
-    const { data: slIds } = await supabase.from("sale_lines").select("id").in("lot_id", ids);
-    await supabase.from("vat_ledger").delete().in("sale_line_id", (slIds ?? []).map((s) => s.id as string));
-    await supabase.from("valuations").delete().in("lot_id", ids);
-    await supabase.from("sale_lines").delete().in("lot_id", ids);
-    await supabase.from("lot_invoices").delete().in("lot_id", ids);
-    await supabase.from("auction_audit").delete().in("lot_id", ids);
-  }
-  const { data: settlementIds } = await supabase.from("settlements").select("id").eq("sale_id", id);
-  const sids = (settlementIds ?? []).map((s) => s.id as string);
-  if (sids.length > 0) {
-    await supabase.from("settlement_charges").delete().in("settlement_id", sids);
-    await supabase.from("bank_txns").delete().in("matched_settlement_id", sids);
-    await supabase.from("settlements").delete().in("id", sids);
-  }
-  await supabase.from("auction_audit").delete().eq("sale_id", id);
-  await supabase.from("doc_imports").delete().eq("sale_id", id);
-  await supabase.from("auction_lots").delete().eq("sale_id", id);
-  await supabase.from("auction_sales").delete().eq("id", id);
+  if (!sale) return { ok: false, error: "Broker invoice not found." };
+  const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
+  if (deleteError) return { ok: false, error: deleteError };
   revalidatePath(AUC);
+  return { ok: true, notice: "Broker invoice deleted." };
 }
 
-export async function updateSale(id: string, formData: FormData) {
+export async function updateSale(id: string, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
   const updates: Record<string, string | null> = {};
   const target = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
-  const dispatchDate = str(formData.get("dispatch_date"));
   const promptDate = str(formData.get("prompt_date"));
   if (formData.has("target_sale_no")) updates.target_sale_no = target || null;
   if (formData.has("sale_date")) updates.sale_date = saleDate || null;
-  if (dispatchDate) updates.dispatch_date = dispatchDate;
   if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
+  if (formData.has("selling_mark_id")) {
+    const sellingMarkId = str(formData.get("selling_mark_id"));
+    if (!sellingMarkId) return { ok: false, error: "Selling mark is required." };
+    const { data: mark, error: markError } = await supabase
+      .from("marks")
+      .select("id")
+      .eq("id", sellingMarkId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (markError) return { ok: false, error: friendlyError(markError) };
+    if (!mark) return { ok: false, error: "Unknown selling mark." };
+    updates.selling_mark_id = sellingMarkId;
+  }
+  if (formData.has("broker_lorry_no")) {
+    const brokerLorryNo = str(formData.get("broker_lorry_no"));
+    updates.broker_lorry_no = brokerLorryNo || null;
+  }
+  if (formData.has("driver_name")) {
+    const driverName = str(formData.get("driver_name"));
+    updates.driver_name = driverName || null;
+  }
   if (Object.keys(updates).length > 0) {
-    await supabase.from("auction_sales").update(updates).eq("id", id).eq("factory_id", profile.factory_id);
+    const { data: updatedSale, error } = await supabase
+      .from("auction_sales")
+      .update(updates)
+      .eq("id", id)
+      .eq("factory_id", profile.factory_id)
+      .select("id")
+      .maybeSingle();
+    if (error?.code === "23505") return { ok: false, error: "This broker and selling mark are already used in this bundled dispatch." };
+    if (error) return { ok: false, error: friendlyError(error) };
+    if (!updatedSale) return { ok: false, error: "This broker invoice was not found or changed before it could be updated." };
+    if (updates.target_sale_no) {
+      const { error: lotUpdateError } = await supabase
+        .from("auction_lots")
+        .update({ provisional_sale_no: updates.target_sale_no })
+        .eq("sale_id", id)
+        .eq("factory_id", profile.factory_id)
+        .is("final_sale_no", null);
+      if (lotUpdateError) return { ok: false, error: friendlyError(lotUpdateError) };
+    }
   }
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
+  return { ok: true, notice: "Broker invoice updated." };
 }
 
-export async function confirmDispatchDraft(id: string) {
+export async function confirmDispatchDraft(id: string): Promise<ListMutationResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  await supabase
+  const { data: confirmed, error } = await supabase
+    .from("auction_sales")
+    .update({ status: "invoiced" })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .in("status", ["draft", "dispatched"])
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: friendlyError(error) };
+  if (!confirmed) return { ok: false, error: "This broker invoice was not found or is no longer a draft." };
+  revalidatePath(AUC);
+  revalidatePath(`${AUC}/${id}`);
+  return { ok: true, notice: "Broker invoice confirmed." };
+}
+
+export async function completeGrn(id: string, formData: FormData) {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const detail = `${AUC}/${id}`;
+  const { data: invoice, error: invoiceError } = await supabase
+    .from("auction_sales")
+    .select("id, status")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (invoiceError) back(detail, friendlyError(invoiceError));
+  if (!invoice) back(detail, "Broker Invoice not found.");
+  if (!["invoiced", "grn"].includes(invoice?.status as string)) {
+    back(detail, "Confirm the Broker Invoice before proceeding to GRN.");
+  }
+
+  const entry = formData.get("grn_file");
+  let uploaded = false;
+  if (entry instanceof File && entry.size > 0) {
+    const allowed = entry.type === "application/pdf" || entry.type.startsWith("image/");
+    if (!allowed) back(detail, "GRN must be an image or PDF.");
+    const safeName = entry.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const storagePath = `${profile.factory_id}/${id}/grn/${randomUUID()}-${safeName}`;
+    const bytes = new Uint8Array(await entry.arrayBuffer());
+    const { error: uploadError } = await supabase.storage
+      .from("auction-documents")
+      .upload(storagePath, bytes, { contentType: entry.type || "application/octet-stream", upsert: false });
+    if (uploadError) back(detail, `Could not upload GRN: ${uploadError.message}`);
+    const staged = await stageImport(
+      supabase,
+      profile.factory_id,
+      id,
+      "grn",
+      entry,
+      { parserStatus: "pending", mimeType: entry.type, size: entry.size },
+      storagePath,
+    );
+    if (!staged.ok) {
+      await supabase.storage.from("auction-documents").remove([storagePath]);
+      return back(detail, staged.error);
+    }
+    const { data: confirmedImport, error: confirmImportError } = await supabase
+      .from("doc_imports")
+      .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+      .eq("id", staged.importId)
+      .eq("factory_id", profile.factory_id)
+      .eq("sale_id", id)
+      .select("id")
+      .maybeSingle();
+    if (confirmImportError || !confirmedImport) {
+      await supabase.storage.from("auction-documents").remove([storagePath]);
+      back(detail, confirmImportError ? friendlyError(confirmImportError) : "Could not confirm the uploaded GRN record.");
+    }
+    uploaded = true;
+  }
+
+  const { data: grnInvoice, error: grnError } = await supabase
     .from("auction_sales")
     .update({ status: "grn" })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
-    .in("status", ["draft", "dispatched"]);
+    .in("status", ["invoiced", "grn"])
+    .select("id")
+    .maybeSingle();
+  if (grnError || !grnInvoice) back(detail, grnError ? friendlyError(grnError) : "This broker invoice changed before GRN could be completed.");
   revalidatePath(AUC);
-  revalidatePath(`${AUC}/${id}`);
+  revalidatePath(detail);
+  redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);
 }
 
 export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
@@ -109,7 +319,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
   if (lotIds.length === 0) back(detail, "Select at least one lot to edit.");
 
   const requestedState = str(formData.get("state"));
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
   const state = validStates.has(requestedState) ? requestedState : "";
   const invoiceText = str(formData.get("invoice_no"));
   const invoiceList = invoiceText
@@ -238,12 +448,18 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
 
   if (hasInvoice) {
     const lot = lotRows[0];
-    await supabase.from("lot_invoices").delete().eq("lot_id", lot.id);
-    await supabase.from("lot_invoices").insert(invoiceList.map((invoice) => ({
+    const { error: invoiceDeleteError } = await supabase
+      .from("lot_invoices")
+      .delete()
+      .eq("factory_id", profile.factory_id)
+      .eq("lot_id", lot.id);
+    if (invoiceDeleteError) back(detail, friendlyError(invoiceDeleteError));
+    const { error: invoiceInsertError } = await supabase.from("lot_invoices").insert(invoiceList.map((invoice) => ({
       factory_id: profile.factory_id,
       lot_id: lot.id,
       invoice_no: invoice,
     })));
+    if (invoiceInsertError) back(detail, friendlyError(invoiceInsertError));
   }
 
   if (hasSaleValues || nextState === "sold") {
@@ -275,12 +491,12 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
   redirect(`${detail}?notice=${encodeURIComponent(`Updated ${lotIds.length} lot(s).`)}`);
 }
 
-export async function updateSaleLotsInline(saleId: string, formData: FormData) {
+export async function updateSaleLotsInline(saleId: string, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
   const lotIds = formData.getAll("lot_id").map((value) => str(value)).filter(Boolean);
-  if (lotIds.length === 0) back(detail, "Select at least one lot to edit.");
+  if (lotIds.length === 0) return { ok: false, error: "Select at least one lot to edit." };
 
   const values = {
     invoiceNo: formData.getAll("invoice_no").map((value) => str(value)),
@@ -326,38 +542,42 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData) {
 
   const allSubmittedInvoices = submittedRows.flatMap((row) => row.invoiceList);
   const duplicateInvoice = allSubmittedInvoices.find((invoice, index) => allSubmittedInvoices.indexOf(invoice) !== index);
-  if (duplicateInvoice) back(detail, `Invoice ${duplicateInvoice} is duplicated in the selected rows.`);
+  if (duplicateInvoice) return { ok: false, error: `Invoice ${duplicateInvoice} is duplicated in the selected rows.` };
 
-  const { data: lots } = await supabase
+  const { data: lots, error: lotsError } = await supabase
     .from("auction_lots")
     .select("id, sale_id, auction_sales(status)")
     .eq("factory_id", profile.factory_id)
     .in("id", lotIds);
+  if (lotsError) return { ok: false, error: friendlyError(lotsError) };
   const foundLotIds = new Set((lots ?? []).map((lot) => lot.id as string));
-  if (foundLotIds.size !== lotIds.length) back(detail, "One or more selected lots could not be found.");
+  if (foundLotIds.size !== lotIds.length) return { ok: false, error: "One or more selected lots could not be found." };
   const settledLot = (lots ?? []).find((lot) => {
     const sale = (lot as unknown as { auction_sales?: { status?: string | null } | { status?: string | null }[] | null }).auction_sales;
     const status = Array.isArray(sale) ? sale[0]?.status : sale?.status;
     return status === "settled";
   });
-  if (settledLot) back(detail, "Invoice editing is locked after settlement.");
+  if (settledLot) return { ok: false, error: "Invoice editing is locked after settlement." };
   const saleIdByLotId = new Map((lots ?? []).map((lot) => [lot.id as string, lot.sale_id as string]));
 
   if (allSubmittedInvoices.length > 0) {
-    const { data: invoiceRows } = await supabase
+    const { data: invoiceRows, error: invoiceRowsError } = await supabase
       .from("lot_invoices")
       .select("invoice_no, lot_id")
       .eq("factory_id", profile.factory_id)
       .in("invoice_no", allSubmittedInvoices);
+    if (invoiceRowsError) return { ok: false, error: friendlyError(invoiceRowsError) };
     const selectedLotSet = new Set(lotIds);
     const conflict = (invoiceRows ?? []).find((row) => !selectedLotSet.has(row.lot_id as string));
-    if (conflict) back(detail, `Invoice ${conflict.invoice_no as string} is already attached to another lot.`);
+    if (conflict) return { ok: false, error: `Invoice ${conflict.invoice_no as string} is already attached to another lot.` };
   }
 
-  const { data: existingLines } = await supabase
+  const { data: existingLines, error: existingLinesError } = await supabase
     .from("sale_lines")
     .select("lot_id, buyer_id")
+    .eq("factory_id", profile.factory_id)
     .in("lot_id", lotIds);
+  if (existingLinesError) return { ok: false, error: friendlyError(existingLinesError) };
   const existingLineByLot = new Map((existingLines ?? []).map((line) => [line.lot_id as string, line]));
 
   const buyerNames = [...new Set(submittedRows.map((row) => row.buyerName).filter(Boolean))];
@@ -369,23 +589,23 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData) {
       .upsert({ factory_id: profile.factory_id, name: buyerName, vat_no: row?.buyerVatNo || null }, { onConflict: "factory_id,name" })
       .select("id, name")
       .single();
-    if (buyerError || !buyer?.id) back(detail, buyerError?.message ?? `Could not save buyer ${buyerName}.`);
+    if (buyerError || !buyer?.id) return { ok: false, error: buyerError ? friendlyError(buyerError) : `Could not save buyer ${buyerName}.` };
     buyerByName.set(buyerName, (buyer as { id: string }).id);
   }
 
   for (const row of submittedRows) {
-    if (row.invoiceList.length === 0) back(detail, "Invoice number is required for every edited lot.");
-    if (!row.grade) back(detail, "Grade is required for every edited lot.");
-    if (!(row.bags > 0) || !(row.kgPerBag > 0)) back(detail, "Bags and kg/bag must be positive.");
-    if (row.sampleKg >= row.bags * row.kgPerBag) back(detail, "Sample weight must be less than the gross lot weight.");
+    if (row.invoiceList.length === 0) return { ok: false, error: "Invoice number is required for every edited lot." };
+    if (!row.grade) return { ok: false, error: "Grade is required for every edited lot." };
+    if (!(row.bags > 0) || !(row.kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
+    if (row.sampleKg >= row.bags * row.kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
     if (row.state === "sold" && (!(Number(row.pricePerKg) > 0) || !(Number(row.proceeds) > 0) || row.vatAmount == null || Number.isNaN(Number(row.vatAmount)))) {
-      back(detail, "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT.");
+      return { ok: false, error: "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT." };
     }
   }
 
   for (const row of submittedRows) {
     const netWt = Number(Math.max(0, row.bags * row.kgPerBag - row.sampleKg).toFixed(2));
-    await supabase
+    const { error: lotUpdateError } = await supabase
       .from("auction_lots")
       .update({
         invoice_no: row.invoiceList[0],
@@ -400,20 +620,42 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData) {
       })
       .eq("id", row.id)
       .eq("factory_id", profile.factory_id);
+    if (lotUpdateError) return { ok: false, error: friendlyError(lotUpdateError) };
 
-    await supabase.from("lot_invoices").delete().eq("lot_id", row.id);
-    await supabase.from("lot_invoices").insert(row.invoiceList.map((invoice) => ({
+    const { error: invoiceDeleteError } = await supabase
+      .from("lot_invoices")
+      .delete()
+      .eq("factory_id", profile.factory_id)
+      .eq("lot_id", row.id);
+    if (invoiceDeleteError) return { ok: false, error: friendlyError(invoiceDeleteError) };
+    const { error: invoiceInsertError } = await supabase.from("lot_invoices").insert(row.invoiceList.map((invoice) => ({
       factory_id: profile.factory_id,
       lot_id: row.id,
       invoice_no: invoice,
     })));
+    if (invoiceInsertError) return { ok: false, error: friendlyError(invoiceInsertError) };
 
     if (row.state === "re-print") {
-      const { data: staleLines } = await supabase.from("sale_lines").select("id").eq("lot_id", row.id);
+      const { data: staleLines, error: staleLineReadError } = await supabase
+        .from("sale_lines")
+        .select("id")
+        .eq("factory_id", profile.factory_id)
+        .eq("lot_id", row.id);
+      if (staleLineReadError) return { ok: false, error: friendlyError(staleLineReadError) };
       const staleLineIds = (staleLines ?? []).map((line) => line.id as string);
       if (staleLineIds.length > 0) {
-        await supabase.from("vat_ledger").delete().in("sale_line_id", staleLineIds);
-        await supabase.from("sale_lines").delete().in("id", staleLineIds);
+        const { error: vatDeleteError } = await supabase
+          .from("vat_ledger")
+          .delete()
+          .eq("factory_id", profile.factory_id)
+          .in("sale_line_id", staleLineIds);
+        if (vatDeleteError) return { ok: false, error: friendlyError(vatDeleteError) };
+        const { error: staleLineDeleteError } = await supabase
+          .from("sale_lines")
+          .delete()
+          .eq("factory_id", profile.factory_id)
+          .in("id", staleLineIds);
+        if (staleLineDeleteError) return { ok: false, error: friendlyError(staleLineDeleteError) };
       }
       await writeAudit(supabase, profile.factory_id, {
         saleId: saleIdByLotId.get(row.id) ?? saleId,
@@ -429,7 +671,7 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData) {
     const hasSaleLineValues = row.pricePerKg != null || row.proceeds != null || row.vatAmount != null || row.buyerName || row.onGuarantee != null;
     const shouldWriteLine = row.state === "sold" || hasSaleLineValues || existingLineByLot.has(row.id);
     if (shouldWriteLine) {
-      await supabase.from("sale_lines").upsert({
+      const { error: saleLineError } = await supabase.from("sale_lines").upsert({
         factory_id: profile.factory_id,
         sale_id: saleIdByLotId.get(row.id) ?? saleId,
         lot_id: row.id,
@@ -441,9 +683,10 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData) {
         vat_amount: Number(row.vatAmount ?? 0).toFixed(2),
         on_guarantee: Boolean(row.onGuarantee),
       }, { onConflict: "lot_id" });
+      if (saleLineError) return { ok: false, error: friendlyError(saleLineError) };
     }
   }
 
   revalidatePath(detail);
-  redirect(`${detail}?notice=${encodeURIComponent(`Updated ${submittedRows.length} lot(s).`)}`);
+  return { ok: true, notice: `Updated ${submittedRows.length} lot(s).` };
 }

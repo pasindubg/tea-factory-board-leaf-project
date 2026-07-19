@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { requireModuleAccess } from "@/lib/profile";
 import { SubmitButton } from "@/components/submit-button";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
   reconcileAcknowledgement,
+  relateAcknowledgementParseWarnings,
   type ParsedAcknowledgement,
   type ReconStatus,
 } from "@tea/api";
-import { confirmAcknowledgement, rejectAcknowledgement } from "../../../actions";
+import { confirmAcknowledgement, rejectImport } from "../../../actions";
 import { buildInvoicedLots } from "../../../recon-helpers";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
-import { saleNoKey } from "../../../sale-number";
+import { formatSaleNo, saleNoKey } from "../../../sale-number";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
 import { ReconTable } from "./recon-table";
 
@@ -112,6 +114,8 @@ export default async function AckReviewPage({
   const rows = [...recon.rows].sort(
     (a, b) => order[a.status] - order[b.status] || a.invoiceNo.localeCompare(b.invoiceNo),
   );
+  const warningRelations = relateAcknowledgementParseWarnings(parsed.issues, rows);
+  const warningInvoiceNos = [...new Set(warningRelations.flatMap((relation) => relation.rows.map((row) => row.invoiceNo)))];
   const confirmed = imp.status === "confirmed";
   const s = recon.summary;
   const chips: [string, number, string][] = [
@@ -126,7 +130,7 @@ export default async function AckReviewPage({
     <div className="space-y-6">
       <div>
         <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {(sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null) ?? ""}
+          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
         </Link>
         <h2 className="mt-1 text-xl font-semibold">Reconciliation ① — invoice ↔ acknowledgement</h2>
         <p className="text-sm text-stone-500 dark:text-stone-400">
@@ -149,6 +153,14 @@ export default async function AckReviewPage({
               <li key={idx}>{i}</li>
             ))}
           </ul>
+          {warningRelations.map((relation) => (
+            <div key={relation.issue} className="mt-3 rounded border border-amber-300/80 bg-amber-100/70 px-3 py-2 dark:border-amber-800 dark:bg-amber-900/30">
+              <p className="font-medium">Related reconciliation record{relation.rows.length === 1 ? "" : "s"}</p>
+              <p className="mt-1">
+                The printed catalogue total is {Math.abs(relation.differenceKg).toFixed(2)} kg {relation.differenceKg > 0 ? "higher" : "lower"} than the parsed rows. {relation.rows.map((row) => `Invoice ${row.invoiceNo} is ${row.status} at ${row.kg.toFixed(2)} kg`).join("; ")} — a close match to review, not an automatic conclusion.
+              </p>
+            </div>
+          ))}
         </div>
       )}
 
@@ -173,7 +185,7 @@ export default async function AckReviewPage({
       {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
       <ComparePanel saleId={saleId} orphans={orphans} candidates={candidates} audit={audit} />
 
-      <ReconTable rows={rows} />
+      <ReconTable rows={rows} warningInvoiceNos={warningInvoiceNos} />
 
       {!confirmed && (
         <div className="flex gap-3">
@@ -185,13 +197,15 @@ export default async function AckReviewPage({
               Confirm — acknowledge {s.catalogued} lot(s)
             </SubmitButton>
           </form>
-          <form action={rejectAcknowledgement.bind(null, importId, saleId)}>
-            <SubmitButton
-              pendingText="…"
+          <form action={rejectImport.bind(null, importId, saleId)}>
+            <ConfirmSubmitButton
+              title="Reject Acknowledgement?"
+              description="This discards the staged acknowledgement only. The sale, Broker Invoice, and lots will remain unchanged."
+              confirmLabel="Reject acknowledgement"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Reject
-            </SubmitButton>
+            </ConfirmSubmitButton>
           </form>
         </div>
       )}

@@ -28,16 +28,27 @@ export default function Weigh() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  // Suppliers in this collector's factory (RLS already scopes to the factory).
   useFocusEffect(
     useCallback(() => {
-      supabase
-        .from("suppliers")
-        .select("id, name, area")
-        .eq("active", true)
-        .order("name")
-        .then(({ data }) => setSuppliers((data as Supplier[]) ?? []));
-    }, []),
+      let active = true;
+      async function loadSuppliers() {
+        if (!profile || profile.role !== "collector") return;
+        const { data, error: loadError } = await supabase
+          .from("suppliers")
+          .select("id, name, area")
+          .eq("factory_id", profile.factory_id)
+          .eq("active", true)
+          .order("name");
+        if (!active) return;
+        if (loadError) {
+          setError(loadError.message);
+          return;
+        }
+        setSuppliers((data as Supplier[]) ?? []);
+      }
+      void loadSuppliers();
+      return () => { active = false; };
+    }, [profile]),
   );
 
   async function submit() {
@@ -46,7 +57,7 @@ export default function Weigh() {
     const kg = Number(weight);
     if (!supplier) return setError("Pick a supplier.");
     if (!weight || Number.isNaN(kg) || kg <= 0) return setError("Enter a weight greater than 0.");
-    if (!collector || !profile) return setError("Your collector profile isn't loaded yet.");
+    if (!collector || !profile || profile.role !== "collector") return setError("Your collector profile isn't loaded yet.");
 
     setBusy(true);
     // Client-generated UUID from day one (M5 offline sync reuses this id as the

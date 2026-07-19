@@ -2,7 +2,7 @@
 // Run: pnpm --dir packages/api test:auction
 import { readFileSync } from "node:fs";
 import { parseAcknowledgement, type AckLot } from "./parse-acknowledgement";
-import { reconcileAcknowledgement, type InvoicedLot } from "./reconcile";
+import { reconcileAcknowledgement, relateAcknowledgementParseWarnings, type InvoicedLot, type ReconRow } from "./reconcile";
 
 let failures = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -75,6 +75,24 @@ ok("anomaly: 0058 weight delta +5", !!r58 && r58.weightDelta === 5, `${r58?.weig
 ok("anomaly: 1 pending (9999 not in this partial ack)", recon2.summary.pending === 1, `${recon2.summary.pending}`);
 ok("anomaly: 13 unexpected (ack rows not invoiced)", recon2.summary.unexpected === 13, `${recon2.summary.unexpected}`);
 ok("anomaly: 1 weight mismatch flagged", recon2.summary.weightMismatches === 1);
+
+const totalWarningRows: ReconRow[] = [{
+  invoiceNo: "0122",
+  status: "pending",
+  invoiced: { id: "pending-0122", grade: "FBOFSP", netWt: 136 },
+  ack: null,
+  weightDelta: null,
+  gradeMismatch: false,
+}];
+const warningRelations = relateAcknowledgementParseWarnings(
+  ["Catalogued kg parsed (2120.00) ≠ printed total (2258.00)."],
+  totalWarningRows,
+);
+ok(
+  "catalogued-kg warning relates a near-matching pending invoice",
+  warningRelations.length === 1 && warningRelations[0].rows[0]?.invoiceNo === "0122" && warningRelations[0].differenceKg === 138,
+  JSON.stringify(warningRelations),
+);
 
 console.log(failures === 0 ? "\nAUCTION ACK PARSE + RECON: ALL CHECKS PASSED" : `\nAUCTION ACK: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

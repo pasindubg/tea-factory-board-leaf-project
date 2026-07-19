@@ -11,6 +11,12 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./list-controller": {
+      "types": "./src/list-controller.ts",
+      "react-native": "./src/list-controller.ts",
+      "import": "./dist/list-controller.js",
+      "default": "./dist/list-controller.js"
+    },
     "./styles": "./src/styles/globals.css"
   },
   "scripts": {

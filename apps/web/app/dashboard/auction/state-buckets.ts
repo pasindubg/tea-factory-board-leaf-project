@@ -21,6 +21,7 @@ export const STATE_BUCKET: Record<string, StateBucket> = {
   settled:    { label: "Sold",    style: SOLD },
   broker_statement: { label: "Broker statement", style: SOLD },
   shutout:    { label: "Shutout",   style: ISSUE },
+  "not-valued": { label: "Not Valued", style: ISSUE },
   withdrawn:  { label: "Withdrawn",   style: ISSUE },
   "re-print": { label: "Re-print",   style: ISSUE },
   missing:    { label: "Missing",   style: ISSUE },

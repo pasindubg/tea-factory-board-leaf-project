@@ -1,27 +1,42 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import { requireProfile } from "@/lib/profile";
-import { getDefaultRoles } from "@/lib/roles";
+import { friendlyError } from "@/lib/errors";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import { requireModuleAccess } from "@/lib/profile";
 
 // FA3 (issue #13): the factory composes a message to one supplier or broadcasts
 // to all of them. Suppliers read it in their field-app inbox (RLS scopes
 // visibility). Birthday wishes / promotions will reuse this surface.
 
 const MSG = "/dashboard/messages";
-const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
-const back = (error: string): never => redirect(`${MSG}?error=${encodeURIComponent(error)}`);
-const ok = (notice: string): never => redirect(`${MSG}?notice=${encodeURIComponent(notice)}`);
+const str = (value: FormDataEntryValue | null) => String(value ?? "").trim();
 
-export async function sendMessage(formData: FormData) {
-  const { supabase, profile } = await requireProfile(getDefaultRoles("messages"));
+export async function sendMessage(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("messages");
   const title = str(formData.get("title"));
   const body = str(formData.get("body"));
-  const target = str(formData.get("target")); // "all" or a supplier id
-  if (!title || !body) return back("A title and a message are both required.");
+  const target = str(formData.get("target"));
 
-  const supplierId = target && target !== "all" ? target : null;
+  if (!title || !body) return { ok: false, error: "A title and a message are both required." };
+  if (title.length > 120) return { ok: false, error: "The message title must be 120 characters or fewer." };
+  if (!target) return { ok: false, error: "Choose a supplier or select the broadcast option." };
+
+  const supplierId = target !== "all" ? target : null;
+  if (supplierId) {
+    // The selected recipient came from the browser. Resolve it again through
+    // the signed-in tenant client before attaching it to the message.
+    const { data: supplier, error: supplierError } = await supabase
+      .from("suppliers")
+      .select("id")
+      .eq("id", supplierId)
+      .eq("factory_id", profile.factory_id)
+      .eq("active", true)
+      .maybeSingle();
+    if (supplierError) return { ok: false, error: friendlyError(supplierError) };
+    if (!supplier) return { ok: false, error: "Choose an active supplier from this factory." };
+  }
+
   const { error } = await supabase.from("supplier_messages").insert({
     factory_id: profile.factory_id,
     supplier_id: supplierId,
@@ -29,8 +44,11 @@ export async function sendMessage(formData: FormData) {
     body,
     created_by: profile.id,
   });
-  if (error) return back(error.message);
+  if (error) return { ok: false, error: friendlyError(error) };
 
   revalidatePath(MSG);
-  ok(supplierId ? "Message sent to the supplier." : "Broadcast sent to all suppliers.");
+  return {
+    ok: true,
+    notice: supplierId ? "Message sent to the supplier." : "Broadcast sent to all suppliers.",
+  };
 }

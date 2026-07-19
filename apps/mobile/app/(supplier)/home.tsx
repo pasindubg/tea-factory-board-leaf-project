@@ -1,103 +1,87 @@
 import { useCallback, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, useRouter } from "expo-router";
-import { supabase } from "@/lib/supabase";
+import { useRouter } from "expo-router";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import { useSession } from "@/lib/session";
-import type { RequestType } from "@/lib/types";
+import { supabase } from "@/lib/supabase";
 import { colors, s } from "@/lib/theme";
+import type { RequestType } from "@/lib/types";
 
-// Supplier home. The request menu is rendered FROM the request_types table, so
-// the factory can add a new request type (a DB row) without an app update —
-// the server-driven-UI half of issue #13's "no reinstall" requirement.
+// Request types remain server-driven: new factory configuration appears after
+// a component-local refresh without an app release or route reload.
 export default function SupplierHome() {
-  const { supplier, signOut } = useSession();
+  const { profile, supplier, signOut } = useSession();
   const router = useRouter();
-  const [types, setTypes] = useState<RequestType[]>([]);
   const [unread, setUnread] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    const [{ data }, { count }] = await Promise.all([
+  const loadRows = useCallback(async () => {
+    if (!profile || profile.role !== "supplier" || !supplier) return [];
+    const [typesResult, messagesResult] = await Promise.all([
       supabase
         .from("request_types")
         .select("id, key, label, fields, requires_amount, creates_advance, sort_order")
+        .eq("factory_id", profile.factory_id)
         .eq("active", true)
         .order("sort_order"),
-      // unread direct messages (RLS already scopes to this supplier)
       supabase
         .from("supplier_messages")
         .select("id", { count: "exact", head: true })
-        .is("read_at", null)
-        .not("supplier_id", "is", null),
+        .eq("factory_id", profile.factory_id)
+        .eq("supplier_id", supplier.id)
+        .is("read_at", null),
     ]);
-    setTypes((data as RequestType[]) ?? []);
-    setUnread(count ?? 0);
-  }, []);
+    if (typesResult.error) throw typesResult.error;
+    if (messagesResult.error) throw messagesResult.error;
 
-  useFocusEffect(useCallback(() => {
-    load();
-  }, [load]));
-
-  async function onRefresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
-
+    setUnread(messagesResult.count ?? 0);
+    return (typesResult.data as RequestType[]) ?? [];
+  }, [profile, supplier]);
   return (
     <SafeAreaView style={s.screen} edges={["top"]}>
-      <ScrollView
-        contentContainerStyle={s.pad}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.green} />}
-      >
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <View style={{ flexShrink: 1 }}>
-            <Text style={s.h1}>Hello{supplier ? `, ${supplier.name.split(" ")[0]}` : ""}</Text>
-            <Text style={[s.muted, { marginTop: 2 }]}>What would you like to request?</Text>
-          </View>
+      <NativeEntityList
+        loadRows={loadRows}
+        title={`Hello${supplier ? `, ${supplier.name.split(" ")[0]}` : ""}`}
+        description="What would you like to request?"
+        actions={(
           <Pressable onPress={signOut} hitSlop={8}>
             <Text style={{ color: colors.green, fontSize: 14, fontWeight: "500" }}>Sign out</Text>
           </Pressable>
-        </View>
-
-        <View style={{ marginTop: 20, gap: 12 }}>
-          {types.map((t) => (
+        )}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={s.pad}
+        emptyMessage="No request types available yet — your factory will enable these soon."
+        footer={(
+          <View style={{ marginTop: 12 }}>
             <Pressable
-              key={t.id}
-              style={[s.card, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
-              onPress={() => router.push(`/(supplier)/new-request?key=${encodeURIComponent(t.key)}`)}
+              style={[s.card, { flexDirection: "row", alignItems: "center", justifyContent: "center" }]}
+              onPress={() => router.push("/(supplier)/messages")}
             >
-              <Text style={s.h2}>{t.label}</Text>
-              <Text style={{ color: colors.faint, fontSize: 22 }}>›</Text>
+              <Text style={{ color: colors.green, fontWeight: "600" }}>Messages</Text>
+              {unread > 0 && (
+                <View style={{ marginLeft: 8, backgroundColor: colors.green, borderRadius: 999, minWidth: 22, paddingHorizontal: 6, paddingVertical: 2 }}>
+                  <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", textAlign: "center" }}>{unread}</Text>
+                </View>
+              )}
             </Pressable>
-          ))}
-          {types.length === 0 && (
-            <View style={s.card}>
-              <Text style={s.muted}>No request types available yet — your factory will enable these soon.</Text>
-            </View>
-          )}
-        </View>
-
-        <Pressable
-          style={[s.card, { marginTop: 24, flexDirection: "row", alignItems: "center", justifyContent: "center" }]}
-          onPress={() => router.push("/(supplier)/messages")}
-        >
-          <Text style={{ color: colors.green, fontWeight: "600" }}>Messages</Text>
-          {unread > 0 && (
-            <View style={{ marginLeft: 8, backgroundColor: colors.green, borderRadius: 999, minWidth: 22, paddingHorizontal: 6, paddingVertical: 2 }}>
-              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", textAlign: "center" }}>{unread}</Text>
-            </View>
-          )}
-        </Pressable>
-
-        <Pressable
-          style={[s.card, { marginTop: 12, alignItems: "center" }]}
-          onPress={() => router.push("/(supplier)/requests")}
-        >
-          <Text style={{ color: colors.green, fontWeight: "600" }}>My requests ›</Text>
-        </Pressable>
-      </ScrollView>
+            <Pressable
+              style={[s.card, { marginTop: 12, alignItems: "center" }]}
+              onPress={() => router.push("/(supplier)/requests")}
+            >
+              <Text style={{ color: colors.green, fontWeight: "600" }}>My requests ›</Text>
+            </Pressable>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <Pressable
+            style={[s.card, { marginBottom: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+            onPress={() => router.push(`/(supplier)/new-request?key=${encodeURIComponent(item.key)}`)}
+          >
+            <Text style={s.h2}>{item.label}</Text>
+            <Text style={{ color: colors.faint, fontSize: 22 }}>›</Text>
+          </Pressable>
+        )}
+      />
     </SafeAreaView>
   );
 }

@@ -1,38 +1,36 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
-import { createDispatch } from "./actions";
 import { formatSaleNo, saleNoMatches } from "./sale-number";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
 const label = "block text-sm font-medium text-stone-600 dark:text-stone-400";
 
-export function NewDispatchForm({
-  brokers,
-  nextDispatchNo,
-  dispatchHistory,
-}: {
+export type DispatchCreationOptions = {
   brokers: { id: string; name: string }[];
+  marks: { id: string; code: string; name: string | null }[];
+  invoiceDate: string;
   nextDispatchNo: string;
   dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const today = new Date().toISOString().split("T")[0];
-  const [targetSaleNo, setTargetSaleNo] = useState("");
-  const [dispatchDate, setDispatchDate] = useState(today);
-  const [saleDate, setSaleDate] = useState(addDays(today, 14));
-  const ref = useRef<HTMLFormElement>(null);
+};
 
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+export function NewDispatchForm({
+  brokers,
+  marks,
+  invoiceDate,
+  nextDispatchNo,
+  dispatchHistory,
+  action,
+  onCancel,
+}: DispatchCreationOptions & {
+  action: (formData: FormData) => void | Promise<void>;
+  onCancel?: () => void;
+}) {
+  const [dispatchDate, setDispatchDate] = useState(invoiceDate);
+  const [targetSaleNo, setTargetSaleNo] = useState("");
+  const [saleDate, setSaleDate] = useState(addDays(invoiceDate, 14));
 
   useEffect(() => {
     const formattedSaleNo = formatSaleNo(targetSaleNo);
@@ -43,34 +41,22 @@ export function NewDispatchForm({
       )
     );
     if (previousSameSale && targetSaleNo !== formattedSaleNo) setTargetSaleNo(formattedSaleNo);
-    setSaleDate(previousSameSale?.saleDate ?? addDays(dispatchDate, 14));
-  }, [dispatchDate, dispatchHistory, targetSaleNo]);
+    setSaleDate(previousSameSale?.saleDate ?? addDays(invoiceDate, 14));
+  }, [dispatchHistory, invoiceDate, targetSaleNo]);
 
-  if (brokers.length === 0) {
+  if (brokers.length === 0 || marks.length === 0) {
     return (
       <Link
         href="/dashboard/auction/registry"
         className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
       >
-        Add a broker first
+        Add a broker and selling mark first
       </Link>
     );
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-      >
-        New dispatch
-      </button>
-      <form
-        ref={ref}
-        action={createDispatch}
-        className={`absolute right-0 top-12 z-20 w-96 grid gap-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 shadow-lg ${open ? "" : "hidden"}`}
-      >
+    <form action={action} className="grid gap-3">
         <div>
           <label className={label}>Broker</label>
           <select name="broker_id" required defaultValue="" className={input}>
@@ -80,7 +66,26 @@ export function NewDispatchForm({
           </select>
         </div>
         <div>
-          <label className={label}>Dispatch number</label>
+          <label className={label}>Selling mark</label>
+          <select name="selling_mark_id" required defaultValue="" className={input}>
+            <option value="" disabled>Select selling mark</option>
+            {marks.map((mark) => (
+              <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={label}>Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
+            <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
+          </div>
+          <div>
+            <label className={label}>Driver <span className="font-normal text-stone-400">(optional)</span></label>
+            <input name="driver_name" placeholder="Driver name" className={input} />
+          </div>
+        </div>
+        <div>
+          <label className={label}>Broker invoice number</label>
           <div className="mt-1 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -129,14 +134,16 @@ export function NewDispatchForm({
             />
           </div>
         </div>
-        <SubmitButton
-          pendingText="Creating…"
-          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-        >
-          Create dispatch
-        </SubmitButton>
-      </form>
-    </div>
+        <div className="flex flex-wrap gap-2">
+          <SubmitButton
+            pendingText="Creating…"
+            className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+          >
+            Create broker invoice
+          </SubmitButton>
+          {onCancel && <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">Cancel</button>}
+        </div>
+    </form>
   );
 }
 

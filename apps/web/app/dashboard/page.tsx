@@ -1,6 +1,7 @@
 import { requireModuleAccess } from "@/lib/profile";
 import { dayRange, lastNDates, localDateString } from "@/lib/dates";
 import { IntakeChart } from "@/components/intake-chart";
+import { CollectorIntakeList, RecentWeighingsList } from "./dashboard-lists";
 
 export default async function DashboardPage() {
   const { supabase } = await requireModuleAccess("overview");
@@ -73,44 +74,16 @@ export default async function DashboardPage() {
             <IntakeChart data={chartData} />
           </div>
         </div>
-        <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
-          <h2 className="text-sm font-medium text-stone-700 dark:text-stone-300">Today by collector</h2>
-          <ul className="mt-4 space-y-2">
-            {[...byCollector.entries()].map(([name, kg]) => (
-              <li key={name} className="flex items-center justify-between text-sm">
-                <span>{name}</span>
-                <span className="font-medium tabular-nums">{kg.toFixed(2)} kg</span>
-              </li>
-            ))}
-            {byCollector.size === 0 && <li className="text-sm text-stone-400 dark:text-stone-500">No intake recorded today.</li>}
-          </ul>
-        </div>
+        <CollectorIntakeList rows={[...byCollector.entries()].map(([name, kg]) => ({ id: name, name, kg }))} />
       </div>
 
-      <div className="mt-6 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-stone-700 dark:text-stone-300">Recent weighings</h2>
-          <a href="/dashboard/weighings" className="text-sm text-green-700 dark:text-green-400 hover:underline">
-            View all
-          </a>
-        </div>
-        <ul className="mt-4 divide-y divide-stone-100 dark:divide-stone-800">
-          {(recent ?? []).map((w) => (
-            <li key={w.id} className="flex items-center justify-between py-2 text-sm">
-              <span>
-                <span className="font-medium">{(w.suppliers as unknown as { name: string } | null)?.name ?? "—"}</span>
-                <span className="text-stone-400 dark:text-stone-500">
-                  {" "}
-                  · {(w.collectors as unknown as { name: string } | null)?.name ?? "—"} ·{" "}
-                  {new Date(w.collected_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
-                </span>
-              </span>
-              <span className="font-medium tabular-nums">{Number(w.weight_kg).toFixed(2)} kg</span>
-            </li>
-          ))}
-          {(recent ?? []).length === 0 && <li className="py-2 text-sm text-stone-400 dark:text-stone-500">No weighings yet.</li>}
-        </ul>
-      </div>
+      <div className="mt-6"><RecentWeighingsList rows={(recent ?? []).map((weighing) => ({
+        id: weighing.id as string,
+        supplier: (weighing.suppliers as unknown as { name: string } | null)?.name ?? "—",
+        collector: (weighing.collectors as unknown as { name: string } | null)?.name ?? "—",
+        collectedAt: weighing.collected_at as string,
+        weightKg: Number(weighing.weight_kg),
+      }))} /></div>
     </div>
   );
 }

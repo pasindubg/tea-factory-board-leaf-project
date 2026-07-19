@@ -2,36 +2,45 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { computeStatement, type AdjustmentInput, type CalcInput } from "@tea/api";
-import { requireProfile } from "@/lib/profile";
+import { requireModuleRole } from "@/lib/profile";
+import { deleteTenantRow } from "@/lib/tenant-data";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { friendlyError } from "@/lib/errors";
+import type { ListMutationResult } from "@/lib/list-mutations";
 
 const PAY = "/dashboard/payments";
 const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 const money = (n: number) => n.toFixed(2);
-const back = (path: string, error: string) => redirect(`${path}?error=${encodeURIComponent(error)}`);
-const ok = (path: string, notice: string) => redirect(`${path}?notice=${encodeURIComponent(notice)}`);
+const selectedIds = (formData: FormData, fallbackName?: string) => {
+  const ids = formData.getAll("selected_ids").map(String).filter(Boolean);
+  if (ids.length === 0 && fallbackName) {
+    const fallback = str(formData.get(fallbackName));
+    if (fallback) ids.push(fallback);
+  }
+  return [...new Set(ids)];
+};
 
 // ---------- Settings: base green-leaf rate ----------
-export async function saveBaseRate(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function saveBaseRate(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const price = num(formData.get("price_per_kg"));
   const from = str(formData.get("effective_from"));
   const settingsPath = `${PAY}/settings`;
-  if (!from || !(price > 0)) back(settingsPath, "A positive rate and an effective-from date are required.");
+  if (!from || !(price > 0)) return { ok: false, error: "A positive rate and an effective-from date are required." };
 
   // Close the currently-open green-leaf rate the day before the new one starts.
   const dayBefore = new Date(`${from}T00:00:00`);
   dayBefore.setDate(dayBefore.getDate() - 1);
   const closeTo = dayBefore.toISOString().slice(0, 10);
-  await supabase
+  const { error: closeError } = await supabase
     .from("price_rates")
     .update({ effective_to: closeTo })
     .eq("grade", "GREEN_LEAF")
+    .eq("factory_id", profile.factory_id)
     .is("effective_to", null);
+  if (closeError) return { ok: false, error: friendlyError(closeError) };
 
   const { error } = await supabase.from("price_rates").insert({
     factory_id: profile.factory_id,
@@ -39,22 +48,26 @@ export async function saveBaseRate(formData: FormData) {
     price_per_kg: money(price),
     effective_from: from,
   });
-  if (error) back(settingsPath, error.message);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(settingsPath);
-  ok(settingsPath, `Base rate set to LKR ${money(price)}/kg from ${from}.`);
+  return {
+    ok: true,
+    notice: `Base rate set to LKR ${money(price)}/kg from ${from}.`,
+    invalidate: [{ kind: "all", key: "payments.statements" }],
+  };
 }
 
 // ---------- Settings: deduction defaults ----------
-export async function saveSettings(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function saveSettings(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const transport = num(formData.get("transport_per_kg"));
   const waterMode = str(formData.get("water_penalty_mode"));
   const waterPct = num(formData.get("default_water_penalty_pct"));
   const waterPerKg = num(formData.get("water_penalty_per_kg"));
   const settingsPath = `${PAY}/settings`;
-  if (waterMode !== "per_kg" && waterMode !== "percent") back(settingsPath, "Pick a valid water-penalty mode.");
-  if (transport < 0 || waterPct < 0 || waterPct > 100 || waterPerKg < 0) {
-    back(settingsPath, "Enter valid non-negative values (water % ≤ 100).");
+  if (waterMode !== "per_kg" && waterMode !== "percent") return { ok: false, error: "Pick a valid water-penalty mode." };
+  if (![transport, waterPct, waterPerKg].every(Number.isFinite) || transport < 0 || waterPct < 0 || waterPct > 100 || waterPerKg < 0) {
+    return { ok: false, error: "Enter valid non-negative values (water % ≤ 100)." };
   }
 
   const { error } = await supabase.from("payment_settings").upsert(
@@ -68,14 +81,14 @@ export async function saveSettings(formData: FormData) {
     },
     { onConflict: "factory_id" },
   );
-  if (error) back(settingsPath, error.message);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(settingsPath);
-  ok(settingsPath, "Deduction defaults saved.");
+  return { ok: true, notice: "Deduction defaults saved.", invalidate: [{ kind: "all", key: "payments.statements" }] };
 }
 
 // ---------- Settings: quality tiers ----------
-export async function saveTier(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function saveTier(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", ["owner"]);
   const id = str(formData.get("id"));
   const name = str(formData.get("name"));
   const bonusKind = str(formData.get("bonus_kind"));
@@ -83,7 +96,7 @@ export async function saveTier(formData: FormData) {
   const sortOrder = num(formData.get("sort_order"));
   const settingsPath = `${PAY}/settings`;
   if (!name || (bonusKind !== "flat" && bonusKind !== "percent") || Number.isNaN(bonusValue) || bonusValue < 0) {
-    back(settingsPath, "Tier needs a name, a bonus type, and a non-negative bonus value.");
+    return { ok: false, error: "Tier needs a name, a bonus type, and a non-negative bonus value." };
   }
   const row = {
     factory_id: profile.factory_id,
@@ -92,43 +105,92 @@ export async function saveTier(formData: FormData) {
     bonus_value: money(bonusValue),
     sort_order: Number.isNaN(sortOrder) ? 0 : sortOrder,
   };
-  const { error } = id
-    ? await supabase.from("quality_tiers").update(row).eq("id", id)
-    : await supabase.from("quality_tiers").insert(row);
-  if (error) back(settingsPath, error.message);
+  if (id) {
+    const { data, error } = await supabase
+      .from("quality_tiers")
+      .update(row)
+      .eq("id", id)
+      .eq("factory_id", profile.factory_id)
+      .select("id")
+      .maybeSingle();
+    if (error) return { ok: false, error: friendlyError(error) };
+    if (!data) return { ok: false, error: "The selected quality tier is no longer available." };
+  } else {
+    const { error } = await supabase.from("quality_tiers").insert(row);
+    if (error) return { ok: false, error: friendlyError(error) };
+  }
   revalidatePath(settingsPath);
-  ok(settingsPath, id ? `Tier "${name}" updated.` : `Tier "${name}" added.`);
+  return {
+    ok: true,
+    notice: id ? `Tier "${name}" updated.` : `Tier "${name}" added.`,
+    invalidate: [
+      { kind: "exact", resource: { key: "payments.tier-assignments" } },
+      { kind: "all", key: "payments.statements" },
+    ],
+  };
 }
 
-export async function setTierActive(formData: FormData) {
-  const { supabase } = await requireProfile(MANAGEMENT_ROLES);
-  const id = str(formData.get("id"));
-  const active = str(formData.get("active")) === "true";
+export async function setTierActive(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", ["owner"]);
+  const ids = selectedIds(formData, "id");
+  const activeValue = str(formData.get("active"));
+  const active = activeValue === "true";
   const settingsPath = `${PAY}/settings`;
-  const { error } = await supabase.from("quality_tiers").update({ active }).eq("id", id);
-  if (error) back(settingsPath, error.message);
+  if (ids.length === 0) return { ok: false, error: "Select at least one quality tier." };
+  if (activeValue !== "true" && activeValue !== "false") return { ok: false, error: "Choose a valid tier status." };
+
+  const { data: existing, error: readError } = await supabase
+    .from("quality_tiers")
+    .select("id")
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (readError) return { ok: false, error: friendlyError(readError) };
+  if ((existing ?? []).length !== ids.length) {
+    return { ok: false, error: "One or more selected quality tiers are no longer available." };
+  }
+
+  const { error } = await supabase
+    .from("quality_tiers")
+    .update({ active })
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(settingsPath);
-  ok(settingsPath, active ? "Tier reactivated." : "Tier deactivated.");
+  return {
+    ok: true,
+    notice: `${ids.length} quality tier${ids.length === 1 ? "" : "s"} ${active ? "reactivated" : "deactivated"}.`,
+    invalidate: [
+      { kind: "exact", resource: { key: "payments.tier-assignments" } },
+      { kind: "all", key: "payments.statements" },
+    ],
+  };
 }
 
 // ---------- Supplier tier assignment ----------
-export async function assignTier(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function assignTier(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const supplierId = str(formData.get("supplier_id"));
   const tierId = str(formData.get("tier_id"));
   const from = str(formData.get("effective_from"));
   const note = str(formData.get("note")) || null;
   const tiersPath = `${PAY}/tiers`;
-  if (!supplierId || !tierId || !from) back(tiersPath, "Supplier, tier, and effective-from are required.");
+  if (!supplierId || !tierId || !from) return { ok: false, error: "Supplier, tier, and effective-from are required." };
+  const [{ data: supplier }, { data: tier }] = await Promise.all([
+    supabase.from("suppliers").select("id").eq("id", supplierId).eq("factory_id", profile.factory_id).eq("active", true).maybeSingle(),
+    supabase.from("quality_tiers").select("id").eq("id", tierId).eq("factory_id", profile.factory_id).eq("active", true).maybeSingle(),
+  ]);
+  if (!supplier || !tier) return { ok: false, error: "The selected supplier or tier is unavailable." };
 
   // Close the supplier's current open assignment the day before the new one.
   const dayBefore = new Date(`${from}T00:00:00`);
   dayBefore.setDate(dayBefore.getDate() - 1);
-  await supabase
+  const { error: closeError } = await supabase
     .from("supplier_tiers")
     .update({ effective_to: dayBefore.toISOString().slice(0, 10) })
     .eq("supplier_id", supplierId)
+    .eq("factory_id", profile.factory_id)
     .is("effective_to", null);
+  if (closeError) return { ok: false, error: friendlyError(closeError) };
 
   const { error } = await supabase.from("supplier_tiers").insert({
     factory_id: profile.factory_id,
@@ -139,14 +201,18 @@ export async function assignTier(formData: FormData) {
     note,
     assigned_by: profile.id,
   });
-  if (error) back(tiersPath, error.message);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(tiersPath);
-  ok(tiersPath, "Tier assigned. Go to Payments and click Regenerate to apply it to the statement.");
+  return {
+    ok: true,
+    notice: "Tier assigned. Regenerate the relevant payment period to apply it.",
+    invalidate: [{ kind: "all", key: "payments.statements" }],
+  };
 }
 
 // ---------- Adjustments (advances / deductions) ----------
-export async function addAdjustment(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function addAdjustment(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const supplierId = str(formData.get("supplier_id"));
   const kind = str(formData.get("kind"));
   const label = str(formData.get("label")) || null;
@@ -156,8 +222,10 @@ export async function addAdjustment(formData: FormData) {
   const adjPath = `${PAY}/adjustments`;
   const kinds = ["advance", "transport", "water_penalty", "other", "bonus"];
   if (!supplierId || !kinds.includes(kind) || !occurredOn || Number.isNaN(value) || value <= 0) {
-    back(adjPath, "Supplier, kind, date, and a positive value are required.");
+    return { ok: false, error: "Supplier, kind, date, and a positive value are required." };
   }
+  const { data: supplier } = await supabase.from("suppliers").select("id").eq("id", supplierId).eq("factory_id", profile.factory_id).maybeSingle();
+  if (!supplier) return { ok: false, error: "The selected supplier is unavailable." };
   const isPercent = mode === "percent";
   const d = new Date(`${occurredOn}T00:00:00`);
   const { error } = await supabase.from("supplier_adjustments").insert({
@@ -172,19 +240,28 @@ export async function addAdjustment(formData: FormData) {
     period_month: d.getMonth() + 1,
     created_by: profile.id,
   });
-  if (error) back(adjPath, error.message);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(adjPath);
-  ok(adjPath, "Adjustment added. Go to Payments and click Regenerate to apply it to the statement.");
+  return {
+    ok: true,
+    notice: "Adjustment added. Regenerate the relevant payment period to apply it.",
+    invalidate: [{ kind: "all", key: "payments.statements" }],
+  };
 }
 
-export async function deleteAdjustment(formData: FormData) {
-  const { supabase } = await requireProfile(MANAGEMENT_ROLES);
+export async function deleteAdjustment(formData: FormData): Promise<ListMutationResult> {
+  const { supabase } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const id = str(formData.get("id"));
   const adjPath = `${PAY}/adjustments`;
-  const { error } = await supabase.from("supplier_adjustments").delete().eq("id", id);
-  if (error) back(adjPath, error.message);
+  if (!id) return { ok: false, error: "Select an adjustment." };
+  const { error } = await deleteTenantRow(supabase, "supplier_adjustments", id);
+  if (error) return { ok: false, error };
   revalidatePath(adjPath);
-  ok(adjPath, "Adjustment removed. Regenerate the statement on the Payments page to reflect the change.");
+  return {
+    ok: true,
+    notice: "Adjustment removed. Regenerate the relevant statement to reflect the change.",
+    invalidate: [{ kind: "all", key: "payments.statements" }],
+  };
 }
 
 // ---------- Generate a month's payments ----------
@@ -209,29 +286,42 @@ type WeighRow = {
   transport_applies: boolean | null;
 };
 
-export async function generatePayments(formData: FormData) {
-  const { supabase, profile } = await requireProfile(MANAGEMENT_ROLES);
+export async function generatePayments(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
   const year = num(formData.get("year"));
   const month = num(formData.get("month"));
-  if (!year || !month || month < 1 || month > 12) back(PAY, "Pick a valid month to generate.");
+  if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(month) || month < 1 || month > 12) {
+    return { ok: false, error: "Pick a valid month to generate." };
+  }
 
   const startISO = new Date(year, month - 1, 1).toISOString();
   const endISO = new Date(year, month, 1).toISOString();
 
   const [weighRes, ratesRes, tiersRes, assignRes, adjRes, settingsRes, existingRes] = await Promise.all([
-    supabase.from("weighings").select("supplier_id, weight_kg, collected_at, water_penalty, transport_applies").gte("collected_at", startISO).lt("collected_at", endISO),
-    supabase.from("price_rates").select("price_per_kg, effective_from, effective_to").eq("grade", "GREEN_LEAF"),
-    supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order").eq("active", true),
-    supabase.from("supplier_tiers").select("supplier_id, tier_id, effective_from, effective_to"),
-    supabase.from("supplier_adjustments").select("supplier_id, kind, label, amount, percent, period_year, period_month, occurred_on"),
+    supabase.from("weighings").select("supplier_id, weight_kg, collected_at, water_penalty, transport_applies").eq("factory_id", profile.factory_id).gte("collected_at", startISO).lt("collected_at", endISO),
+    supabase.from("price_rates").select("price_per_kg, effective_from, effective_to").eq("factory_id", profile.factory_id).eq("grade", "GREEN_LEAF"),
+    supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order").eq("factory_id", profile.factory_id).eq("active", true),
+    supabase.from("supplier_tiers").select("supplier_id, tier_id, effective_from, effective_to").eq("factory_id", profile.factory_id),
+    supabase.from("supplier_adjustments").select("supplier_id, kind, label, amount, percent, period_year, period_month, occurred_on").eq("factory_id", profile.factory_id),
     supabase.from("payment_settings").select("transport_per_kg, water_penalty_mode, water_penalty_per_kg, default_water_penalty_pct").eq("factory_id", profile.factory_id).maybeSingle(),
-    supabase.from("payments").select("id, supplier_id, status").eq("period_year", year).eq("period_month", month),
+    supabase.from("payments").select("id, supplier_id, status").eq("factory_id", profile.factory_id).eq("period_year", year).eq("period_month", month),
   ]);
 
-  if (adjRes.error) back(PAY, `Could not load adjustments: ${adjRes.error.message}`);
+  const sourceError = [
+    weighRes.error,
+    ratesRes.error,
+    tiersRes.error,
+    assignRes.error,
+    adjRes.error,
+    settingsRes.error,
+    existingRes.error,
+  ].find(Boolean);
+  if (sourceError) return { ok: false, error: friendlyError(sourceError) };
 
   const weighings = (weighRes.data ?? []) as WeighRow[];
-  if (weighings.length === 0) back(PAY, `No weighings found for ${year}-${String(month).padStart(2, "0")}.`);
+  if (weighings.length === 0) {
+    return { ok: false, error: `No weighings found for ${year}-${String(month).padStart(2, "0")}.` };
+  }
 
   const baseRates = (ratesRes.data as RateRow[] ?? []).map((r) => ({
     pricePerKg: Number(r.price_per_kg),
@@ -291,7 +381,14 @@ export async function generatePayments(formData: FormData) {
       skippedPaid++;
       continue;
     }
-    if (existing) await supabase.from("payments").delete().eq("id", existing.id); // lines cascade
+    if (existing) {
+      const { error } = await supabase
+        .from("payments")
+        .delete()
+        .eq("id", existing.id)
+        .eq("factory_id", profile.factory_id); // payment lines cascade
+      if (error) return { ok: false, error: friendlyError(error) };
+    }
 
     const input: CalcInput = {
       weighings: supplierWeighings.map((w) => ({
@@ -334,7 +431,7 @@ export async function generatePayments(formData: FormData) {
       status: "pending",
       generated_at: new Date().toISOString(),
     });
-    if (payErr) back(PAY, payErr.message);
+    if (payErr) return { ok: false, error: friendlyError(payErr) };
 
     if (s.lines.length > 0) {
       const { error: lineErr } = await supabase.from("payment_lines").insert(
@@ -349,30 +446,55 @@ export async function generatePayments(formData: FormData) {
           sort_order: l.sortOrder,
         })),
       );
-      if (lineErr) back(PAY, lineErr.message);
+      if (lineErr) {
+        await supabase
+          .from("payments")
+          .delete()
+          .eq("id", paymentId)
+          .eq("factory_id", profile.factory_id);
+        return { ok: false, error: friendlyError(lineErr) };
+      }
     }
     generated++;
   }
 
   revalidatePath(PAY);
-  ok(
-    `${PAY}?year=${year}&month=${month}`,
-    `Generated ${generated} statement(s) for ${year}-${String(month).padStart(2, "0")}` +
+  return {
+    ok: true,
+    notice:
+      `Generated ${generated} statement${generated === 1 ? "" : "s"} for ${year}-${String(month).padStart(2, "0")}` +
       (skippedPaid ? `; skipped ${skippedPaid} already-paid.` : "."),
-  );
+  };
 }
 
-export async function setPaymentStatus(formData: FormData) {
-  const { supabase } = await requireProfile(MANAGEMENT_ROLES);
-  const id = str(formData.get("payment_id"));
-  const paid = str(formData.get("paid")) === "true";
-  const returnTo = str(formData.get("return_to")) || PAY;
+export async function setPaymentStatus(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("payments", MANAGEMENT_ROLES);
+  const ids = selectedIds(formData, "payment_id");
+  const paidValue = str(formData.get("paid"));
+  const paid = paidValue === "true";
+  if (ids.length === 0) return { ok: false, error: "Select at least one payment statement." };
+  if (paidValue !== "true" && paidValue !== "false") return { ok: false, error: "Choose a valid statement status." };
+
+  const { data: existing, error: readError } = await supabase
+    .from("payments")
+    .select("id")
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (readError) return { ok: false, error: friendlyError(readError) };
+  if ((existing ?? []).length !== ids.length) {
+    return { ok: false, error: "One or more selected statements are no longer available." };
+  }
+
   const { error } = await supabase
     .from("payments")
     .update({ status: paid ? "paid" : "pending", paid_at: paid ? new Date().toISOString() : null })
-    .eq("id", id);
-  if (error) back(returnTo, error.message);
-  revalidatePath(returnTo);
+    .in("id", ids)
+    .eq("factory_id", profile.factory_id);
+  if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(PAY);
-  ok(returnTo, paid ? "Marked paid." : "Marked pending.");
+  for (const id of ids) revalidatePath(`${PAY}/${id}`);
+  return {
+    ok: true,
+    notice: `${ids.length} statement${ids.length === 1 ? "" : "s"} marked ${paid ? "paid" : "pending"}.`,
+  };
 }

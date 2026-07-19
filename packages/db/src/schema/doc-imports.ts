@@ -1,5 +1,6 @@
 import { pgTable, uuid, text, jsonb, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
+import { auctionSales } from "./auction-sales";
 
 // Ingestion staging for broker PDFs and the bank CSV. Every import is parsed
 // here first (status `parsed`), reviewed, then `confirmed` into domain tables —
@@ -12,15 +13,18 @@ export const docImports = pgTable(
       .references(() => factories.id)
       .notNull(),
     docType: text("doc_type", {
-      enum: ["acknowledgement", "valuation", "contract", "bank_csv"],
+      enum: ["grn", "acknowledgement", "valuation", "contract", "bank_csv"],
     }).notNull(),
     sourceFilename: text("source_filename"),
+    storagePath: text("storage_path"),
     contentHash: text("content_hash").notNull(),
     parsedJson: jsonb("parsed_json"),
     status: text("status", { enum: ["parsed", "reviewed", "confirmed", "rejected"] })
       .default("parsed")
       .notNull(),
-    saleId: uuid("sale_id"), // linked sale once confirmed (no FK — kept generic)
+    // The staged document is historical evidence and survives removal of an
+    // otherwise-unused Broker Invoice; only its optional link is cleared.
+    saleId: uuid("sale_id").references(() => auctionSales.id, { onDelete: "set null" }),
     parsedAt: timestamp("parsed_at").defaultNow().notNull(),
     confirmedAt: timestamp("confirmed_at"),
   },

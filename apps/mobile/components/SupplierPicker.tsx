@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
-import { FlatList, Modal, Pressable, Text, TextInput, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Modal, Pressable, Text, TextInput, View } from "react-native";
+import { filterFrameworkListRows } from "@tea/ui/list-controller";
+import { NativeEntityList } from "@/components/NativeEntityList";
 import type { Supplier } from "@/lib/types";
 import { colors, s } from "@/lib/theme";
 
@@ -17,13 +19,11 @@ export function SupplierPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return suppliers;
-    return suppliers.filter(
-      (sup) => sup.name.toLowerCase().includes(q) || (sup.area ?? "").toLowerCase().includes(q),
-    );
-  }, [suppliers, query]);
+  const filtered = useMemo(
+    () => filterFrameworkListRows(suppliers, query, (supplier) => [supplier.name, supplier.area]),
+    [suppliers, query],
+  );
+  const loadRows = useCallback(async () => filtered, [filtered]);
 
   return (
     <View>
@@ -44,28 +44,27 @@ export function SupplierPicker({
               padding: 16,
             }}
           >
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={s.h2}>Select supplier</Text>
-              <Pressable onPress={() => setOpen(false)} hitSlop={8}>
-                <Text style={{ color: colors.green, fontSize: 14, fontWeight: "500" }}>Close</Text>
-              </Pressable>
-            </View>
-
-            <TextInput
-              style={[s.input, { marginTop: 12 }]}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search name or area"
-              placeholderTextColor={colors.faint}
-              autoCapitalize="none"
-            />
-
-            <FlatList
-              style={{ marginTop: 8 }}
-              data={filtered}
+            <NativeEntityList
+              loadRows={loadRows}
+              title="Select supplier"
+              actions={(
+                <Pressable onPress={() => setOpen(false)} hitSlop={8}>
+                  <Text style={{ color: colors.green, fontSize: 14, fontWeight: "500" }}>Close</Text>
+                </Pressable>
+              )}
+              header={(
+                <TextInput
+                  style={[s.input, { marginBottom: 8 }]}
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search name or area"
+                  placeholderTextColor={colors.faint}
+                  autoCapitalize="none"
+                />
+              )}
               keyExtractor={(item) => item.id}
               keyboardShouldPersistTaps="handled"
-              ListEmptyComponent={<Text style={[s.faint, { padding: 16 }]}>No suppliers found.</Text>}
+              emptyMessage="No suppliers found."
               renderItem={({ item }) => (
                 <Pressable
                   style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}

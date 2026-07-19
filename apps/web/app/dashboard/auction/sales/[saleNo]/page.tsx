@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireModuleAccess } from "@/lib/profile";
+import { loadListResource } from "@/lib/list-resource-registry";
 import { stateBucket } from "../../state-buckets";
-import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
-import { SaleLinesTable, type SaleLineRow } from "./sale-lines-table";
+import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
-import { TabbedListSurface } from "@/components/list-controls";
+import { EntityListTabs } from "@/components/entity-list";
 
 type DispatchRow = {
   id: string;
@@ -26,6 +27,8 @@ type LotRow = {
   id: string;
   sale_id: string;
   invoice_no: string | null;
+  provisional_sale_no: string | null;
+  final_sale_no: string | null;
   lot_no: string | null;
   grade: string | null;
   bags: number | null;
@@ -38,24 +41,10 @@ type LotRow = {
 };
 
 type LineRow = {
-  id: string;
-  sale_id: string;
   lot_id: string | null;
   proceeds: number | string | null;
-  price_per_kg: number | string | null;
-  net_wt: number | string | null;
   vat_amount: number | string | null;
   on_guarantee: boolean | null;
-  auction_lots: {
-    invoice_no: string | null;
-    lot_no: string | null;
-    grade: string | null;
-    bags: number | null;
-    kg_per_bag: number | string | null;
-    state: string | null;
-    reprint_source_lot_id: string | null;
-  } | null;
-  buyers: { name: string; vat_no: string | null } | null;
 };
 
 type MachineStep = {
@@ -110,7 +99,7 @@ export default async function SaleDetailPage({
 }: {
   params: Promise<{ saleNo: string }>;
 }) {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requireModuleAccess("auction");
   const { saleNo: rawSaleNo } = await params;
   const saleNo = decodeURIComponent(rawSaleNo);
   const displaySaleNo = formatSaleNo(saleNo);
@@ -123,49 +112,47 @@ export default async function SaleDetailPage({
   if (dispatchesError) throw new Error(`Could not load auction sale dispatches: ${dispatchesError.message}`);
 
   const allDispatchRows = (allDispatches ?? []) as unknown as DispatchRow[];
+  const { data: allLots, error: lotsError } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no)")
+    .order("invoice_no");
+  if (lotsError) throw new Error(`Could not load auction sale lots: ${lotsError.message}`);
+  const allLotRows = (allLots ?? []) as unknown as LotRow[];
+
+  // A sale can be identified by an explicit lot assignment after reconciliation,
+  // or by the target sale number on its broker invoice before that assignment is
+  // present. Keep both paths so every row on the sales overview has a detail page.
+  const assignedLotRows = allLotRows.filter((lot) =>
+    saleNoMatches(lot.final_sale_no || lot.provisional_sale_no, saleNo),
+  );
+  const assignedDispatchIds = new Set(assignedLotRows.map((lot) => lot.sale_id));
   const dispatches = allDispatchRows.filter(
-    (dispatch) => saleNoMatches(dispatch.target_sale_no, saleNo) || saleNoMatches(dispatch.sale_no, saleNo),
+    (dispatch) =>
+      assignedDispatchIds.has(dispatch.id) ||
+      saleNoMatches(dispatch.target_sale_no, saleNo) ||
+      saleNoMatches(dispatch.sale_no, saleNo),
+  );
+  const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id));
+  const lotRows = allLotRows.filter(
+    (lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id),
   );
 
-  if (dispatches.length === 0) notFound();
+  if (dispatches.length === 0 && lotRows.length === 0) notFound();
+  const saleLineResourceId = dispatches[0]?.id ?? lotRows[0]?.sale_id;
+  if (!saleLineResourceId) notFound();
 
-  const dispatchIds = dispatches.map((dispatch) => dispatch.id);
-  const [{ data: lots, error: lotsError }, { data: lines, error: linesError }] = await Promise.all([
-    supabase
-      .from("auction_lots")
-      .select("id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no)")
-      .in("sale_id", dispatchIds)
-      .order("invoice_no"),
-    supabase
-      .from("sale_lines")
-      .select(
-        "id, sale_id, lot_id, proceeds, price_per_kg, net_wt, vat_amount, on_guarantee, " +
-          "auction_lots(invoice_no, lot_no, grade, bags, kg_per_bag, state, reprint_source_lot_id), " +
-          "buyers(name, vat_no)",
-      )
-      .in("sale_id", dispatchIds)
-      .order("created_at", { ascending: false }),
-  ]);
-  if (lotsError) throw new Error(`Could not load auction sale lots: ${lotsError.message}`);
+  const { data: lines, error: linesError } = lotRows.length > 0
+    ? await supabase
+        .from("sale_lines")
+        .select("lot_id, proceeds, vat_amount, on_guarantee")
+        .in("lot_id", lotRows.map((lot) => lot.id))
+        .order("created_at", { ascending: false })
+    : { data: [], error: null };
   if (linesError) throw new Error(`Could not load auction sale lines: ${linesError.message}`);
 
-  const lotRows = (lots ?? []) as unknown as LotRow[];
   const lineRows = (lines ?? []) as unknown as LineRow[];
-  const lotIds = lotRows.map((lot) => lot.id).filter(Boolean);
-  const reprintCountBySource = new Map<string, number>();
-  if (lotIds.length > 0) {
-    const { data: reprintChildren, error: reprintError } = await supabase
-      .from("auction_lots")
-      .select("reprint_source_lot_id")
-      .in("reprint_source_lot_id", lotIds);
-    if (reprintError) throw new Error(`Could not load re-print counts: ${reprintError.message}`);
-    for (const child of (reprintChildren ?? []) as { reprint_source_lot_id: string | null }[]) {
-      if (!child.reprint_source_lot_id) continue;
-      reprintCountBySource.set(child.reprint_source_lot_id, (reprintCountBySource.get(child.reprint_source_lot_id) ?? 0) + 1);
-    }
-  }
-  const dispatchById = new Map(dispatches.map((dispatch) => [dispatch.id, dispatch]));
-  const saleLineByLotId = new Map(lineRows.filter((line) => line.lot_id).map((line) => [line.lot_id as string, line]));
+  const saleLines = await loadListResource({ key: "auction.sale-lines", params: { saleId: saleLineResourceId } });
+  if (!saleLines.ok) throw new Error(saleLines.error);
   const soldLotIds = new Set<string>([
     ...(lineRows.map((line) => line.lot_id).filter(Boolean) as string[]),
     ...lotRows.filter(lotIsSold).map((lot) => lot.id),
@@ -179,7 +166,6 @@ export default async function SaleDetailPage({
 
   const totalProceeds = lineRows.reduce((s, line) => s + Number(line.proceeds ?? 0), 0);
   const totalVat = lineRows.reduce((s, line) => s + Number(line.vat_amount ?? 0), 0);
-  const totalNetKg = lineRows.reduce((s, line) => s + Number(line.net_wt ?? 0), 0);
   const guaranteeLots = lineRows.filter((line) => line.on_guarantee).length;
   const reprintCount = lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
@@ -211,7 +197,7 @@ export default async function SaleDetailPage({
     {
       label: "Settled",
       count: settledCount,
-      detail: settledCount > 0 ? plural(settledCount, "dispatch", "dispatches") : "Pending",
+      detail: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
     },
   ];
   const currentStepIndex = Math.max(
@@ -220,6 +206,7 @@ export default async function SaleDetailPage({
   );
   const issueSteps = [
     { label: "Pending", count: lotCount(lotRows, ["pending"]) },
+    { label: "Not Valued", count: lotCount(lotRows, ["not-valued"]) },
     { label: "Shutout", count: lotCount(lotRows, ["shutout"]) },
     { label: "Withdrawn", count: lotCount(lotRows, ["withdrawn"]) },
     { label: "Re-print", count: lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length },
@@ -232,8 +219,27 @@ export default async function SaleDetailPage({
     saleDate: string | null;
     statuses: Set<string>;
   }>();
+  const allDispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
   for (const dispatch of allDispatchRows) {
-    const key = formatSaleNo(dispatch.target_sale_no || dispatch.sale_no);
+    const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
+    if (!key) continue;
+    const current = saleListSummaries.get(key) ?? {
+      saleNo: key,
+      dispatchNos: new Map<string, string>(),
+      brokers: new Set<string>(),
+      saleDate: dispatch.sale_date,
+      statuses: new Set<string>(),
+    };
+    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
+    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
+    current.saleDate ??= dispatch.sale_date;
+    current.statuses.add(stateBucket(dispatch.status).label);
+    saleListSummaries.set(key, current);
+  }
+  for (const lot of allLotRows) {
+    const dispatch = allDispatchById.get(lot.sale_id);
+    if (!dispatch) continue;
+    const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
     if (!key) continue;
     const current = saleListSummaries.get(key) ?? {
       saleNo: key,
@@ -292,39 +298,10 @@ export default async function SaleDetailPage({
   }
   const reconciliationGroups = [...reconciliationGroupsByBroker.values()].sort((a, b) => a.broker.localeCompare(b.broker));
 
-  const saleLineTableRows: SaleLineRow[] = lotRows.map((lot) => {
-    const line = saleLineByLotId.get(lot.id);
-    const dispatch = dispatchById.get(lot.sale_id);
-    const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
-    const state = stateBucket(lot.state);
-    return {
-      id: lot.id,
-      saleId: lot.sale_id,
-      dispatchId: dispatch?.id ?? null,
-      dispatchSaleNo: dispatch ? formatFourDigitNo(dispatch.sale_no) : null,
-      lotNo: formatFourDigitNo(lot.lot_no),
-      invoiceNo: invoices.length > 0 ? invoices.join(", ") : formatFourDigitNo(lot.invoice_no),
-      grade: lot.grade ?? null,
-      state: lot.state ?? null,
-      stateLabel: state.label,
-      stateStyle: state.style,
-      buyerName: line?.buyers?.name ?? null,
-      buyerVatNo: line?.buyers?.vat_no ?? null,
-      bags: lot.bags ?? null,
-      kgPerBag: lot.kg_per_bag != null ? Number(lot.kg_per_bag) : null,
-      sampleKg: lot.sample_allowance != null ? Number(lot.sample_allowance) : null,
-      netWt: Number(line?.net_wt ?? lot.net_wt ?? 0),
-      pricePerKg: line?.price_per_kg != null ? Number(line.price_per_kg) : null,
-      proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
-      vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
-      onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
-      reprint: Boolean(lot.reprint_source_lot_id),
-      reprintCount: reprintCountBySource.get(lot.id) ?? 0,
-    };
-  });
+  const saleLineTableRows = saleLines.rows;
 
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
       <SalesSideList rows={saleListRows} currentSaleNo={displaySaleNo} />
       <div className="min-w-0 space-y-6">
       <div>
@@ -335,7 +312,7 @@ export default async function SaleDetailPage({
           <div>
             <h2 className="text-xl font-semibold">Sale {displaySaleNo}</h2>
             <p className="text-sm text-stone-500 dark:text-stone-400">
-              {dispatches.length} dispatch{dispatches.length === 1 ? "" : "es"} · {lotRows.length} lots · {soldCount} sold · {reprintCount} re-print
+              {dispatches.length} broker invoice{dispatches.length === 1 ? "" : "s"} · {lotRows.length} lots · {soldCount} sold · {reprintCount} re-print
             </p>
           </div>
           <div className="w-full max-w-xl lg:ml-auto lg:w-[34rem]">
@@ -380,15 +357,24 @@ export default async function SaleDetailPage({
         <SalesReconciliationAssistant saleNo={displaySaleNo} groups={reconciliationGroups} />
       </section>
 
-      <TabbedListSurface
+      <EntityListTabs
+        label="Sale lists"
         tabs={[
-          { id: "lots", label: "Lots & invoices", count: `${saleLineTableRows.length} lots` },
-          { id: "dispatches", label: "Dispatches", count: `${dispatchTableRows.length} dispatches` },
+          {
+            id: "lots",
+            label: "Lots & invoices",
+            count: `${saleLineTableRows.length} lots`,
+            content: (
+              <SaleLinesTable
+                saleId={saleLineResourceId}
+                rows={saleLineTableRows}
+                canManage={profile.role === "owner" && !invoiceEditingLocked}
+              />
+            ),
+          },
+          { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={dispatchTableRows} /> },
         ]}
-      >
-        <SaleLinesTable rows={saleLineTableRows} invoiceEditingLocked={invoiceEditingLocked} />
-        <DispatchesInSaleTable rows={dispatchTableRows} />
-      </TabbedListSurface>
+      />
       </div>
     </div>
   );

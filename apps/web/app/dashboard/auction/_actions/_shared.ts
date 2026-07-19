@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
+import { friendlyError } from "@/lib/errors";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 
 export const AUC = "/dashboard/auction";
@@ -15,8 +16,28 @@ export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
+/** Today's calendar date at the factory, independent of the browser's timezone. */
+export function colomboToday(now = new Date()): string {
+  const values = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now).reduce<Record<string, string>>((parts, part) => {
+    parts[part.type] = part.value;
+    return parts;
+  }, {});
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 export type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
-export type DocType = "acknowledgement" | "valuation" | "contract" | "bank_csv";
+export type DocType = "grn" | "acknowledgement" | "valuation" | "contract" | "bank_csv";
+export type StageImportResult =
+  | { ok: true; importId: string }
+  | { ok: false; error: string };
+export type BankMatchResult =
+  | { ok: true; count: number }
+  | { ok: false; error: string };
 
 export const gradeAliasKey = (value: string | null | undefined) =>
   String(value ?? "").toUpperCase().replace(/\s+/g, "");
@@ -76,30 +97,49 @@ export async function stageImport(
   docType: DocType,
   file: File,
   parsed: unknown,
-): Promise<string | null> {
+  storagePath?: string | null,
+): Promise<StageImportResult> {
+  // `saleId` is browser-controlled at every upload entry point. Resolve it
+  // through the tenant-scoped client before persisting a document relationship.
+  const { data: sale, error: saleError } = await supabase
+    .from("auction_sales")
+    .select("id")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  if (saleError) return { ok: false, error: friendlyError(saleError) };
+  if (!sale) return { ok: false, error: "The selected Broker Invoice was not found for this factory." };
+
   const filename = file.name;
   const contentHash = createHash("sha256")
     .update(Buffer.from(await file.arrayBuffer()))
     .digest("hex");
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("doc_imports")
     .select("id")
     .eq("factory_id", factoryId)
     .eq("content_hash", contentHash)
     .maybeSingle();
+  if (existingError) return { ok: false, error: friendlyError(existingError) };
   if (existing?.id) {
-    await supabase
+    const { data: updated, error: updateError } = await supabase
       .from("doc_imports")
-      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: filename, doc_type: docType })
-      .eq("id", existing.id);
-    return existing.id as string;
+      .update({ parsed_json: parsed, status: "parsed", sale_id: saleId, source_filename: filename, storage_path: storagePath ?? null, doc_type: docType })
+      .eq("id", existing.id)
+      .eq("factory_id", factoryId)
+      .select("id")
+      .maybeSingle();
+    if (updateError) return { ok: false, error: friendlyError(updateError) };
+    if (!updated) return { ok: false, error: "The existing import could not be updated. Refresh and try again." };
+    return { ok: true, importId: updated.id as string };
   }
-  const { data } = await supabase
+  const { data, error: insertError } = await supabase
     .from("doc_imports")
     .insert({
       factory_id: factoryId,
       doc_type: docType,
       source_filename: filename,
+      storage_path: storagePath ?? null,
       content_hash: contentHash,
       parsed_json: parsed,
       status: "parsed",
@@ -107,14 +147,16 @@ export async function stageImport(
     })
     .select("id")
     .single();
-  return (data?.id as string) ?? null;
+  if (insertError) return { ok: false, error: friendlyError(insertError) };
+  if (!data?.id) return { ok: false, error: "The import could not be staged. Refresh and try again." };
+  return { ok: true, importId: data.id as string };
 }
 
 export async function writeAudit(supabase: Supa, factoryId: string, row: {
   saleId?: string | null; lotId?: string | null; action: string; detail: string;
   reason?: string | null; actor: string; confidenceShown?: number | null; weightDelta?: number | null;
 }) {
-  await supabase.from("auction_audit").insert({
+  return supabase.from("auction_audit").insert({
     factory_id: factoryId, sale_id: row.saleId ?? null, lot_id: row.lotId ?? null,
     action: row.action, detail: row.detail, reason: row.reason ?? null, actor: row.actor,
     confidence_shown: row.confidenceShown != null ? row.confidenceShown.toFixed(4) : null,
@@ -229,10 +271,16 @@ export async function stageBankCsv(
   autoMatch: boolean,
 ): Promise<{ importId: string; count: number } | { error: string }> {
   const parsed = parseBankCsv(text);
-  const importId = await stageImport(supabase, factoryId, saleId, "bank_csv", file, parsed);
-  if (!importId) return { error: "Could not stage the CSV." };
+  const staged = await stageImport(supabase, factoryId, saleId, "bank_csv", file, parsed);
+  if (!staged.ok) return { error: staged.error };
+  const importId = staged.importId;
 
-  await supabase.from("bank_txns").delete().eq("import_batch_id", importId);
+  const { error: cleanupError } = await supabase
+    .from("bank_txns")
+    .delete()
+    .eq("import_batch_id", importId)
+    .eq("factory_id", factoryId);
+  if (cleanupError) return { error: friendlyError(cleanupError) };
   const { error: insErr } = await supabase.from("bank_txns").insert(
     parsed.transactions.map((t) => ({
       factory_id: factoryId,
@@ -246,30 +294,46 @@ export async function stageBankCsv(
       import_batch_id: importId,
     })),
   );
-  if (insErr) return { error: insErr.message };
+  if (insErr) return { error: friendlyError(insErr) };
 
-  if (autoMatch) await autoMatchBank(supabase, saleId, importId);
+  if (autoMatch) {
+    const matched = await autoMatchBank(supabase, saleId, importId);
+    if (!matched.ok) return { error: matched.error };
+  }
   return { importId, count: parsed.transactions.length };
 }
 
 // Reconcile a batch's still-unmatched credits against the sale's settlements and
 // apply the high-confidence matches. Returns how many were applied. Shared by the
 // ingest path and the "apply suggested matches" action.
-export async function autoMatchBank(supabase: Supa, saleId: string, importId: string): Promise<number> {
-  const { data: settlements } = await supabase
+export async function autoMatchBank(supabase: Supa, saleId: string, importId: string): Promise<BankMatchResult> {
+  const { data: bankImport, error: importError } = await supabase
+    .from("doc_imports")
+    .select("id")
+    .eq("id", importId)
+    .eq("sale_id", saleId)
+    .eq("doc_type", "bank_csv")
+    .maybeSingle();
+  if (importError) return { ok: false, error: friendlyError(importError) };
+  if (!bankImport) return { ok: false, error: "This bank import does not belong to the selected sale." };
+
+  const { data: settlements, error: settlementError } = await supabase
     .from("settlements")
     .select("id, contract_no, total_net_proceeds, prompt_date")
     .eq("sale_id", saleId);
-  const { data: credits } = await supabase
+  if (settlementError) return { ok: false, error: friendlyError(settlementError) };
+  const { data: credits, error: creditError } = await supabase
     .from("bank_txns")
     .select("id, txn_date, credit, description, cheque_no")
     .eq("import_batch_id", importId)
     .is("matched_settlement_id", null);
-  if (!settlements?.length || !credits?.length) return 0;
-  const { data: vatForSale } = await supabase
+  if (creditError) return { ok: false, error: friendlyError(creditError) };
+  if (!settlements?.length || !credits?.length) return { ok: true, count: 0 };
+  const { data: vatForSale, error: vatError } = await supabase
     .from("sale_lines")
     .select("vat_amount, on_guarantee")
     .eq("sale_id", saleId);
+  if (vatError) return { ok: false, error: friendlyError(vatError) };
   const guaranteedVat = (vatForSale ?? []).filter((v) => v.on_guarantee).reduce((s, v) => s + Number(v.vat_amount ?? 0), 0);
   const recon = reconcileBank(
     settlements.map((st) => ({
@@ -287,10 +351,35 @@ export async function autoMatchBank(supabase: Supa, saleId: string, importId: st
       chequeNo: c.cheque_no as string | null,
     })),
   );
-  await Promise.all(
-    recon.matches.map((m) =>
-      supabase.from("bank_txns").update({ matched_settlement_id: m.settlementId, match_status: "matched" }).eq("id", m.bankTxnId),
-    ),
-  );
-  return recon.matches.length;
+  const applied: { bankTxnId: string; settlementId: string }[] = [];
+  for (const match of recon.matches) {
+    const { data: updated, error: updateError } = await supabase
+      .from("bank_txns")
+      .update({ matched_settlement_id: match.settlementId, match_status: "matched" })
+      .eq("id", match.bankTxnId)
+      .eq("import_batch_id", importId)
+      .is("matched_settlement_id", null)
+      .select("id")
+      .maybeSingle();
+    if (updateError || !updated) {
+      // Best-effort compensation keeps the batch from looking partly applied
+      // when one credit changes concurrently or a write is rejected.
+      for (const previous of applied) {
+        await supabase
+          .from("bank_txns")
+          .update({ matched_settlement_id: null, match_status: "unmatched" })
+          .eq("id", previous.bankTxnId)
+          .eq("import_batch_id", importId)
+          .eq("matched_settlement_id", previous.settlementId);
+      }
+      return {
+        ok: false,
+        error: updateError
+          ? friendlyError(updateError)
+          : "A suggested credit changed before all matches could be applied. Refresh and review the batch.",
+      };
+    }
+    applied.push({ bankTxnId: match.bankTxnId, settlementId: match.settlementId });
+  }
+  return { ok: true, count: applied.length };
 }
