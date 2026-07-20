@@ -1,20 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { showAppToast } from "@/components/action-feedback";
 import { EntityList } from "@/components/entity-list";
 import type { ColumnDef, ListDefinition } from "@/components/list-controls";
-import { completeGrn, confirmDispatchDraft, createDispatch, updateSale } from "../actions";
+import { completeGrn, confirmDispatchDraft, createDispatchWithId, updateSale } from "../actions";
 import { stateBucket } from "../state-buckets";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { DeleteDispatchButton } from "./delete-dispatch-button";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
-import { NewDispatchForm, type DispatchCreationOptions } from "../new-dispatch-form";
+import { NewDispatchFields, type DispatchCreationOptions } from "../new-dispatch-form";
 
 type SaleDetail = {
   id: string;
@@ -71,25 +70,13 @@ const DISPATCH_LIST = {
   delete: false,
 } satisfies ListDefinition<DispatchListItem>;
 
+const INVOICE_SEARCH_PANEL_ID = "invoice-overview-search";
+const INVOICE_STATE_COMMANDS_ID = "invoice-state-commands";
+
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
   const index = DISPATCH_STEPS.findIndex((step) => step.key === normalizedStatus);
   return index >= 0 ? index : 0;
-}
-
-function statusStepClass(index: number, currentIndex: number, editing: boolean, selected: boolean) {
-  if (selected) {
-    return "border-green-500 bg-green-50 text-green-900 dark:border-green-600 dark:bg-green-950 dark:text-green-100";
-  }
-  if (index < currentIndex) {
-    return "border-green-300 bg-green-50/70 text-green-900 dark:border-green-800 dark:bg-green-950/70 dark:text-green-200";
-  }
-  if (index === currentIndex) {
-    return "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200";
-  }
-  return editing
-    ? "border-stone-300 bg-white text-stone-600 hover:border-green-300 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400 dark:hover:border-green-700 dark:hover:text-stone-100"
-    : "border-stone-200 bg-white text-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400";
 }
 
 function effectiveDispatchStatus(status: string | null, stats: DispatchStats) {
@@ -123,6 +110,7 @@ export function DispatchDetailEditor({
   creation: DispatchCreationOptions;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [grnOpen, setGrnOpen] = useState(false);
   const [liveRows, setLiveRows] = useState(rows);
@@ -131,7 +119,7 @@ export function DispatchDetailEditor({
   const canDelete = isOwner && (sale.status === "dispatched" || sale.status === "draft");
   const canEditDetails = isOwner;
   const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
-  const canConfirmDraft = !isEditing && isDraftStatus;
+  const canConfirmDraft = !creatingInvoice && !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
   const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
   const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
@@ -144,10 +132,9 @@ export function DispatchDetailEditor({
     reprintLots,
   };
   const displayStatus = effectiveDispatchStatus(sale.status, dispatchStats);
-  const bucket = stateBucket(displayStatus);
   const currentStatusIndex = statusIndex(displayStatus);
   const detailConfirmed = currentStatusIndex >= statusIndex("invoiced");
-  const canProceedToGrn = currentStatusIndex >= statusIndex("invoiced") && currentStatusIndex < statusIndex("catalogued");
+  const canProceedToGrn = !creatingInvoice && !isEditing && currentStatusIndex >= statusIndex("invoiced") && currentStatusIndex < statusIndex("catalogued");
   const handleRowsChange = useCallback((nextRows: LotRow[]) => setLiveRows(nextRows), []);
 
   useEffect(() => setLiveRows(rows), [rows]);
@@ -176,129 +163,157 @@ export function DispatchDetailEditor({
     }
   }
 
+  async function createNewDispatch(formData: FormData) {
+    const result = await createDispatchWithId(formData);
+    if (!result.ok) {
+      showAppToast(result.error, "error");
+      return;
+    }
+    showAppToast(result.notice ?? "Broker invoice created.");
+    if (result.id) router.push(`/dashboard/auction/${result.id}`);
+  }
+
+  const latestSaleNo = dispatches.reduce(
+    (maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0),
+    0,
+  );
+  const liveCreation: DispatchCreationOptions = {
+    ...creation,
+    nextDispatchNo: formatFourDigitNo(
+      Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1),
+    ),
+    dispatchHistory: dispatches.map((row) => ({
+      saleNo: row.sale_no,
+      targetSaleNo: row.target_sale_no,
+      dispatchDate: row.dispatch_date,
+      saleDate: row.sale_date,
+    })),
+  };
+
   return (
     <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
+      <InvoiceWorkspaceHeader
+        creatingInvoice={creatingInvoice}
+        currentIndex={currentStatusIndex}
+        stats={dispatchStats}
+        confirmed={detailConfirmed}
+        isConfirming={isConfirming}
+        canConfirm={canConfirmDraft}
+        canProceedToGrn={canProceedToGrn}
+        onCreate={() => {
+          setIsEditing(false);
+          setGrnOpen(false);
+          setCreatingInvoice(true);
+        }}
+        onConfirm={confirmDraft}
+        onOpenGrn={() => setGrnOpen(true)}
+      />
       <DispatchSideList
         rows={dispatches}
-        currentId={sale.id}
+        currentId={creatingInvoice ? "" : sale.id}
         currentDisplayStatus={displayStatus}
-        title="Invoice Overview"
-        creation={creation}
+        onSelect={() => setCreatingInvoice(false)}
+        onCreate={() => {
+          setIsEditing(false);
+          setCreatingInvoice(true);
+        }}
       />
-      <div className="min-w-0 space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
-            ← Invoice Overview
-          </Link>
-          <h2 className="mt-1 text-xl font-semibold">
-            Invoice Details · {sale.sale_no}
-          </h2>
-          <p className="text-sm text-stone-500 dark:text-stone-400">
-            {broker}
-            {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
-            {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
-            {" · "}
-            <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`} title={`Actual status: ${sale.status}`}>
-              {bucket.label}
-            </span>
-          </p>
-        </div>
-
-        <div className="w-full max-w-md lg:ml-auto lg:w-[26rem]">
-          <ol className="grid grid-cols-4 gap-1.5">
-            {DISPATCH_STEPS.map((step, index) => {
-              const selected = index === currentStatusIndex;
-              const stepCard = (
-                <div
-                  className={`min-h-12 rounded-lg border px-2 py-1.5 text-left transition-colors ${statusStepClass(index, currentStatusIndex, false, selected)}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[10px] font-medium text-current/70">{step.metric(dispatchStats)}</span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${index <= currentStatusIndex ? "bg-current" : "bg-stone-300 dark:bg-stone-600"}`} />
-                  </div>
-                  <p className="mt-1 truncate text-[11px] font-semibold">{step.label}</p>
-                </div>
-              );
-              return (
-                <li key={step.key}>
-                  {step.key === "grn" && canProceedToGrn ? (
-                    <button type="button" className="w-full" onClick={() => setGrnOpen((open) => !open)}>
-                      {stepCard}
-                    </button>
-                  ) : stepCard}
-                </li>
-              );
-            })}
-          </ol>
-          {grnOpen && canProceedToGrn && (
-            <form
-              action={completeGrn.bind(null, sale.id)}
-              className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left dark:border-blue-900 dark:bg-blue-950"
-            >
-              <label className="block text-xs font-semibold text-blue-900 dark:text-blue-200">GRN image or PDF</label>
-              <input
-                type="file"
-                name="grn_file"
-                accept="image/*,application/pdf"
-                className="mt-2 block w-full text-xs text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-stone-300 dark:file:bg-stone-900"
-              />
-              <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">
-                Upload the physical GRN now, or continue without one. Parsing and GRN-specific automation will be added later.
-              </p>
-              <SubmitButton
-                pendingText="Proceeding…"
-                className="mt-3 inline-flex h-8 items-center justify-center rounded-md bg-blue-700 px-3 text-xs font-semibold text-white hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-700"
-              >
-                Save GRN and proceed
-              </SubmitButton>
-            </form>
-          )}
-        </div>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div>
-          <LotsSection
-            rows={rows}
-            saleId={sale.id}
-            isOwner={isOwner}
-            grades={grades}
-            canEdit={canAddLots}
-            canAdd={canAddLots}
-            soldLotIds={soldLotIds}
-            title="Lot invoices"
-            onRowsChange={handleRowsChange}
-          />
-        </div>
-
-        <form ref={formRef} action={saveDispatch}>
-          <aside className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900 xl:sticky xl:top-6">
-            <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 space-y-5 xl:col-start-2 xl:row-start-2">
+        {creatingInvoice ? (
+          <form
+            action={createNewDispatch}
+            className="rounded-xl border border-green-200 bg-white p-5 shadow-sm dark:border-green-900 dark:bg-stone-900"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-100 pb-4 dark:border-stone-800">
               <div>
-                <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Invoice Details</h3>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${detailConfirmed ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
-                    {detailConfirmed ? "Confirmed" : "Unconfirmed"}
-                  </span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`}>{bucket.label}</span>
-                </div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-green-700 dark:text-green-400">Draft broker invoice</p>
+                <h2 className="mt-1 text-xl font-semibold">Invoice Details · {liveCreation.nextDispatchNo}</h2>
+                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+                  Enter the invoice details here. The workspace stays in place after saving.
+                </p>
               </div>
-              <div className="flex items-center gap-1.5">
-                {canEditDetails && !isEditing && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreatingInvoice(false)}
+                  className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 dark:border-stone-600 dark:text-stone-200"
+                >
+                  Cancel
+                </button>
+                <SubmitButton
+                  pendingText="Saving…"
+                  className="min-h-10 rounded-full bg-green-700 px-5 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-500"
+                >
+                  Save new invoice
+                </SubmitButton>
+              </div>
+            </div>
+            <div className="pt-5">
+              <NewDispatchFields {...liveCreation} />
+            </div>
+          </form>
+        ) : (
+          <form
+            ref={formRef}
+            action={saveDispatch}
+            className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-900"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-100 pb-4 dark:border-stone-800">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 dark:text-stone-400">Invoice details</p>
+                <h2 className="mt-1 text-xl font-semibold">Invoice Details · {sale.sale_no}</h2>
+                <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+                  {broker}
+                  {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
+                  {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {canEditDetails && !isEditing ? (
                   <button
                     type="button"
                     onClick={() => setIsEditing(true)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                    title="Edit details"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-50 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800"
                   >
                     <EditIcon />
+                    Edit
                   </button>
-                )}
+                ) : null}
+                {isEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        formRef.current?.reset();
+                        setIsEditing(false);
+                      }}
+                      className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 dark:border-stone-600 dark:text-stone-200"
+                    >
+                      Cancel
+                    </button>
+                    <SubmitButton
+                      pendingText="Saving…"
+                      className="min-h-10 rounded-full bg-green-700 px-5 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-500"
+                    >
+                      Save changes
+                    </SubmitButton>
+                  </>
+                ) : null}
               </div>
             </div>
 
-            <div className="mt-4 space-y-2 text-sm">
+            {grnOpen && canProceedToGrn ? (
+              <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950">
+                <label className="block text-xs font-semibold text-blue-900 dark:text-blue-200">GRN image or PDF</label>
+                <input type="file" name="grn_file" accept="image/*,application/pdf" className="mt-2 block w-full text-xs text-stone-600 dark:text-stone-300" />
+                <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">Upload the physical GRN now, or continue without one.</p>
+                <SubmitButton formAction={completeGrn.bind(null, sale.id)} pendingText="Proceeding…" className="mt-3 min-h-9 rounded-md bg-blue-700 px-3 text-xs font-semibold text-white">
+                  Save GRN and proceed
+                </SubmitButton>
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
               <DetailRow label="Broker" value={broker} />
               <DetailRow label="Broker invoice" value={sale.sale_no ?? "—"} />
               <DetailRow label="Created date" value={sale.created_date ?? "—"} />
@@ -314,45 +329,237 @@ export function DispatchDetailEditor({
               <DetailRow label="Min kg rules" value={appliedThresholdGrades.size > 0 ? `${appliedThresholdGrades.size} applied` : "Not applied"} />
             </div>
 
-            {canConfirmDraft && (
-              <div className="mt-4 border-t border-stone-200 pt-4 dark:border-stone-800">
-                <button
-                  type="button"
-                  onClick={confirmDraft}
-                  disabled={isConfirming}
-                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-green-700 px-3 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-green-600 dark:hover:bg-green-700"
-                >
-                  {isConfirming ? "Confirming..." : "Confirm broker invoice"}
-                </button>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4 dark:border-stone-800">
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Lot invoices are managed in the list directly below.
+              </p>
+              <div className="flex gap-2">
+                {isEditing && canDelete ? <DeleteDispatchButton saleId={sale.id} /> : null}
               </div>
-            )}
+            </div>
+          </form>
+        )}
 
-            {isEditing && (
-              <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-stone-200 pt-4 dark:border-stone-800">
-                {canDelete && <DeleteDispatchButton saleId={sale.id} />}
-                <button
-                  type="button"
-                  onClick={() => {
-                    formRef.current?.reset();
-                    setIsEditing(false);
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
-                >
-                  <span aria-hidden="true">×</span>
-                  Cancel
-                </button>
-                <SubmitButton
-                  pendingText="Saving..."
-                  className="inline-flex h-8 items-center justify-center rounded-md bg-green-700 px-3 text-xs font-semibold text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700"
-                >
-                  Save
-                </SubmitButton>
-              </div>
-            )}
-          </aside>
-        </form>
+        {creatingInvoice ? (
+          <section className="rounded-xl border border-dashed border-stone-300 bg-stone-50/70 px-5 py-10 text-center dark:border-stone-700 dark:bg-stone-900/60">
+            <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-200">Lot invoices</h3>
+            <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">Save the broker invoice before adding its lot rows.</p>
+          </section>
+        ) : (
+          <LotsSection
+            rows={rows}
+            saleId={sale.id}
+            isOwner={isOwner}
+            grades={grades}
+            canEdit={canAddLots}
+            canAdd={canAddLots}
+            soldLotIds={soldLotIds}
+            title="Lot invoices"
+            onRowsChange={handleRowsChange}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InvoiceWorkspaceHeader({
+  creatingInvoice,
+  currentIndex,
+  stats,
+  confirmed,
+  isConfirming,
+  canConfirm,
+  canProceedToGrn,
+  onCreate,
+  onConfirm,
+  onOpenGrn,
+}: {
+  creatingInvoice: boolean;
+  currentIndex: number;
+  stats: DispatchStats;
+  confirmed: boolean;
+  isConfirming: boolean;
+  canConfirm: boolean;
+  canProceedToGrn: boolean;
+  onCreate: () => void;
+  onConfirm: () => void;
+  onOpenGrn: () => void;
+}) {
+  return (
+    <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:col-start-2 xl:row-start-1">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          popoverTarget={INVOICE_SEARCH_PANEL_ID}
+          popoverTargetAction="toggle"
+          className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600/30 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+        >
+          <SearchIcon />
+          Search
+        </button>
+        <button
+          type="button"
+          aria-label="New invoice"
+          title={creatingInvoice ? "A new invoice is already open" : "New invoice"}
+          onClick={onCreate}
+          disabled={creatingInvoice}
+          className="inline-grid min-h-10 min-w-10 place-items-center rounded-full bg-green-700 px-3 text-xl font-semibold leading-none text-white transition hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600/30 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-600 dark:hover:bg-green-500"
+        >
+          <span aria-hidden="true">+</span>
+        </button>
       </div>
 
+      <StateCommandMenu
+        creatingInvoice={creatingInvoice}
+        isConfirming={isConfirming}
+        canConfirm={canConfirm}
+        canProceedToGrn={canProceedToGrn}
+        onConfirm={onConfirm}
+        onOpenGrn={onOpenGrn}
+      />
+
+      <DispatchStateIndicator currentIndex={currentIndex} stats={stats} confirmed={confirmed} />
+    </header>
+  );
+}
+
+function StateCommandMenu({
+  creatingInvoice,
+  isConfirming,
+  canConfirm,
+  canProceedToGrn,
+  onConfirm,
+  onOpenGrn,
+}: {
+  creatingInvoice: boolean;
+  isConfirming: boolean;
+  canConfirm: boolean;
+  canProceedToGrn: boolean;
+  onConfirm: () => void;
+  onOpenGrn: () => void;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        popoverTarget={INVOICE_STATE_COMMANDS_ID}
+        popoverTargetAction="toggle"
+        className="inline-flex min-h-10 min-w-32 items-center justify-center gap-2 rounded-full border border-stone-300 bg-stone-100 px-5 text-sm font-semibold text-stone-800 transition hover:border-green-500 hover:bg-green-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600/30 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-green-950"
+      >
+        State
+        <ChevronDownIcon />
+      </button>
+      <div
+        id={INVOICE_STATE_COMMANDS_ID}
+        popover="auto"
+        aria-label="State commands"
+        className="fixed left-1/2 top-24 z-[90] m-0 w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-stone-200 bg-white p-2 shadow-2xl backdrop:bg-stone-950/25 dark:border-stone-700 dark:bg-stone-950"
+      >
+        <div className="border-b border-stone-100 px-3 py-2 dark:border-stone-800">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">State</h3>
+          <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+            {creatingInvoice ? "Save the new invoice before changing its state." : "Choose the next allowed invoice command."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={!canConfirm || isConfirming}
+          popoverTarget={INVOICE_STATE_COMMANDS_ID}
+          popoverTargetAction="hide"
+          className="mt-1 flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-green-950"
+        >
+          <span>
+            <span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">
+              {isConfirming ? "Confirming broker invoice…" : "Confirm broker invoice"}
+            </span>
+            <span className="mt-0.5 block text-xs text-stone-500 dark:text-stone-400">Draft → Invoiced</span>
+          </span>
+          <span aria-hidden="true" className="text-stone-400">→</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenGrn}
+          disabled={!canProceedToGrn}
+          popoverTarget={INVOICE_STATE_COMMANDS_ID}
+          popoverTargetAction="hide"
+          className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-950"
+        >
+          <span>
+            <span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">Record GRN</span>
+            <span className="mt-0.5 block text-xs text-stone-500 dark:text-stone-400">Invoiced → GRN</span>
+          </span>
+          <span aria-hidden="true" className="text-stone-400">→</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DispatchStateIndicator({
+  currentIndex,
+  stats,
+  confirmed,
+}: {
+  currentIndex: number;
+  stats: DispatchStats;
+  confirmed: boolean;
+}) {
+  const currentStep = DISPATCH_STEPS[currentIndex] ?? DISPATCH_STEPS[0]!;
+  const progress = ((currentIndex + 1) / DISPATCH_STEPS.length) * 100;
+
+  return (
+    <div className="group relative z-30 min-w-[13rem]">
+      <button
+        type="button"
+        data-testid="invoice-state-indicator"
+        className="w-full min-h-10 rounded-xl border border-stone-300 bg-white px-3 py-2 text-left shadow-sm transition hover:border-green-500 focus-visible:border-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600/30 dark:border-stone-600 dark:bg-stone-900"
+      >
+        <span className="flex items-center justify-between gap-4">
+          <span>
+            <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-stone-400">
+              {confirmed ? "Confirmed state" : "Current state"}
+            </span>
+            <span className="mt-0.5 block text-sm font-semibold text-stone-900 dark:text-stone-100">
+              {currentStep.label} · {currentStep.metric(stats)}
+            </span>
+          </span>
+        </span>
+        <span className="mt-2 block h-1 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700">
+          <span className="block h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+        </span>
+      </button>
+
+      <div
+        aria-label="Invoice state sequence"
+        className="invisible absolute right-0 top-[calc(100%+0.5rem)] w-[18rem] translate-y-1 rounded-xl border border-stone-200 bg-white p-2 opacity-0 shadow-2xl transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-stone-700 dark:bg-stone-950"
+      >
+        {DISPATCH_STEPS.map((step, index) => {
+          const current = index === currentIndex;
+          const completed = index < currentIndex;
+          return (
+            <div
+              key={step.key}
+              className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 ${
+                current
+                  ? "bg-green-50 text-green-950 dark:bg-green-950 dark:text-green-100"
+                  : "text-stone-700 dark:text-stone-200"
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${
+                    current || completed ? "bg-green-500" : "bg-stone-300 dark:bg-stone-700"
+                  }`} />
+                  <span className="text-sm font-semibold">{step.label}</span>
+                </div>
+                <p className="ml-4 mt-0.5 truncate text-xs text-stone-500 dark:text-stone-400">{step.metric(stats)}</p>
+              </div>
+              {current ? <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">Current</span> : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -362,14 +569,14 @@ function DispatchSideList({
   rows,
   currentId,
   currentDisplayStatus,
-  title,
-  creation,
+  onSelect,
+  onCreate,
 }: {
   rows: DispatchListItem[];
   currentId: string;
   currentDisplayStatus: string | null;
-  title: string;
-  creation: DispatchCreationOptions;
+  onSelect: () => void;
+  onCreate: () => void;
 }) {
   return (
     <EntityList
@@ -378,35 +585,14 @@ function DispatchSideList({
       definition={DISPATCH_LIST}
       getId={(row) => row.id}
       rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
-      title={title}
-      description={(liveRows) => `${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
       create={{
-        action: createDispatch,
-        label: "New broker invoice",
-        panelTitle: "New broker invoice",
-        panelClassName: "max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain",
+        action: createDispatchWithId,
         disabledReason: "Finish creating the current broker invoice first.",
-        render: ({ action, close, rows: liveRows }) => {
-          const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
-          const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
-          const liveDispatchHistory = liveRows.map((row) => ({
-            saleNo: row.sale_no,
-            targetSaleNo: row.target_sale_no,
-            dispatchDate: row.dispatch_date,
-            saleDate: row.sale_date,
-          }));
-          return (
-            <NewDispatchForm
-              {...creation}
-              nextDispatchNo={liveNextDispatchNo}
-              dispatchHistory={liveDispatchHistory}
-              action={action}
-              onCancel={close}
-            />
-          );
-        },
+        onOpen: onCreate,
       }}
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      chrome="records-only"
+      searchPanelId={INVOICE_SEARCH_PANEL_ID}
+      className="xl:sticky xl:top-0 xl:col-start-1 xl:row-span-2 xl:row-start-1 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
       listControls={{
         initialFilters: { status: "Draft" },
         storageKey: "auction.invoice-overview.filters",
@@ -415,6 +601,7 @@ function DispatchSideList({
       filteredEmptyMessage="No broker invoices match."
       sideList={{
         href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
+        onSelect,
         isActive: (dispatch) => dispatch.id === currentId,
         sortColumnKey: "sale_no",
         searchLabel: "Search",
@@ -440,6 +627,23 @@ function DispatchSideList({
   );
 }
 
+function SearchIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+      <circle cx="8.5" cy="8.5" r="4.75" />
+      <path strokeLinecap="round" d="m12 12 4.25 4.25" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m6 8 4 4 4-4" />
+    </svg>
+  );
+}
+
 function CompactField({
   label,
   name,
@@ -457,8 +661,8 @@ function CompactField({
 }) {
   if (disabled) return <DetailRow label={label} value={defaultValue || "—"} />;
   return (
-    <div className="flex items-center justify-between gap-3">
-      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</label>
+    <div className="grid min-w-0 gap-1.5">
+      <label className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</label>
       <input
         name={name}
         type={type}
@@ -467,7 +671,7 @@ function CompactField({
           if (format === "four-digit") event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
           if (format === "sale-no") event.currentTarget.value = formatSaleNo(event.currentTarget.value);
         }}
-        className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        className="h-9 min-w-0 w-full rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
       />
     </div>
   );
@@ -486,9 +690,9 @@ function SellingMarkField({
 }) {
   if (disabled) return <DetailRow label="Selling mark" value={displayValue} />;
   return (
-    <div className="flex items-center justify-between gap-3">
-      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
-      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
+    <div className="grid min-w-0 gap-1.5">
+      <label className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
+      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-9 min-w-0 w-full rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
         <option value="" disabled>Select selling mark</option>
         {marks.map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
       </select>
@@ -498,9 +702,9 @@ function SellingMarkField({
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="grid min-w-0 gap-1.5">
       <span className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</span>
-      <span className="truncate text-sm font-medium text-stone-800 dark:text-stone-200" title={value}>
+      <span className="truncate text-sm font-medium leading-5 text-stone-800 dark:text-stone-200" title={value}>
         {value}
       </span>
     </div>

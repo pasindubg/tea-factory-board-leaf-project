@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import {
@@ -66,9 +66,16 @@ export type EntityListCreate<Row> = {
   label?: string;
   disabledReason?: string;
   onSuccess?: () => void;
-  render: (context: {
+  /** Opens a create workflow rendered by the surrounding detail workspace. */
+  onOpen?: () => void;
+  render?: (context: {
     action: (formData: FormData) => Promise<void>;
     close: () => void;
+    rows: Row[];
+  }) => ReactNode;
+  /** Renders table cells for a draft row whose controls belong to formId. */
+  renderRow?: (context: {
+    formId: string;
     rows: Row[];
   }) => ReactNode;
 };
@@ -163,6 +170,7 @@ export type EntityListSideList<Row> = {
   href: (row: Row) => string;
   content: (row: Row, context: { active: boolean; selected: boolean }) => ReactNode;
   isActive?: (row: Row) => boolean;
+  onSelect?: (row: Row) => void;
   sortColumnKey?: string;
   searchLabel?: string;
   bodyClassName?: string;
@@ -201,6 +209,8 @@ type EntityListCommonProps<Row> = {
   rowLabel: (row: Row) => string;
   canCreate?: boolean;
   create?: EntityListCreate<Row>;
+  /** Header is the default. Toolbar keeps New beside Search for dense tables. */
+  createPlacement?: "header" | "toolbar";
   edit?: EntityListEdit<Row>;
   canDelete?: boolean;
   deleteAction?: EntityListDelete<Row>;
@@ -226,6 +236,10 @@ type EntityListCommonProps<Row> = {
   tabs?: EntityListViewTabs<Row>;
   /** Declarative linked-card presentation for ordinary record side panels. */
   sideList?: EntityListSideList<Row>;
+  /** Hides list-local title and toolbar chrome when controls are hosted by a surrounding workspace header. */
+  chrome?: "default" | "records-only";
+  /** Stable search popover id for a framework search trigger rendered outside the list panel. */
+  searchPanelId?: string;
   /** Initial and route-persistent controls for a specific operational list. */
   listControls?: { initialFilters?: Record<string, string>; storageKey?: string };
 } & (
@@ -342,6 +356,7 @@ function EntityListPanel<Row>({
   rowLabel,
   canCreate = true,
   create,
+  createPlacement = "header",
   edit,
   canDelete = true,
   deleteAction,
@@ -360,6 +375,8 @@ function EntityListPanel<Row>({
   onRowsChange,
   tabs,
   sideList,
+  chrome = "default",
+  searchPanelId,
   listControls,
   render,
   rows,
@@ -380,7 +397,11 @@ function EntityListPanel<Row>({
   const selection = useListSelection(rows, { mode: selectionMode, getId });
   const selectedRows = rows.filter((row) => selection.selectedIds.has(getId(row)));
   const editingRow = rows.find((row) => getId(row) === editingId) ?? null;
-  const supportsCreate = Boolean(definition.add && create);
+  const supportsCreate = Boolean(
+    definition.add && create && (create.render || create.renderRow || create.onOpen),
+  );
+  const createFormId = `entity-create-${useId().replace(/:/g, "")}`;
+  const inlineCreating = Boolean(adding && create?.renderRow);
   const changing = adding || Boolean(editingId) || deleting || Boolean(busyCommand) || Boolean(panelCommand);
   const createEnabled = Boolean(supportsCreate && canCreate && !changing);
   const editEnabled = Boolean(
@@ -410,6 +431,13 @@ function EntityListPanel<Row>({
 
   useEffect(() => onRowsChange?.(rows), [onRowsChange, rows]);
   const resolvedDescription = typeof description === "function" ? description(rows) : description;
+  function openCreate() {
+    if (create?.onOpen) {
+      create.onOpen();
+      return;
+    }
+    setAdding(true);
+  }
 
   async function confirmDelete() {
     if (!deleteAction || selectedRows.length === 0) return;
@@ -466,6 +494,7 @@ function EntityListPanel<Row>({
                 rowLabel={rowLabel}
                 canCreate={canCreate}
                 create={create}
+                createPlacement={createPlacement}
                 edit={edit}
                 canDelete={canDelete}
                 deleteAction={deleteAction}
@@ -481,6 +510,8 @@ function EntityListPanel<Row>({
                 className={tab.className ?? className}
                 headerClassName={tab.headerClassName ?? headerClassName}
                 rowClassName={tab.rowClassName ?? rowClassName}
+                chrome={chrome}
+                searchPanelId={searchPanelId}
                 rows={tabRows}
                 refreshing={refreshing}
                 mutate={mutate}
@@ -502,78 +533,100 @@ function EntityListPanel<Row>({
     ? definition.columns.find((column) => column.key === sideList.sortColumnKey)
     : undefined;
   const Surface = sideList ? ListSidePanel : ListSurface;
+  const recordsOnly = chrome === "records-only";
 
   return (
     <Surface
-      title={title ?? "Records"}
-      description={resolvedDescription}
-      onCreate={supportsCreate ? () => setAdding(true) : undefined}
+      title={recordsOnly ? undefined : title ?? "Records"}
+      description={recordsOnly ? undefined : resolvedDescription}
+      onCreate={!recordsOnly && supportsCreate && createPlacement === "header" ? openCreate : undefined}
       canCreate={createEnabled}
       createDisabledReason={create?.disabledReason ?? (canCreate ? "Finish the current list action first." : "You do not have permission to create this record.")}
       createLabel={create?.label ?? "New"}
-      actions={typeof actions === "function" ? actions(rows) : actions}
+      actions={recordsOnly ? undefined : typeof actions === "function" ? actions(rows) : actions}
       refreshing={refreshing}
       className={className}
       headerClassName={headerClassName}
     >
-      <ListCommandToolbar
-        mode={selectionMode}
-        count={selection.selectedCount}
-        showSelectionSummary={sideList?.showSelectionSummary}
-        enableEdit={Boolean(definition.edit && edit && edit.canEdit !== false)}
-        onEdit={{
-          label: edit?.label,
-          onClick: () => setEditingId(getId(selectedRows[0])),
-          disabled: !editEnabled,
-        }}
-        enableDelete={Boolean(definition.delete && deleteAction && canDelete)}
-        onDelete={{
-          onClick: () => setConfirmingDelete(true),
-          disabled: !deleteEnabled,
-          busy: deleting,
-          label: deleteAction?.disabledReason?.(selectedRows) ? "Delete" : undefined,
-        }}
-      >
-        {sideSortColumn && <SortButton col={sideSortColumn} controls={controls} />}
-        {editingRow && edit && !edit.renderPanel && (
-          <>
-            <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
-              Cancel
-            </button>
-            <button form={edit.formId?.(editingRow) ?? `entity-edit-${getId(editingRow)}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
-              {edit.saveLabel ?? "Save"}
-            </button>
-          </>
-        )}
-        {commands.filter((command) => command.visible !== false).map((command) => {
-          const disabled = changing || Boolean(command.disabled?.(commandContext));
-          const label = typeof command.label === "function" ? command.label(commandContext) : command.label;
-          const titleText = command.disabledReason?.(commandContext);
-          return (
-            <button
-              key={command.id}
-              type="button"
-              title={titleText}
-              disabled={disabled}
-              onClick={() => {
-                if (command.panel) setPanelCommand(command.id);
-                else if (command.confirm) setConfirmingCommand(command.id);
-                else void runCommand(command);
-              }}
-              className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                command.destructive
-                  ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
-                  : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
-              }`}
-            >
-              {busyCommand === command.id && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
-              {busyCommand === command.id ? command.pendingLabel ?? "Working…" : label}
-            </button>
-          );
-        })}
-      </ListCommandToolbar>
+      {!recordsOnly && (
+        <ListCommandToolbar
+          mode={selectionMode}
+          count={selection.selectedCount}
+          showSelectionSummary={sideList?.showSelectionSummary}
+          enableCreate={Boolean(supportsCreate && createPlacement === "toolbar" && !adding)}
+          onCreate={{
+            label: create?.label,
+            onClick: () => {
+              setEditingId(null);
+              openCreate();
+            },
+            disabled: !createEnabled,
+          }}
+          enableEdit={Boolean(definition.edit && edit && edit.canEdit !== false)}
+          onEdit={{
+            label: edit?.label,
+            onClick: () => setEditingId(getId(selectedRows[0])),
+            disabled: !editEnabled,
+          }}
+          enableDelete={Boolean(definition.delete && deleteAction && canDelete)}
+          onDelete={{
+            onClick: () => setConfirmingDelete(true),
+            disabled: !deleteEnabled,
+            busy: deleting,
+            label: deleteAction?.disabledReason?.(selectedRows) ? "Delete" : undefined,
+          }}
+        >
+          {sideSortColumn && <SortButton col={sideSortColumn} controls={controls} />}
+          {inlineCreating && (
+            <>
+              <button type="button" onClick={() => setAdding(false)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
+                Cancel
+              </button>
+              <button form={createFormId} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
+                Save
+              </button>
+            </>
+          )}
+          {editingRow && edit && !edit.renderPanel && (
+            <>
+              <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
+                Cancel
+              </button>
+              <button form={edit.formId?.(editingRow) ?? `entity-edit-${getId(editingRow)}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
+                {edit.saveLabel ?? "Save"}
+              </button>
+            </>
+          )}
+          {commands.filter((command) => command.visible !== false).map((command) => {
+            const disabled = changing || Boolean(command.disabled?.(commandContext));
+            const label = typeof command.label === "function" ? command.label(commandContext) : command.label;
+            const titleText = command.disabledReason?.(commandContext);
+            return (
+              <button
+                key={command.id}
+                type="button"
+                title={titleText}
+                disabled={disabled}
+                onClick={() => {
+                  if (command.panel) setPanelCommand(command.id);
+                  else if (command.confirm) setConfirmingCommand(command.id);
+                  else void runCommand(command);
+                }}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  command.destructive
+                    ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
+                    : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+                }`}
+              >
+                {busyCommand === command.id && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+                {busyCommand === command.id ? command.pendingLabel ?? "Working…" : label}
+              </button>
+            );
+          })}
+        </ListCommandToolbar>
+      )}
 
-      {supportsCreate && create && (
+      {supportsCreate && create?.render && !create.renderRow && (
         <ListCreatePanel open={adding} title={create.panelTitle ?? create.label ?? "Add record"} className={create.panelClassName}>
           {create.render({
             action: mutationAction(create.action, {
@@ -631,7 +684,7 @@ function EntityListPanel<Row>({
       )}
 
       {(summary ?? beforeTable)?.(rows)}
-      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} />
+      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} />
       {sideList ? (
         <div className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {
@@ -642,7 +695,10 @@ function EntityListPanel<Row>({
               <Link
                 key={id}
                 href={sideList.href(row)}
-                onClick={() => selection.select(id)}
+                onClick={() => {
+                  selection.select(id);
+                  sideList.onSelect?.(row);
+                }}
                 aria-current={active ? "page" : undefined}
                 className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
                   active
@@ -664,6 +720,17 @@ function EntityListPanel<Row>({
         </div>
       ) : (
         <div className="overflow-x-auto">
+          {inlineCreating && create ? (
+            <form
+              id={createFormId}
+              action={mutationAction(create.action, {
+                onSuccess: () => {
+                  create.onSuccess?.();
+                  setAdding(false);
+                },
+              })}
+            />
+          ) : null}
           <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
@@ -682,6 +749,12 @@ function EntityListPanel<Row>({
             </tr>
           </thead>
           <tbody>
+            {inlineCreating && create?.renderRow ? (
+              <tr className="border-b border-green-200 bg-green-50/70 align-top dark:border-green-900 dark:bg-green-950/20">
+                {selectionMode === "multi" ? <td className="w-12 px-4 py-3" /> : null}
+                {create.renderRow({ formId: createFormId, rows })}
+              </tr>
+            ) : null}
             {visibleRows.map((row) => {
               const id = getId(row);
               const editing = editingId === id;
@@ -733,7 +806,7 @@ function EntityListPanel<Row>({
                 </tr>
               );
             })}
-            {visibleRows.length === 0 && (
+            {visibleRows.length === 0 && !inlineCreating && (
               <tr>
                 <td colSpan={definition.columns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-center text-stone-400">
                   {rows.length ? filteredEmptyMessage : emptyMessage}

@@ -28,6 +28,35 @@ export function NewDispatchForm({
   action: (formData: FormData) => void | Promise<void>;
   onCancel?: () => void;
 }) {
+  return (
+    <form action={action} className="grid gap-4">
+      <NewDispatchFields
+        brokers={brokers}
+        marks={marks}
+        invoiceDate={invoiceDate}
+        nextDispatchNo={nextDispatchNo}
+        dispatchHistory={dispatchHistory}
+      />
+      <div className="flex flex-wrap gap-2">
+        <SubmitButton
+          pendingText="Creating…"
+          className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+        >
+          Create broker invoice
+        </SubmitButton>
+        {onCancel && <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">Cancel</button>}
+      </div>
+    </form>
+  );
+}
+
+export function NewDispatchFields({
+  brokers,
+  marks,
+  invoiceDate,
+  nextDispatchNo,
+  dispatchHistory,
+}: DispatchCreationOptions) {
   const [dispatchDate, setDispatchDate] = useState(invoiceDate);
   const [targetSaleNo, setTargetSaleNo] = useState("");
   const [saleDate, setSaleDate] = useState(addDays(invoiceDate, 14));
@@ -56,17 +85,18 @@ export function NewDispatchForm({
   }
 
   return (
-    <form action={action} className="grid gap-3">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div>
-          <label className={label}>Broker</label>
+          <label className={label}>Broker <span className="text-red-500">*</span></label>
           <select name="broker_id" required defaultValue="" className={input}>
+            <option value="" disabled>Select broker</option>
             {brokers.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className={label}>Selling mark</label>
+          <label className={label}>Selling mark <span className="text-red-500">*</span></label>
           <select name="selling_mark_id" required defaultValue="" className={input}>
             <option value="" disabled>Select selling mark</option>
             {marks.map((mark) => (
@@ -74,15 +104,13 @@ export function NewDispatchForm({
             ))}
           </select>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className={label}>Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
-            <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
-          </div>
-          <div>
-            <label className={label}>Driver <span className="font-normal text-stone-400">(optional)</span></label>
-            <input name="driver_name" placeholder="Driver name" className={input} />
-          </div>
+        <div>
+          <label className={label}>Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
+          <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
+        </div>
+        <div>
+          <label className={label}>Driver <span className="font-normal text-stone-400">(optional)</span></label>
+          <input name="driver_name" placeholder="Driver name" className={input} />
         </div>
         <div>
           <label className={label}>Broker invoice number</label>
@@ -99,7 +127,7 @@ export function NewDispatchForm({
           </div>
         </div>
         <div>
-          <label className={label}>Sale number</label>
+          <label className={label}>Sale number <span className="text-red-500">*</span></label>
           <input
             name="target_sale_no"
             required
@@ -110,40 +138,29 @@ export function NewDispatchForm({
             className={input}
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className={label}>Dispatch date <span className="text-red-500">*</span></label>
-            <input
-              type="date"
-              name="dispatch_date"
-              required
-              value={dispatchDate}
-              onChange={(event) => setDispatchDate(event.target.value)}
-              className={input}
-            />
-          </div>
-          <div>
-            <label className={label}>Sale date <span className="text-red-500">*</span></label>
-            <input
-              type="date"
-              name="sale_date"
-              required
-              value={saleDate}
-              onChange={(event) => setSaleDate(event.target.value)}
-              className={input}
-            />
-          </div>
+        <div>
+          <label className={label}>Dispatch date <span className="text-red-500">*</span></label>
+          <input
+            type="date"
+            name="dispatch_date"
+            required
+            value={dispatchDate}
+            onChange={(event) => setDispatchDate(event.target.value)}
+            className={input}
+          />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <SubmitButton
-            pendingText="Creating…"
-            className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
-          >
-            Create broker invoice
-          </SubmitButton>
-          {onCancel && <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">Cancel</button>}
+        <div>
+          <label className={label}>Sale date <span className="text-red-500">*</span></label>
+          <input
+            type="date"
+            name="sale_date"
+            required
+            value={saleDate}
+            onChange={(event) => setSaleDate(event.target.value)}
+            className={input}
+          />
         </div>
-    </form>
+    </div>
   );
 }
 

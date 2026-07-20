@@ -275,18 +275,22 @@ type ListHeaderAction = {
 export function ListCommandToolbar({
   mode,
   count = 0,
+  enableCreate = false,
   enableEdit = false,
   enableDelete = false,
   showSelectionSummary = true,
+  onCreate,
   onEdit,
   onDelete,
   children,
 }: {
   mode: ListSelectionMode;
   count?: number;
+  enableCreate?: boolean;
   enableEdit?: boolean;
   enableDelete?: boolean;
   showSelectionSummary?: boolean;
+  onCreate?: ListHeaderAction;
   onEdit?: ListHeaderAction;
   onDelete?: ListHeaderAction;
   children?: React.ReactNode;
@@ -309,6 +313,17 @@ export function ListCommandToolbar({
       {showSelectionSummary ? <ListSelectionSummary mode={mode} count={count} /> : <span />}
       <div className="flex flex-wrap justify-end gap-2">
         {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
+        {enableCreate && onCreate && (
+          <button
+            type="button"
+            onClick={onCreate.onClick}
+            disabled={onCreate.disabled || onCreate.busy}
+            className="inline-flex min-h-10 items-center gap-2 rounded-full bg-green-700 px-4 text-sm font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-600 dark:hover:bg-green-500"
+          >
+            {onCreate.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <span aria-hidden="true">+</span>}
+            {onCreate.busy ? "Working…" : onCreate.label ?? "New"}
+          </button>
+        )}
         {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
         {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
         {children}
@@ -696,13 +711,17 @@ export function ListSearchPanel<T>({
   columns,
   controls,
   label = "Search",
+  id,
 }: {
   columns: ColumnDef<T>[];
   controls: ListControls<T>;
   label?: string;
+  /** Stable id used when a list's search trigger lives in a surrounding workspace header. */
+  id?: string;
   variant?: "inline" | "popover";
 }) {
-  const searchPanelId = `list-search-${useId().replace(/:/g, "")}`;
+  const generatedSearchPanelId = `list-search-${useId().replace(/:/g, "")}`;
+  const searchPanelId = id ?? generatedSearchPanelId;
   const searchCols = columns.filter((col) => col.accessor);
   if (searchCols.length === 0) return null;
 
