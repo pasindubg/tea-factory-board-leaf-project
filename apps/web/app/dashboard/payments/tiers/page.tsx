@@ -1,6 +1,6 @@
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import {
   TierAssignmentsTable,
@@ -9,7 +9,7 @@ import {
 } from "./tier-assignments-table";
 
 export default async function TiersPage() {
-  const { supabase, profile } = await requireModuleAccess("payments");
+  const { supabase, profile } = await requirePageAccess("payment-tiers");
   const [assignmentResource, { data: tiers, error: tierError }] = await Promise.all([
     loadListResource({ key: "payments.tier-assignments" }),
     supabase

@@ -11,7 +11,7 @@ export function SubmitButton({
   pendingText,
   className = "",
   ...rest
-}: React.ComponentProps<"button"> & { pendingText?: string }) {
+}: React.ComponentProps<typeof AppButton> & { pendingText?: string }) {
   const { pending } = useFormStatus();
   return (
     <AppButton

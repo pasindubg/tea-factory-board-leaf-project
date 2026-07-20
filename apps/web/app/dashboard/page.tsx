@@ -1,10 +1,10 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { dayRange, lastNDates, localDateString } from "@/lib/dates";
 import { IntakeChart } from "@/components/intake-chart";
 import { CollectorIntakeList, RecentWeighingsList } from "./dashboard-lists";
 
 export default async function DashboardPage() {
-  const { supabase } = await requireModuleAccess("overview");
+  const { supabase } = await requirePageAccess("overview");
 
   const today = localDateString();
   const todayRange = dayRange(today);

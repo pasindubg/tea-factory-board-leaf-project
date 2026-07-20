@@ -1,5 +1,5 @@
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { PaymentsFilter } from "./payments-filter";
 import { PaymentsTable } from "./payments-table";
@@ -9,7 +9,7 @@ export default async function PaymentsPage({
 }: {
   searchParams: Promise<{ year?: string; month?: string }>;
 }) {
-  const { profile } = await requireModuleAccess("payments");
+  const { profile } = await requirePageAccess("payments");
   const params = await searchParams;
   const now = new Date();
   const requestedYear = Number(params.year);

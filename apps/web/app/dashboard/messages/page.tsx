@@ -1,10 +1,10 @@
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MessagesList } from "./messages-list";
 
 export default async function MessagesPage() {
-  const { supabase } = await requireModuleAccess("messages");
+  const { supabase } = await requirePageAccess("messages");
   const [{ data: suppliers, error: supplierError }, messageResource] = await Promise.all([
     supabase.from("suppliers").select("id, name").eq("active", true).order("name"),
     loadListResource({ key: "communications.sent-messages" }),

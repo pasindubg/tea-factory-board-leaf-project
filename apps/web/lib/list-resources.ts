@@ -264,14 +264,40 @@ export type UserAccountListRow = {
   email: string;
   username: string | null;
   role: string;
+  accessRoleId: string | null;
+  baseRole: string;
   active: boolean;
 };
 
-export type ModulePermissionListRow = {
+export type AccessRoleListRow = {
+  id: string;
+  key: string;
+  name: string;
+  baseRole: string;
+  systemRole: boolean;
+  active: boolean;
+};
+
+export type RolePagePermissionListRow = {
   key: string;
   label: string;
-  configurableRoles: string[];
-  allowedRoles: string[];
+  href: string;
+  group: string;
+  allowedActions: ("view" | "create" | "update" | "delete")[];
+  canView: boolean;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+};
+
+export type StaffDirectoryListRow = {
+  id: string;
+  fullName: string;
+  role: string;
+  phone: string | null;
+  jobTitle: string | null;
+  department: string | null;
+  employmentType: string | null;
 };
 
 export type WeighingListRow = {
@@ -306,7 +332,9 @@ export type ListResourceContracts = {
   "payments.base-rates": { params: undefined; row: BaseRateListRow };
   "payments.statements": { params: { year: number; month: number }; row: PaymentStatementListRow };
   "users.accounts": { params: undefined; row: UserAccountListRow };
-  "users.module-permissions": { params: undefined; row: ModulePermissionListRow };
+  "users.roles": { params: undefined; row: AccessRoleListRow };
+  "users.role-page-permissions": { params: { roleId: string }; row: RolePagePermissionListRow };
+  "users.staff-directory": { params: undefined; row: StaffDirectoryListRow };
   "leaf.weighings": {
     params: { from?: string; to?: string; supplierId?: string; collectorId?: string };
     row: WeighingListRow;
@@ -336,7 +364,9 @@ export const LIST_RESOURCE_KEYS = [
   "payments.base-rates",
   "payments.statements",
   "users.accounts",
-  "users.module-permissions",
+  "users.roles",
+  "users.role-page-permissions",
+  "users.staff-directory",
   "leaf.weighings",
 ] as const satisfies readonly (keyof ListResourceContracts)[];
 

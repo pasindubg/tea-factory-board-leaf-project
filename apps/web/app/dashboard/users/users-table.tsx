@@ -3,7 +3,7 @@
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
-import type { UserAccountListRow } from "@/lib/list-resources";
+import type { AccessRoleListRow, UserAccountListRow } from "@/lib/list-resources";
 import { ROLE_LABELS } from "@/lib/roles";
 import { createUser, removeUser, resetUserPassword, setUserActive } from "./actions";
 
@@ -20,7 +20,7 @@ const roleBadge: Record<string, string> = {
 const inputClass = "w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
 const secondaryButton = "min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800";
 
-function columns(currentUserId: string): EntityListColumn<UserAccountListRow>[] {
+function columns(currentUserId: string, roles: AccessRoleListRow[]): EntityListColumn<UserAccountListRow>[] {
   return [
     {
       key: "name",
@@ -49,10 +49,10 @@ function columns(currentUserId: string): EntityListColumn<UserAccountListRow>[] 
       accessor: (row) => row.role,
       sortable: true,
       filter: "select",
-      filterOptions: Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label })),
+      filterOptions: roles.map((role) => ({ value: role.name, label: role.name })),
       render: (row) => (
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${roleBadge[row.role] ?? "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300"}`}>
-          {ROLE_LABELS[row.role as keyof typeof ROLE_LABELS] ?? row.role}
+          {row.role}
         </span>
       ),
     },
@@ -75,12 +75,14 @@ function columns(currentUserId: string): EntityListColumn<UserAccountListRow>[] 
 export function UsersTable({
   initialRows,
   currentUserId,
+  roles,
 }: {
   initialRows: UserAccountListRow[];
   currentUserId: string;
+  roles: AccessRoleListRow[];
 }) {
   const definition = {
-    columns: columns(currentUserId),
+    columns: columns(currentUserId, roles),
     selectionMode: "single",
     add: true,
     edit: false,
@@ -109,13 +111,11 @@ export function UsersTable({
               <Field label="Email *"><input name="email" type="email" required className={inputClass} /></Field>
               <Field label="Phone"><input name="phone" inputMode="tel" className={inputClass} /></Field>
               <Field label="Role *">
-                <select name="role" required defaultValue="" className={inputClass}>
+                <select name="access_role_id" required defaultValue="" className={inputClass}>
                   <option value="" disabled>Select role</option>
-                  <option value="owner">Owner — full access and user management</option>
-                  <option value="manager">Manager — management access</option>
-                  <option value="supervisor">Supervisor — operations access</option>
-                  <option value="accountant">Accountant — financial access</option>
-                  <option value="collector">Collector — weighing entry</option>
+                  {roles.filter((role) => role.active).map((role) => (
+                    <option key={role.id} value={role.id}>{role.name} — {ROLE_LABELS[role.baseRole as keyof typeof ROLE_LABELS] ?? role.baseRole} base</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Username (optional)"><input name="username" autoComplete="off" placeholder="e.g. john.silva" className={inputClass} /></Field>

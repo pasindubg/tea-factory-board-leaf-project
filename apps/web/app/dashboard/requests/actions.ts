@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePagePermission } from "@/lib/profile";
 
 // Web side of the issue-#13 field-app request flow. Approving a request that
 // creates an advance stays inside the established database function so its
@@ -13,7 +13,7 @@ const REQ = "/dashboard/requests";
 const str = (value: FormDataEntryValue | null) => String(value ?? "").trim();
 
 async function pendingRequest(
-  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  supabase: Awaited<ReturnType<typeof requirePagePermission>>["supabase"],
   factoryId: string,
   id: string,
 ) {
@@ -27,7 +27,7 @@ async function pendingRequest(
 }
 
 export async function approveRequest(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("requests");
+  const { supabase, profile } = await requirePagePermission("requests", "update");
   const id = str(formData.get("id"));
   if (!id) return { ok: false, error: "Select a pending request to approve." };
 
@@ -60,7 +60,7 @@ export async function approveRequest(formData: FormData): Promise<ListMutationRe
 }
 
 export async function declineRequest(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("requests");
+  const { supabase, profile } = await requirePagePermission("requests", "update");
   const id = str(formData.get("id"));
   if (!id) return { ok: false, error: "Select a pending request to decline." };
 
@@ -80,7 +80,7 @@ export async function declineRequest(formData: FormData): Promise<ListMutationRe
 }
 
 export async function handToDriver(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("requests");
+  const { supabase, profile } = await requirePagePermission("requests", "update");
   const id = str(formData.get("id"));
   if (!id) return { ok: false, error: "Select an approved request to hand over." };
 

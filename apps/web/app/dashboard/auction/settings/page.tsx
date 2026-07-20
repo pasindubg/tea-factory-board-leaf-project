@@ -1,4 +1,4 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { GradesTable, type GradeTableRow } from "./grades-table";
 import { ThresholdsTable, type ThresholdTableRow } from "./thresholds-table";
@@ -9,7 +9,7 @@ export default async function AuctionSettingsPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const { profile } = await requireModuleAccess("auction");
+  const { profile } = await requirePageAccess("auction-settings");
   const isOwner = profile.role === "owner";
   const { error } = await searchParams;
 

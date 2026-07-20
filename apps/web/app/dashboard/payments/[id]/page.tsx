@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { lkr, MONTHS } from "@/lib/money";
 import { PrintButton } from "./print-button";
@@ -37,7 +37,7 @@ type Line = {
 };
 
 export default async function StatementPage({ params }: { params: Promise<{ id: string }> }) {
-  const { supabase, profile } = await requireModuleAccess("payments");
+  const { supabase, profile } = await requirePageAccess("payment-statement");
   const { id } = await params;
 
   const [{ data: payment }, { data: lines }, { data: factory }] = await Promise.all([

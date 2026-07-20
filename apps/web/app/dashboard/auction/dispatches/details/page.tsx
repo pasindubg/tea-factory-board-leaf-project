@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 
 export default async function DispatchDetailsPage() {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-dispatch-details");
   const { data: latestDispatch } = await supabase
     .from("auction_bundled_dispatches")
     .select("id")

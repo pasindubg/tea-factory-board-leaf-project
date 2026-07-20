@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePagePermission } from "@/lib/profile";
 
 const SUPPLIERS_PATH = "/dashboard/suppliers";
 
@@ -20,7 +20,7 @@ function supplierFields(formData: FormData) {
 }
 
 async function collectorBelongsToFactory(
-  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  supabase: Awaited<ReturnType<typeof requirePagePermission>>["supabase"],
   factoryId: string,
   collectorId: string | null,
 ): Promise<ListMutationResult | null> {
@@ -36,7 +36,7 @@ async function collectorBelongsToFactory(
 }
 
 export async function createSupplier(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("suppliers");
+  const { supabase, profile } = await requirePagePermission("suppliers", "create");
   const fields = supplierFields(formData);
   if (!fields.name) return { ok: false, error: "Supplier name is required." };
   if (fields.land_size_acres != null && (!Number.isFinite(Number(fields.land_size_acres)) || Number(fields.land_size_acres) < 0)) {
@@ -57,7 +57,7 @@ export async function createSupplier(formData: FormData): Promise<ListMutationRe
 }
 
 export async function updateSupplier(id: string, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("suppliers");
+  const { supabase, profile } = await requirePagePermission("suppliers", "update");
   const fields = supplierFields(formData);
   if (!id) return { ok: false, error: "Supplier id is required." };
   if (!fields.name) return { ok: false, error: "Supplier name is required." };
@@ -90,7 +90,7 @@ function selectedIds(formData: FormData) {
 }
 
 export async function setSelectedSuppliersActive(active: boolean, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("suppliers");
+  const { supabase, profile } = await requirePagePermission("suppliers", "update");
   const ids = selectedIds(formData);
   if (ids.length === 0) return { ok: false, error: "Select at least one supplier." };
 

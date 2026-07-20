@@ -1,4 +1,4 @@
-import { collectorForUser, requireModuleAccess } from "@/lib/profile";
+import { collectorForUser, requirePageAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { WeighingsFilter } from "./weighings-filter";
@@ -9,7 +9,7 @@ export default async function WeighingsPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; supplier?: string; collector?: string }>;
 }) {
-  const { supabase, profile } = await requireModuleAccess("weighings");
+  const { supabase, profile } = await requirePageAccess("weighings");
   const params = await searchParams;
   const isCollector = profile.role === "collector";
   const ownCollector = isCollector ? await collectorForUser(supabase, profile.id) : null;

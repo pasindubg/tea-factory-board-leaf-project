@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { DispatchDetailEditor } from "./dispatch-detail-editor";
 import { colomboToday, nextDispatchNo } from "../_actions/_shared";
@@ -12,7 +12,7 @@ export default async function SaleDetailPage({
   params: Promise<{ saleId: string }>;
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requirePageAccess("auction-invoice-detail");
   const isOwner = profile.role === "owner";
   const { saleId } = await params;
   const { error, notice } = await searchParams;

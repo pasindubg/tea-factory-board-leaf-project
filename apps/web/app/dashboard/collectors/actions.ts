@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { ListInvalidation } from "@/lib/list-resources";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePagePermission } from "@/lib/profile";
 
 const COLLECTORS_PATH = "/dashboard/collectors";
 const SUPPLIERS_PATH = "/dashboard/suppliers";
@@ -23,7 +23,7 @@ function collectorFields(formData: FormData) {
 }
 
 export async function createCollector(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("collectors");
+  const { supabase, profile } = await requirePagePermission("collectors", "create");
   const fields = collectorFields(formData);
   if (!fields.name) return { ok: false, error: "Collector name is required." };
 
@@ -36,7 +36,7 @@ export async function createCollector(formData: FormData): Promise<ListMutationR
 }
 
 export async function updateCollector(id: string, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("collectors");
+  const { supabase, profile } = await requirePagePermission("collectors", "update");
   const fields = collectorFields(formData);
   if (!id) return { ok: false, error: "Collector id is required." };
   if (!fields.name) return { ok: false, error: "Collector name is required." };
@@ -61,7 +61,7 @@ function selectedIds(formData: FormData) {
 }
 
 export async function setSelectedCollectorsActive(active: boolean, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("collectors");
+  const { supabase, profile } = await requirePagePermission("collectors", "update");
   const ids = selectedIds(formData);
   if (ids.length === 0) return { ok: false, error: "Select at least one collector." };
 

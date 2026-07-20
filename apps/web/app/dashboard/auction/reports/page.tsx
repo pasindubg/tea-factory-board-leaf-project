@@ -1,4 +1,4 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { ingestAckAuto, ingestValAuto, ingestConAuto, ingestBankAuto } from "../actions";
 import { ReportsTabs } from "./reports-tabs";
 import { SettlementsTable, type SettlementRow } from "./settlements-table";
@@ -7,7 +7,7 @@ import { DocumentImportList } from "./document-import-list";
 import { EntityListTabs } from "@/components/entity-list";
 
 export default async function ReportsPage() {
-  const { supabase } = await requireModuleAccess("auction");
+  const { supabase } = await requirePageAccess("auction-reports");
 
   const [
     { data: settlements },

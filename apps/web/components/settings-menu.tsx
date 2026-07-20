@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 
 const THEMES = [
   { value: "system", label: "System", icon: "◐" },
@@ -53,10 +54,13 @@ export function SettingsMenu() {
               })}
             </div>
           </div>
-          <div className="mt-2 flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-stone-500 dark:text-stone-400">
-            <span>More preferences</span>
-            <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide dark:bg-stone-800">Coming soon</span>
-          </div>
+          <Link
+            href="/dashboard/settings"
+            className="mt-2 flex min-h-11 items-center justify-between rounded-2xl px-3 py-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"
+          >
+            <span>My profile &amp; security</span>
+            <span aria-hidden="true">→</span>
+          </Link>
       </div>
     </details>
   );

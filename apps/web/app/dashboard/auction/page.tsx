@@ -1,10 +1,10 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { DispatchesTable } from "./dispatches-table";
 import { colomboToday, nextDispatchNo } from "./_actions/_shared";
 
 export default async function AuctionSalesPage() {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requirePageAccess("auction-invoices");
   const isOwner = profile.role === "owner";
   const [dispatches, brokers, marks, generatedDispatchNo] = await Promise.all([
     loadListResource({ key: "auction.dispatches" }),

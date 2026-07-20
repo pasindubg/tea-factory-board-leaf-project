@@ -1,4 +1,4 @@
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { BrokersTable, type BrokerRow } from "./brokers-table";
 import { RatesTable, type RateRow } from "./rates-table";
@@ -6,7 +6,7 @@ import { MarksTable, type MarkRow } from "./marks-table";
 import { EntityListTabs } from "@/components/entity-list";
 
 export default async function RegistryPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { profile } = await requireModuleAccess("auction");
+  const { profile } = await requirePageAccess("auction-registry");
   const { error } = await searchParams;
   const [brokers, marks, rates] = await Promise.all([
     loadListResource({ key: "auction.brokers" }),

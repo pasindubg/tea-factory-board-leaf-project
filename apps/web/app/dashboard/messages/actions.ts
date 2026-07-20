@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePagePermission } from "@/lib/profile";
 
 // FA3 (issue #13): the factory composes a message to one supplier or broadcasts
 // to all of them. Suppliers read it in their field-app inbox (RLS scopes
@@ -13,7 +13,7 @@ const MSG = "/dashboard/messages";
 const str = (value: FormDataEntryValue | null) => String(value ?? "").trim();
 
 export async function sendMessage(formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleAccess("messages");
+  const { supabase, profile } = await requirePagePermission("messages", "create");
   const title = str(formData.get("title"));
   const body = str(formData.get("body"));
   const target = str(formData.get("target"));

@@ -27,6 +27,8 @@ export const ENTITY_LIST_METADATA: Record<ListResourceKey, { title: string; desc
   "payments.base-rates": { title: "Base rates", description: "Effective-dated green-leaf rates." },
   "payments.statements": { title: "Payment statements", description: "Supplier payment statements for the selected period." },
   "users.accounts": { title: "Users", description: "Logins for this factory." },
-  "users.module-permissions": { title: "Module permissions", description: "Per-factory role access overrides." },
+  "users.roles": { title: "Roles", description: "Built-in and custom factory roles." },
+  "users.role-page-permissions": { title: "Page permissions", description: "View and CRUD access for one factory role." },
+  "users.staff-directory": { title: "Shared staff profiles", description: "Contact and employment details coworkers chose to share." },
   "leaf.weighings": { title: "Weighings", description: "Leaf intake records for the selected period and filters." },
 };

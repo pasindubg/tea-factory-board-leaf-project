@@ -1,6 +1,7 @@
 export * from "./enums";
 export * from "./factories";
 export * from "./users";
+export * from "./user-profiles";
 export * from "./collectors";
 export * from "./suppliers";
 export * from "./price-rates";
@@ -13,6 +14,8 @@ export * from "./weighings";
 export * from "./payments";
 export * from "./payment-lines";
 export * from "./module-permissions";
+export * from "./access-roles";
+export * from "./role-page-permissions";
 export * from "./request-types";
 export * from "./supplier-requests";
 export * from "./supplier-messages";

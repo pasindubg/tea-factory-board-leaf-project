@@ -1,11 +1,11 @@
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { AdjustmentsTable } from "./adjustments-table";
 
 export default async function AdjustmentsPage() {
-  const { supabase, profile } = await requireModuleAccess("payments");
+  const { supabase, profile } = await requirePageAccess("payment-adjustments");
   const [
     adjustmentResource,
     { data: suppliers, error: supplierError },

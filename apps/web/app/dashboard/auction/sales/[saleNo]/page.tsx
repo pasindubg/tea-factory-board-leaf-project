@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireModuleAccess } from "@/lib/profile";
+import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { stateBucket } from "../../state-buckets";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
@@ -99,7 +99,7 @@ export default async function SaleDetailPage({
 }: {
   params: Promise<{ saleNo: string }>;
 }) {
-  const { supabase, profile } = await requireModuleAccess("auction");
+  const { supabase, profile } = await requirePageAccess("auction-sale-detail");
   const { saleNo: rawSaleNo } = await params;
   const saleNo = decodeURIComponent(rawSaleNo);
   const displaySaleNo = formatSaleNo(saleNo);
