@@ -1,4 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then echo 'Production build — applying pending Drizzle migrations' && pnpm --filter @tea/db db:migrate; fi && pnpm run build"
+  "buildCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then echo 'Production build — applying pending Drizzle migrations' && pnpm --filter @tea/db db:migrate; fi && pnpm exec turbo run build --filter=web"
 }
