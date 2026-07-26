@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { BySaleTable, type BySaleRow } from "./by-sale-table";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
@@ -28,7 +29,7 @@ const STATE_ORDER: { key: string; label: string; bar: string; chip: string }[] =
 ];
 
 export default async function AuctionDashboardPage() {
-  const { supabase } = await requirePageAccess("auction-dashboard");
+  const { supabase, profile } = await requirePageAccess("auction-dashboard");
 
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([
@@ -137,6 +138,8 @@ export default async function AuctionDashboardPage() {
     };
   });
 
+  const visibleBySaleRows = await applyServerListSearch(supabase, profile, "auction-by-sale", bySaleRows);
+
   return (
     <div className="space-y-8">
       <div>
@@ -191,7 +194,7 @@ export default async function AuctionDashboardPage() {
           {/* Per-sale detail */}
           <section>
             <h3 className="mb-3 text-lg font-medium text-stone-700 dark:text-stone-300">By sale</h3>
-            <BySaleTable rows={bySaleRows} />
+            <BySaleTable rows={visibleBySaleRows} />
           </section>
         </>
       )}

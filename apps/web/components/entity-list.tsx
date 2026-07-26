@@ -18,8 +18,11 @@ import {
   useListControls,
   useListSelection,
   type ColumnDef,
+  type FrameworkListSearchState,
   type ListDefinition,
 } from "@/components/list-controls";
+import { refreshListResource } from "@/lib/list-resource-action";
+import { saveListSearchState } from "@/lib/list-search-actions";
 import { ENTITY_LIST_METADATA } from "@/lib/entity-list-metadata";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { ListResourceKey, ListResourceRequest, ListResourceRow } from "@/lib/list-resources";
@@ -37,6 +40,12 @@ export type EntityListDataContext<Row> = {
     action: (formData: FormData) => Promise<ListMutationResult>,
     options?: EntityListMutationOptions,
   ) => (formData: FormData) => Promise<void>;
+  /** Restored/locked search state for this list instance — undefined until the (one, generic) restore fetch resolves. */
+  searchState?: FrameworkListSearchState;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadMore?: () => Promise<void>;
+  applySearch?: (criteria: Record<string, string>, advancedQuery: string) => void;
 };
 
 export type EntityListContext<Row> = EntityListDataContext<Row> & {
@@ -295,7 +304,7 @@ function LiveEntityList<Key extends ListResourceKey>(props: LiveEntityListProps<
 }
 
 function LocalEntityList<Row>(props: LocalEntityListProps<Row>) {
-  const data = useLocalEntityListData(props.initialRows);
+  const data = useLocalEntityListData(props.initialRows, props.scope);
   return <EntityListPanel {...props} {...data} />;
 }
 
@@ -313,9 +322,29 @@ export function EntityListResource<Key extends ListResourceKey>({
   return <>{children(data)}</>;
 }
 
-function useLocalEntityListData<Row>(initialRows: Row[]): EntityListDataContext<Row> {
+function useLocalEntityListData<Row>(initialRows: Row[], scope: string): EntityListDataContext<Row> {
   const [rows, setRows] = useState(initialRows);
   useEffect(() => setRows(initialRows), [initialRows]);
+
+  // Local lists (detail-page side panels) get their rows as server-rendered
+  // props, not through the resource registry — this one small fetch is the
+  // only generic hook point available to restore their saved+locked search.
+  const [searchState, setSearchState] = useState<EntityListDataContext<Row>["searchState"]>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void refreshListResource({ key: "framework.search-state", params: { listScope: scope } }).then((result) => {
+      if (cancelled || !result.ok) return;
+      const state = result.rows[0];
+      if (state) setSearchState(state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+
+  function applySearch(criteria: Record<string, string>, advancedQuery: string) {
+    void saveListSearchState({ listScope: scope, criteria, advancedQuery: advancedQuery || null });
+  }
 
   async function mutate(
     action: () => Promise<ListMutationResult>,
@@ -342,7 +371,7 @@ function useLocalEntityListData<Row>(initialRows: Row[]): EntityListDataContext<
     await mutate(() => action(formData), options);
   };
 
-  return { rows, refreshing: false, mutate, mutationAction };
+  return { rows, refreshing: false, mutate, mutationAction, searchState, applySearch };
 }
 
 type EntityListPanelProps<Row> = EntityListCommonProps<Row>
@@ -356,7 +385,7 @@ function EntityListPanel<Row>({
   rowLabel,
   canCreate = true,
   create,
-  createPlacement = "header",
+  createPlacement = "toolbar",
   edit,
   canDelete = true,
   deleteAction,
@@ -383,6 +412,11 @@ function EntityListPanel<Row>({
   refreshing,
   mutate,
   mutationAction,
+  searchState,
+  hasMore,
+  loadingMore,
+  loadMore,
+  applySearch,
 }: EntityListPanelProps<Row>) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -391,7 +425,7 @@ function EntityListPanel<Row>({
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
   const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const [panelCommand, setPanelCommand] = useState<string | null>(null);
-  const controls = useListControls(rows, definition.columns, listControls);
+  const controls = useListControls(rows, definition.columns, { ...listControls, searchState, onApplySearch: applySearch });
   const visibleRows = controls.rows;
   const selectionMode = definition.selectionMode ?? "single";
   const selection = useListSelection(rows, { mode: selectionMode, getId });
@@ -684,7 +718,7 @@ function EntityListPanel<Row>({
       )}
 
       {(summary ?? beforeTable)?.(rows)}
-      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} />
+      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
       {sideList ? (
         <div className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {
@@ -818,6 +852,20 @@ function EntityListPanel<Row>({
             <tfoot>{footer({ rows, visibleRows, selectionColumn: selectionMode === "multi" })}</tfoot>
           )}
           </table>
+        </div>
+      )}
+
+      {hasMore && (
+        <div className="flex justify-center border-t border-stone-100 py-3 dark:border-stone-800">
+          <button
+            type="button"
+            onClick={() => void loadMore?.()}
+            disabled={loadingMore}
+            className="inline-flex min-h-9 items-center gap-2 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+          >
+            {loadingMore && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+            {loadingMore ? "Loading…" : "Show more"}
+          </button>
         </div>
       )}
 

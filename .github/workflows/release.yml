@@ -1,0 +1,53 @@
+name: Release checks
+
+# The safety gate before code reaches the production branch — NOT where
+# migrations run. Migrations now run inside Vercel's own production build
+# (apps/web/vercel.json's buildCommand, gated on VERCEL_ENV=production), so
+# Vercel can never activate a deploy whose migration failed: build failure
+# blocks the deploy outright, instead of racing an independent CI job against
+# an independently-triggered Vercel build. This workflow's job is to make sure
+# nothing broken merges into blm-cloud-release in the first place — pair it
+# with a GitHub branch-protection rule requiring this check before merge, so
+# merging the PR is the actual "ship to production" approval.
+
+on:
+  pull_request:
+    branches: [blm-cloud-release]
+  push:
+    branches: [blm-cloud-release]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm turbo lint
+
+      - name: Typecheck
+        run: pnpm turbo typecheck
+
+      - name: Unit tests
+        run: pnpm turbo test
+
+      - name: Payment calc tests
+        run: pnpm --dir packages/api test:payments

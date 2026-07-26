@@ -30,6 +30,7 @@ export type ModuleDef = {
   entitlement: Entitlement;
   group?: ModuleGroup;
   subGroup?: string;
+  visibleInNavigation?: boolean;
 };
 
 // These are the sidebar destinations. Detailed routes are registered below in
@@ -48,9 +49,9 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "auction-reports", href: "/dashboard/auction/reports", label: "Report Reconciliations", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-registry", href: "/dashboard/auction/registry", label: "Brokers & marks", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-settings", href: "/dashboard/auction/settings", label: "Auction setup", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
-  { key: "auction", href: "/dashboard/auction", label: "Invoice Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
+  { key: "auction", href: "/dashboard/auction", label: "Invoice Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling", visibleInNavigation: false },
   { key: "auction-dispatch-detail", href: "/dashboard/auction", label: "Invoice Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
-  { key: "auction-dispatch-overview", href: "/dashboard/auction/dispatches", label: "Dispatch Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
+  { key: "auction-dispatch-overview", href: "/dashboard/auction/dispatches", label: "Dispatch Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling", visibleInNavigation: false },
   { key: "auction-bundled-dispatch-details", href: "/dashboard/auction/dispatches/details", label: "Dispatch Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-warehouses", href: "/dashboard/auction/warehouses", label: "Warehouse Basic Data", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-reprints", href: "/dashboard/auction/reprints", label: "Re-print Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },

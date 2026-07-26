@@ -1,0 +1,139 @@
+import { describe, expect, it } from "vitest";
+import { activeEmbeds, applyListFilters, embedSelect, filterRowsByCriteria, resolveSearchColumn, splitPage } from "./list-search-query";
+
+describe("resolveSearchColumn", () => {
+  it("auto-maps a plain UI key to its snake_case base column", () => {
+    expect(resolveSearchColumn("weightKg", {})).toEqual({ column: "weight_kg", mode: "contains" });
+    expect(resolveSearchColumn("occurredOn", {})).toEqual({ column: "occurred_on", mode: "contains" });
+    expect(resolveSearchColumn("title", {})).toEqual({ column: "title", mode: "contains" });
+  });
+
+  it("prefers an explicit declaration over the convention", () => {
+    const config = { columns: { supplierName: { column: "suppliers.name", mode: "contains" as const, embed: "suppliers" } } };
+    expect(resolveSearchColumn("supplierName", config)).toEqual({ column: "suppliers.name", mode: "contains", embed: "suppliers" });
+  });
+
+  it("refuses to push a JS-computed key into SQL", () => {
+    // Guessing `reprint_sales` would 400 the whole list; null means the
+    // row-level filter in loadListResource enforces it instead.
+    expect(resolveSearchColumn("reprintSales", { computed: ["reprintSales"] })).toBeNull();
+  });
+});
+
+describe("applyListFilters column-type modes", () => {
+  // Records which builder method each mode reaches for; the real Postgres
+  // behaviour behind these choices is probed separately against the DB.
+  function spy() {
+    const calls: string[] = [];
+    const q: Record<string, (...a: unknown[]) => unknown> = {};
+    for (const op of ["ilike", "eq", "gte", "lt", "gt", "lte", "or", "range"]) {
+      q[op] = (col: unknown, val: unknown) => { calls.push(`${op}(${col},${val})`); return q; };
+    }
+    return { q, calls };
+  }
+
+  it("uses ilike for an auto-mapped (text) column", () => {
+    const { q, calls } = spy();
+    applyListFilters(q, { supplierName: "Silva" }, {});
+    expect(calls).toEqual(["ilike(supplier_name,%Silva%)"]);
+  });
+
+  it("uses eq for an equals column", () => {
+    const { q, calls } = spy();
+    applyListFilters(q, { active: "true" }, { columns: { active: { column: "active", mode: "equals" } } });
+    expect(calls).toEqual(["eq(active,true)"]);
+  });
+
+  it("expands a day-mode timestamp column into a half-open day range", () => {
+    // eq('collected_at','2026-06-22') matches midnight only and silently
+    // returns nothing — this range is what makes a date search actually work.
+    const { q, calls } = spy();
+    applyListFilters(q, { collectedAt: "2026-06-22" }, { columns: { collectedAt: { column: "collected_at", mode: "day" } } });
+    expect(calls).toEqual(["gte(collected_at,2026-06-22T00:00:00)", "lt(collected_at,2026-06-23T00:00:00)"]);
+  });
+
+  it("rolls a day range across a month boundary", () => {
+    const { q, calls } = spy();
+    applyListFilters(q, { d: "2026-06-30" }, { columns: { d: { column: "d", mode: "day" } } });
+    expect(calls).toEqual(["gte(d,2026-06-30T00:00:00)", "lt(d,2026-07-01T00:00:00)"]);
+  });
+
+  it("ignores a day-mode value that is not a plain date", () => {
+    const { q, calls } = spy();
+    applyListFilters(q, { d: "not-a-date" }, { columns: { d: { column: "d", mode: "day" } } });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("activeEmbeds / embedSelect", () => {
+  const config = { columns: { recipient: { column: "suppliers.name", mode: "contains" as const, embed: "suppliers" } } };
+
+  it("promotes an embed to !inner only while its criterion is active", () => {
+    expect(embedSelect("id, suppliers(name)", activeEmbeds({ recipient: "Silva" }, null, config)))
+      .toBe("id, suppliers!inner(name)");
+    // No criterion: left join preserved, so rows with a null FK still appear.
+    expect(embedSelect("id, suppliers(name)", activeEmbeds({}, null, config)))
+      .toBe("id, suppliers(name)");
+  });
+
+  it("detects an embed referenced from the advanced query", () => {
+    expect([...activeEmbeds({}, "recipient:Silva", config)]).toEqual(["suppliers"]);
+  });
+});
+
+// filterRowsByCriteria is the server-side enforcement point shared by both
+// list paths: the registry (loadListResource) and detail-page side panels
+// (applyServerListSearch). A row it drops is never serialized to the browser.
+describe("filterRowsByCriteria", () => {
+  const rows = [
+    { id: "1", name: "K. Gunasekara", area: "Akmeemana", active: true },
+    { id: "2", name: "P. Fernando", area: "Akmeemana", active: true },
+    { id: "3", name: "W. Silva", area: "Baddegama", active: false },
+  ];
+
+  it("returns every row when no criteria are set", () => {
+    expect(filterRowsByCriteria(rows, {})).toHaveLength(3);
+    expect(filterRowsByCriteria(rows, undefined)).toHaveLength(3);
+  });
+
+  it("drops rows that do not match a locked criterion", () => {
+    const visible = filterRowsByCriteria(rows, { area: "Akmeemana" });
+    expect(visible.map((row) => row.id)).toEqual(["1", "2"]);
+  });
+
+  it("requires every criterion to match", () => {
+    expect(filterRowsByCriteria(rows, { area: "Akmeemana", name: "Silva" })).toHaveLength(0);
+    expect(filterRowsByCriteria(rows, { area: "Akmeemana", name: "Fernando" })).toHaveLength(1);
+  });
+
+  it("matches case-insensitively on a substring", () => {
+    expect(filterRowsByCriteria(rows, { name: "gunasekara" })).toHaveLength(1);
+  });
+
+  it("ignores blank criteria rather than filtering everything out", () => {
+    expect(filterRowsByCriteria(rows, { area: "   " })).toHaveLength(3);
+  });
+
+  it("matches non-string row values through their string form", () => {
+    expect(filterRowsByCriteria(rows, { active: "false" }).map((row) => row.id)).toEqual(["3"]);
+  });
+
+  it("drops every row when a criterion names a field the rows do not have", () => {
+    // Fail closed: an unknown locked key must not silently widen access.
+    expect(filterRowsByCriteria(rows, { missingField: "x" })).toHaveLength(0);
+  });
+});
+
+describe("splitPage", () => {
+  it("reports hasMore and trims the probe row when a further page exists", () => {
+    const page = splitPage([1, 2, 3, 4], 3);
+    expect(page.rows).toEqual([1, 2, 3]);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("reports no further page when the result fits", () => {
+    const page = splitPage([1, 2], 3);
+    expect(page.rows).toEqual([1, 2]);
+    expect(page.hasMore).toBe(false);
+  });
+});

@@ -20,16 +20,23 @@ const LIST: ListDefinition<PhysicalDispatchListRow> = {
   delete: false,
 };
 
-export function DispatchSideList({ rows, currentId }: { rows: PhysicalDispatchListRow[]; currentId: string }) {
+export function DispatchSideList({ rows, currentId, searchPanelId }: {
+  rows: PhysicalDispatchListRow[]; currentId: string; searchPanelId: string;
+}) {
   return (
     <EntityList
-      scope="physical-dispatch-side-list"
+      // Registry-backed, not a local list: applying a search re-executes a real
+      // query (and "Show more" pages) instead of filtering rows already in the
+      // browser — which also means locked criteria are enforced on every search,
+      // not just on the first render.
+      resource={{ key: "auction.physical-dispatches" }}
       initialRows={rows}
       definition={LIST}
       getId={(row) => row.id}
       rowLabel={(row) => `Dispatch ${row.dispatchNo}`}
-      title="Dispatches"
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      chrome="records-only"
+      searchPanelId={searchPanelId}
+      className="h-full min-h-0 xl:flex-col"
       emptyMessage="No dispatches."
       filteredEmptyMessage="No dispatches match."
       sideList={{

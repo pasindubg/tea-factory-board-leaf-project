@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { reconcileBank } from "@tea/api";
 import { confirmBankMatches } from "../../../actions";
@@ -19,7 +20,7 @@ export default async function BankReviewPage({
   params: Promise<{ saleId: string; importId: string }>;
   searchParams: Promise<{ notice?: string }>;
 }) {
-  const { supabase } = await requirePageAccess("auction-bank");
+  const { supabase, profile } = await requirePageAccess("auction-bank");
   const { saleId, importId } = await params;
   const { notice } = await searchParams;
   const detail = `/dashboard/auction/${saleId}`;
@@ -160,6 +161,12 @@ export default async function BankReviewPage({
   const totalExpected = computed.reduce((s, c) => s + c.expected, 0);
   const totalReceived = computed.reduce((s, c) => s + c.received, 0);
 
+  const [visibleComputed, visibleUnattributed, visibleAudit] = await Promise.all([
+    applyServerListSearch(supabase, profile, "settlement-status", computed),
+    applyServerListSearch(supabase, profile, "bank-credit-resolver", unattributed),
+    applyServerListSearch(supabase, profile, "workflow-audit-bank", audit),
+  ]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -194,7 +201,7 @@ export default async function BankReviewPage({
       </div>
 
       {/* Per-settlement status */}
-      <SettlementStatusTable rows={computed} />
+      <SettlementStatusTable rows={visibleComputed} />
 
       {/* Apply suggested auto-matches */}
       {suggested.matches.length > 0 && (
@@ -216,14 +223,14 @@ export default async function BankReviewPage({
         <BankResolver
           saleId={saleId}
           importId={importId}
-          credits={unattributed.map((c) => ({
+          credits={visibleUnattributed.map((c) => ({
             txnId: c.id as string,
             txnDate: c.txn_date as string,
             credit: Number(c.credit),
             description: (c.description as string) ?? "",
           }))}
           settlements={unpaidSettlements}
-          audit={audit}
+          audit={visibleAudit}
         />
       )}
 

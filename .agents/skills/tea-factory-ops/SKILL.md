@@ -100,12 +100,24 @@ docs/PRODUCT.md, MILESTONES.md, README.md
 ```
 
 Web app internals worth knowing before editing:
-- `apps/web/lib/roles.ts` — **the access registry** (see Architecture below).
-- `apps/web/lib/profile.ts` — `requireProfile(allowed?)` gate + `collectorForUser`.
+- `apps/web/lib/roles.ts` — **the access registry**: base `Role`s, `MODULES`
+  (sidebar/nav), and `PAGE_DEFINITIONS` (per-page role ceilings). See
+  Architecture below.
+- `apps/web/lib/profile.ts` — `requireProfile`/`requirePageAccess`/
+  `requirePagePermission`/`requireModuleAccess`/`requireModuleRole` gates +
+  `collectorForUser`.
 - `apps/web/lib/supabase/{server,client,admin}.ts` — session server client,
   browser client, and the **admin** client (secret key; server-only).
 - `apps/web/app/dashboard/<module>/{page,actions}.tsx` — one folder per module.
+- `apps/web/app/dashboard/settings/` — the signed-in user's own account: login
+  (username/password), private personal/employment profile, opt-in staff
+  directory visibility, and (owner only) factory branding.
+- `apps/web/app/dashboard/user-handling/roles/` — owner-only screen to create
+  factory-specific roles on top of a base role and pick their exact page/CRUD
+  permissions.
 - `packages/db/src/schema/*.ts` — one file per table, re-exported from `index.ts`.
+  `access-roles.ts`, `role-page-permissions.ts`, and `user-profiles.ts` back the
+  custom-role and personal-profile system above.
 
 ## Environment & toolchain — READ BEFORE RUNNING ANYTHING
 
@@ -130,12 +142,37 @@ needs **≥ 20.19.4**, and the machine's default is older.
   ```bash
   cd ~/Desktop/board-leaf-project && set -a; . ./.env; set +a
   ```
-- **`DATABASE_URL` uses the Supabase session pooler** (`aws-1-ap-south-1.pooler...`),
-  not the direct `db.*.supabase.co` host (that's IPv6-only and unreachable here).
+- **Local dev runs against the local Supabase CLI stack, not the hosted project.**
+  `pnpm supabase start` boots Postgres + Auth (GoTrue) + Storage in Docker
+  (first run pulls images — a few minutes). `cp .env.local.example .env` gives
+  the fixed local values (`http://127.0.0.1:54321`, local anon/service keys,
+  `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres`).
+  Then `pnpm db:migrate && pnpm db:seed && pnpm db:link-auth &&
+  pnpm db:verify-rls && pnpm db:verify-auth` — all five now work locally,
+  including OTP login and the admin user API, because the local stack has a
+  real `auth` schema and GoTrue service (unlike bare Postgres).
+- **The hosted Supabase project is the live customer database.** `DATABASE_URL`
+  uses the Supabase session pooler (`aws-1-ap-south-1.pooler...`), not the
+  direct `db.*.supabase.co` host (that's IPv6-only and unreachable here).
   Project ref `mjptydjrsezqvbrlwooz`, Mumbai region. The password contains `@`,
-  URL-encoded as `%40`.
-- **`.env` is gitignored — never commit it.** Secret key is server-only;
-  `NEXT_PUBLIC_`/`EXPO_PUBLIC_` prefixes are the browser-exposure boundary.
+  URL-encoded as `%40`. Only touch it for the release pipeline (the
+  `blm-cloud-release` branch, see below) or deliberate one-off debugging —
+  never for day-to-day dev, seeding, or destructive scripts.
+- **`apps/web/lib/env.ts` is the single DB-access gate.** Every Supabase client
+  construction goes through `getSupabaseEnv()`/`getSupabasePublicEnv()`. It
+  throws if a Vercel production deploy is pointed at a local URL, and throws if
+  local dev (no `VERCEL` env var) is pointed at the hosted project unless
+  `ALLOW_PROD_DB_FROM_LOCAL=true` is set. Don't bypass it by reading
+  `process.env.NEXT_PUBLIC_SUPABASE_URL` directly in new code.
+- **Live-DB migrations only happen on push to `blm-cloud-release`**, via
+  `.github/workflows/release.yml` (`PROD_DATABASE_URL` secret, gated behind a
+  `production` GitHub Environment). Regular `ci.yml` on `main`/PRs never
+  touches the hosted database. To clone real hosted data into the local stack,
+  run `packages/db/scripts/clone-remote-to-local.sh` deliberately (never
+  automatic) — see [docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md).
+- **`.env`/`.env.local`/`.env.hosted` are gitignored — never commit them.**
+  Secret key is server-only; `NEXT_PUBLIC_`/`EXPO_PUBLIC_` prefixes are the
+  browser-exposure boundary.
 
 ## Architecture rules (do not violate)
 
@@ -162,16 +199,44 @@ contract are mandatory on web and native list renderers.
   The **admin** client (secret key, bypasses RLS) is ONLY for auth-side work:
   create login, ban/unban, delete login. Never use it to read/write tenant tables.
 
-**Access = role ∩ entitlement, registered once in `apps/web/lib/roles.ts`.**
-- `MODULES` is the single source of truth: each entry has `roles` (who sees it) and
-  an `entitlement` key (which sellable bundle the factory must own). Nav, pages, and
-  server actions all gate on this. **Never inline role checks in pages** — add/adjust
-  the registry instead.
-- Roles: `owner` (everything incl. user management), `manager` (everything except
-  users), `collector` (weighings entry + their own records only). Pages call
-  `requireProfile(allowedRoles)`; it also redirects deactivated/orphaned users.
+**Access = base role ∩ entitlement ∩ optional custom-role permissions, registered
+once in `apps/web/lib/roles.ts`.**
+- **Base roles** (`Role` type, the ceiling RLS actually trusts): `owner`,
+  `manager`, `supervisor`, `accountant`, `collector` (web-facing today), plus
+  `supplier`/`driver` reserved for the Phase 2 field app. `owner` always has
+  full access and is never gated further.
+- `MODULES` (sidebar/nav) and `PAGE_DEFINITIONS` (every concrete dashboard
+  route) each declare the base `roles` allowed to reach them — this is the hard
+  ceiling. `roleMayPerformPageAction(role, pageDef, action)` derives the max
+  CRUD action a base role may ever perform on a page (e.g. `supervisor`/
+  `accountant`/`collector` can never `delete`). **Never inline role checks in
+  pages** — add/adjust the registry instead.
+- **Custom factory roles narrow, never widen, that ceiling.** Owners create
+  named roles in *Roles & permissions* (`access_roles`, one of
+  `CUSTOMIZABLE_BASE_ROLES` as `baseRole`) and pick exact per-page `can_view/
+  create/update/delete` in `role_page_permissions`. A user with an
+  `access_role_id` is checked against that explicit row first; a user without
+  one falls back to the base-role defaults in `PAGE_DEFINITIONS`/`MODULES`
+  (and the older `module_permissions` override table). New roles start with
+  **zero page access** — the owner must grant pages explicitly.
+- Gate helpers in `apps/web/lib/profile.ts`, pick the narrowest one that fits:
+  `requireProfile(allowedRoles)` (static role list, redirects deactivated/
+  orphaned users), `requirePageAccess(pageKey)` (view-only, honors custom-role
+  rows), `requirePagePermission(pageKey, action)` (view + specific CRUD action,
+  fail-closed), `requireModuleAccess(moduleKey)` / `requireModuleRole(moduleKey,
+  roles)` (module-level, for actions that don't map to a single page).
 - Entitlement enforcement code lands in M11, but **every module must declare its
   entitlement key from day one** so flipping enforcement on is trivial.
+
+**Personal settings & staff directory (`/dashboard/settings`, `user_profiles`).**
+- Private employment data (national ID, DOB, address, emergency contact,
+  employee number, job title, qualifications, notes, etc.) lives in
+  `user_profiles`, deliberately **separate from `users`** so the factory-wide
+  account list never exposes it. Each user self-edits their own row and opts in
+  (`visible_to_colleagues`) to being shown in the staff directory list.
+- Every signed-in role (`ALL_WEB_ROLES`) reaches `/dashboard/settings` to manage
+  their own login (username/password) and personal profile; only `owner` also
+  edits factory branding there.
 
 **Data conventions:**
 - `numeric` for ALL money and weight columns — never `real`.
@@ -307,8 +372,9 @@ Production pipeline (what each ERP stage records — full detail in PRODUCT.md):
    `factory_id` + index. Generate a migration AND add the RLS policy in it.
 2. **Routes:** `apps/web/app/dashboard/<module>/` with `page.tsx` + `actions.ts`
    (forms colocated). Every server action starts with `requireProfile([...roles])`.
-3. **Register** the module in `apps/web/lib/roles.ts` `MODULES` with its `roles` and
-   `entitlement` key.
+3. **Register** the module in `apps/web/lib/roles.ts`: add it to `MODULES` with its
+   `roles` and `entitlement` key, and add a `PAGE_DEFINITIONS` entry (via `page(...)`)
+   per concrete route so owners can grant/narrow custom-role permissions to it.
 4. **Gate** in MILESTONES.md with a concrete verification step; keep `db:verify-rls`
    passing.
 
@@ -328,7 +394,7 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
   so the login form's "I already have a code" button + a minted code is the path.
   It refuses to mint for an email that has no auth user (won't resurrect removed ones).
 - **Browser verification:** prefer the `preview_*` tools over manual checks.
-  `.Codex/launch.json` defines two servers: **`web`** (Next.js, port 3000) and
+  `.claude/launch.json` defines two servers: **`web`** (Next.js, port 3000) and
   **`mobile-web`** (Expo web, port 8081). When driving RN-web (mobile) elements,
   remember Pressables render as `div`s — click by text via `preview_eval` if needed.
 - **`verify-rls` resolves owner ids by email** (seed user ids go stale after

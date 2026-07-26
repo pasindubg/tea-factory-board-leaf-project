@@ -32,6 +32,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // Owner always sees everything; others respect overrides → defaults.
   const nav = MODULES.filter((mod) => {
+    if (mod.visibleInNavigation === false) return false;
     if (profile.role === "owner") return true;
     const pageKey = pagesForModule(mod.key)[0]?.key;
     if (pageKey && pagePermissionMap.has(pageKey)) return pagePermissionMap.get(pageKey) === true;

@@ -22,7 +22,9 @@ const COLUMNS: ColumnDef<SaleSideListRow>[] = [
 
 const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<SaleSideListRow>;
 
-export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]; currentSaleNo: string }) {
+export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
+  rows: SaleSideListRow[]; currentSaleNo: string; searchPanelId: string;
+}) {
   return (
     <EntityList
       scope="auction-sales-side-list"
@@ -30,8 +32,9 @@ export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]
       definition={LIST}
       getId={(row) => saleNoKey(row.saleNo) || row.saleNo}
       rowLabel={(row) => `Sale ${row.saleNo}`}
-      title="Sales"
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      chrome="records-only"
+      searchPanelId={searchPanelId}
+      className="h-full min-h-0 xl:flex-col"
       emptyMessage="No sales."
       filteredEmptyMessage="No sales match."
       sideList={{

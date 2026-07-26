@@ -1,4 +1,5 @@
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { money } from "../format";
 import { SalesOverviewTable, type SaleOverviewRow } from "./sales-overview-table";
@@ -55,7 +56,7 @@ function saleHref(saleNo: string) {
 }
 
 export default async function SalesPage() {
-  const { supabase } = await requirePageAccess("auction-sales");
+  const { supabase, profile } = await requirePageAccess("auction-sales");
 
   const [{ data: dispatches }, { data: assignmentLots }, { data: lines }] = await Promise.all([
     supabase
@@ -178,6 +179,8 @@ export default async function SalesPage() {
     guaranteeLots: s.guaranteeLots,
   }));
 
+  const visibleTableRows = await applyServerListSearch(supabase, profile, "auction-sales-overview", tableRows);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -200,7 +203,7 @@ export default async function SalesPage() {
         </div>
       </div>
 
-      <SalesOverviewTable rows={tableRows} />
+      <SalesOverviewTable rows={visibleTableRows} />
     </div>
   );
 }

@@ -157,33 +157,33 @@ body {
   filter: saturate(1.45) contrast(1.25);
 }
 
-@keyframes navigation-gradient {
-  from { background-position: 0% 50%; }
-  to { background-position: 200% 50%; }
+@keyframes navigation-dim {
+  0%, 100% { opacity: 0.52; }
+  50% { opacity: 0.78; }
 }
 
 .navigation-progress {
-  background: linear-gradient(90deg, #047857, #34d399, #047857);
-  background-size: 200% 100%;
+  background: #16a34a;
   box-shadow: 0 1px 6px color-mix(in srgb, #16a34a 38%, transparent);
-  animation: navigation-gradient 1.6s ease-in-out infinite;
+  animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
-/* The action itself is the loading indicator. Links and navigation buttons
-   retain this animated tonal state until the destination route settles. */
+/* The action itself is the loading indicator. The clicked/previous destination
+   dims slowly until the destination route settles. */
 .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
-  background-image: linear-gradient(110deg, #ecfdf5, #d1fae5, #ecfdf5) !important;
-  background-size: 180% 100% !important;
-  border-color: #86efac !important;
-  color: #166534 !important;
-  box-shadow: 0 1px 5px color-mix(in srgb, #16a34a 22%, transparent) !important;
-  animation: navigation-gradient 1.8s ease-in-out infinite;
+  background-image: none !important;
+  background-color: #d1d5db !important;
+  border-color: #9ca3af !important;
+  color: #4b5563 !important;
+  box-shadow: none !important;
+  animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
 .dark .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
-  background-image: linear-gradient(110deg, #14532d, #166534, #14532d) !important;
-  border-color: #22c55e !important;
-  color: #dcfce7 !important;
+  background-image: none !important;
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #9ca3af !important;
 }
 .dashboard-content input[type="radio"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);

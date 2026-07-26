@@ -309,6 +309,20 @@ export type WeighingListRow = {
   notes: string | null;
 };
 
+/**
+ * One synthetic row carrying a list instance's restorable search state: the
+ * caller's own saved criteria plus any role lock that applies to them. Every
+ * list — live (registry-backed) or local (side panels with server-rendered
+ * initialRows) — fetches this by its own `scope` string to restore search on
+ * mount, with zero per-list declaration.
+ */
+export type ListSearchStateRow = {
+  saved: Record<string, string> | null;
+  savedAdvancedQuery: string | null;
+  locked: Record<string, string>;
+  canManageLocks: boolean;
+};
+
 export type ListResourceContracts = {
   "auction.brokers": { params: undefined; row: AuctionBrokerListRow };
   "auction.marks": { params: undefined; row: AuctionMarkListRow };
@@ -339,6 +353,7 @@ export type ListResourceContracts = {
     params: { from?: string; to?: string; supplierId?: string; collectorId?: string };
     row: WeighingListRow;
   };
+  "framework.search-state": { params: { listScope: string }; row: ListSearchStateRow };
 };
 
 export const LIST_RESOURCE_KEYS = [
@@ -368,6 +383,7 @@ export const LIST_RESOURCE_KEYS = [
   "users.role-page-permissions",
   "users.staff-directory",
   "leaf.weighings",
+  "framework.search-state",
 ] as const satisfies readonly (keyof ListResourceContracts)[];
 
 export type ListResourceKey = keyof ListResourceContracts;
@@ -380,6 +396,19 @@ export type ListResourceRequest<Key extends ListResourceKey = ListResourceKey> =
       ? { key: Key; params?: never }
       : { key: Key; params: ListResourceParams<Key> }
     : never;
+
+/**
+ * Optional search/pagination state layered on top of a resource request. Omit
+ * entirely for the initial server-rendered load (which restores the caller's
+ * saved+locked criteria automatically); pass it on later refreshes triggered
+ * by "Search" or "Show more".
+ */
+export type ListResourceSearch = {
+  criteria?: Record<string, string>;
+  advancedQuery?: string | null;
+  offset?: number;
+  limit?: number;
+};
 
 export type ListInvalidation =
   | { kind: "exact"; resource: ListResourceRequest }

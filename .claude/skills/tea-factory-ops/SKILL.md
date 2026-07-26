@@ -41,17 +41,17 @@ relationship-ending reject at the gate. Build Phase 1 completely before Phase 2.
 - **[MILESTONES.md](../../../MILESTONES.md)** — the live build plan with a concrete
   verification gate per milestone. **Check it for current status before building.**
 - **[docs/AUCTION.md](../../../docs/AUCTION.md)** — full spec for the Auction &
-  Settlement track (current wedge): state machine, data model, PDF ingestion,
+  Settlement track: state machine, data model, PDF ingestion,
   contract math, the four reconciliations. **Read before building any A-track work.**
-- **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational tables,
-  search panels, detail pages, and auction number formatting. **Read before changing
-  list/search/detail page UI.**
+- **[docs/UI_UX.md](../../../docs/UI_UX.md)** — UI/UX rules for operational detail
+  pages, list search, and auction number formatting. Follow it when creating or
+  changing list/detail pages and in-record workflows.
 - **[docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md)** — install,
   dependency, and migration change log. **Update whenever a task changes packages,
   scripts, environment assumptions, or database migrations.**
 
 This skill is the *operational* layer (how to work here); the linked docs are the
-*what/why/UI/deploy*. Keep them consistent when you change scope or interaction patterns.
+*what/why/UI*. Keep them consistent when you change scope or interaction patterns.
 
 ## Status & what to build next
 
@@ -74,7 +74,7 @@ wedge and ships first**, ahead of the production/grades ERP milestones, which ar
 deferred. The A-track is anchored on real data: Sale **2026-023**, broker BPML,
 marks MF1530 KUMUDU / MF1530A ITTAPANA (see the `ktf-auc-fll` sample docs).
 
-**Phase 1 priority order (re-sequenced):**
+**Priority order:**
 M6 payments + superleaf ✅ → **A1 auction intake & cataloguing → A2 valuation &
 sale → A3 VAT/deductions/settlement → A4 accounting + bank/cheque reconciliation
 (Priority 2)** → then the *deferred* ERP milestones: M7 production/out-turn →
@@ -100,12 +100,24 @@ docs/PRODUCT.md, MILESTONES.md, README.md
 ```
 
 Web app internals worth knowing before editing:
-- `apps/web/lib/roles.ts` — **the access registry** (see Architecture below).
-- `apps/web/lib/profile.ts` — `requireProfile(allowed?)` gate + `collectorForUser`.
+- `apps/web/lib/roles.ts` — **the access registry**: base `Role`s, `MODULES`
+  (sidebar/nav), and `PAGE_DEFINITIONS` (per-page role ceilings). See
+  Architecture below.
+- `apps/web/lib/profile.ts` — `requireProfile`/`requirePageAccess`/
+  `requirePagePermission`/`requireModuleAccess`/`requireModuleRole` gates +
+  `collectorForUser`.
 - `apps/web/lib/supabase/{server,client,admin}.ts` — session server client,
   browser client, and the **admin** client (secret key; server-only).
 - `apps/web/app/dashboard/<module>/{page,actions}.tsx` — one folder per module.
+- `apps/web/app/dashboard/settings/` — the signed-in user's own account: login
+  (username/password), private personal/employment profile, opt-in staff
+  directory visibility, and (owner only) factory branding.
+- `apps/web/app/dashboard/user-handling/roles/` — owner-only screen to create
+  factory-specific roles on top of a base role and pick their exact page/CRUD
+  permissions.
 - `packages/db/src/schema/*.ts` — one file per table, re-exported from `index.ts`.
+  `access-roles.ts`, `role-page-permissions.ts`, and `user-profiles.ts` back the
+  custom-role and personal-profile system above.
 
 ## Environment & toolchain — READ BEFORE RUNNING ANYTHING
 
@@ -130,14 +142,50 @@ needs **≥ 20.19.4**, and the machine's default is older.
   ```bash
   cd ~/Desktop/board-leaf-project && set -a; . ./.env; set +a
   ```
-- **`DATABASE_URL` uses the Supabase session pooler** (`aws-1-ap-south-1.pooler...`),
-  not the direct `db.*.supabase.co` host (that's IPv6-only and unreachable here).
+- **Local dev runs against the local Supabase CLI stack, not the hosted project.**
+  `pnpm supabase start` boots Postgres + Auth (GoTrue) + Storage in Docker
+  (first run pulls images — a few minutes). `cp .env.local.example .env` gives
+  the fixed local values (`http://127.0.0.1:54321`, local anon/service keys,
+  `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres`).
+  Then `pnpm db:migrate && pnpm db:seed && pnpm db:link-auth &&
+  pnpm db:verify-rls && pnpm db:verify-auth` — all five now work locally,
+  including OTP login and the admin user API, because the local stack has a
+  real `auth` schema and GoTrue service (unlike bare Postgres).
+- **The hosted Supabase project is the live customer database.** `DATABASE_URL`
+  uses the Supabase session pooler (`aws-1-ap-south-1.pooler...`), not the
+  direct `db.*.supabase.co` host (that's IPv6-only and unreachable here).
   Project ref `mjptydjrsezqvbrlwooz`, Mumbai region. The password contains `@`,
-  URL-encoded as `%40`.
-- **`.env` is gitignored — never commit it.** Secret key is server-only;
-  `NEXT_PUBLIC_`/`EXPO_PUBLIC_` prefixes are the browser-exposure boundary.
+  URL-encoded as `%40`. Only touch it for the release pipeline (the
+  `blm-cloud-release` branch, see below) or deliberate one-off debugging —
+  never for day-to-day dev, seeding, or destructive scripts.
+- **`apps/web/lib/env.ts` is the single DB-access gate.** Every Supabase client
+  construction goes through `getSupabaseEnv()`/`getSupabasePublicEnv()`. It
+  throws if a Vercel production deploy is pointed at a local URL, and throws if
+  local dev (no `VERCEL` env var) is pointed at the hosted project unless
+  `ALLOW_PROD_DB_FROM_LOCAL=true` is set. Don't bypass it by reading
+  `process.env.NEXT_PUBLIC_SUPABASE_URL` directly in new code.
+- **Live-DB migrations only happen on push to `blm-cloud-release`**, via
+  `.github/workflows/release.yml` (`PROD_DATABASE_URL` secret, gated behind a
+  `production` GitHub Environment). Regular `ci.yml` on `main`/PRs never
+  touches the hosted database. To clone real hosted data into the local stack,
+  run `packages/db/scripts/clone-remote-to-local.sh` deliberately (never
+  automatic) — see [docs/ENVIRONMENT_CHANGES.md](../../../docs/ENVIRONMENT_CHANGES.md).
+- **`.env`/`.env.local`/`.env.hosted` are gitignored — never commit them.**
+  Secret key is server-only; `NEXT_PUBLIC_`/`EXPO_PUBLIC_` prefixes are the
+  browser-exposure boundary.
 
 ## Architecture rules (do not violate)
+
+**Golden tenant CRUD policy:** Before creating, changing, reviewing, or debugging
+any database read or mutation, read and follow
+`../tenant-secure-crud/SKILL.md`. Its access path, schema/RLS requirements,
+delete semantics, and verification checklist are release-blocking requirements
+for all future work.
+
+**Golden list framework policy:** Before creating or changing any record list,
+read and follow `../list-framework/SKILL.md`. Its permission-aware built-in
+creation, selection-level commands, tabs, and opaque component-local reload
+contract are mandatory on web and native list renderers.
 
 **Multi-tenancy = one Postgres, isolated by `factory_id`, enforced by RLS.**
 - Every domain table carries `factory_id` (indexed) and gets an RLS policy **in the
@@ -151,16 +199,44 @@ needs **≥ 20.19.4**, and the machine's default is older.
   The **admin** client (secret key, bypasses RLS) is ONLY for auth-side work:
   create login, ban/unban, delete login. Never use it to read/write tenant tables.
 
-**Access = role ∩ entitlement, registered once in `apps/web/lib/roles.ts`.**
-- `MODULES` is the single source of truth: each entry has `roles` (who sees it) and
-  an `entitlement` key (which sellable bundle the factory must own). Nav, pages, and
-  server actions all gate on this. **Never inline role checks in pages** — add/adjust
-  the registry instead.
-- Roles: `owner` (everything incl. user management), `manager` (everything except
-  users), `collector` (weighings entry + their own records only). Pages call
-  `requireProfile(allowedRoles)`; it also redirects deactivated/orphaned users.
+**Access = base role ∩ entitlement ∩ optional custom-role permissions, registered
+once in `apps/web/lib/roles.ts`.**
+- **Base roles** (`Role` type, the ceiling RLS actually trusts): `owner`,
+  `manager`, `supervisor`, `accountant`, `collector` (web-facing today), plus
+  `supplier`/`driver` reserved for the Phase 2 field app. `owner` always has
+  full access and is never gated further.
+- `MODULES` (sidebar/nav) and `PAGE_DEFINITIONS` (every concrete dashboard
+  route) each declare the base `roles` allowed to reach them — this is the hard
+  ceiling. `roleMayPerformPageAction(role, pageDef, action)` derives the max
+  CRUD action a base role may ever perform on a page (e.g. `supervisor`/
+  `accountant`/`collector` can never `delete`). **Never inline role checks in
+  pages** — add/adjust the registry instead.
+- **Custom factory roles narrow, never widen, that ceiling.** Owners create
+  named roles in *Roles & permissions* (`access_roles`, one of
+  `CUSTOMIZABLE_BASE_ROLES` as `baseRole`) and pick exact per-page `can_view/
+  create/update/delete` in `role_page_permissions`. A user with an
+  `access_role_id` is checked against that explicit row first; a user without
+  one falls back to the base-role defaults in `PAGE_DEFINITIONS`/`MODULES`
+  (and the older `module_permissions` override table). New roles start with
+  **zero page access** — the owner must grant pages explicitly.
+- Gate helpers in `apps/web/lib/profile.ts`, pick the narrowest one that fits:
+  `requireProfile(allowedRoles)` (static role list, redirects deactivated/
+  orphaned users), `requirePageAccess(pageKey)` (view-only, honors custom-role
+  rows), `requirePagePermission(pageKey, action)` (view + specific CRUD action,
+  fail-closed), `requireModuleAccess(moduleKey)` / `requireModuleRole(moduleKey,
+  roles)` (module-level, for actions that don't map to a single page).
 - Entitlement enforcement code lands in M11, but **every module must declare its
   entitlement key from day one** so flipping enforcement on is trivial.
+
+**Personal settings & staff directory (`/dashboard/settings`, `user_profiles`).**
+- Private employment data (national ID, DOB, address, emergency contact,
+  employee number, job title, qualifications, notes, etc.) lives in
+  `user_profiles`, deliberately **separate from `users`** so the factory-wide
+  account list never exposes it. Each user self-edits their own row and opts in
+  (`visible_to_colleagues`) to being shown in the staff directory list.
+- Every signed-in role (`ALL_WEB_ROLES`) reaches `/dashboard/settings` to manage
+  their own login (username/password) and personal profile; only `owner` also
+  edits factory branding there.
 
 **Data conventions:**
 - `numeric` for ALL money and weight columns — never `real`.
@@ -170,7 +246,7 @@ needs **≥ 20.19.4**, and the machine's default is older.
 - Auction number formatting:
   - dispatch numbers are 4 digits (`0004`);
   - invoice and lot numbers are 4 digits when numeric (`0951`);
-  - auction sale / target sale numbers are 3 digits (`019`);
+  - auction sale / target sale numbers are 4 digits (`0019`);
   - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
     invoice, and lot numbers.
 - Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.
@@ -195,11 +271,78 @@ needs **≥ 20.19.4**, and the machine's default is older.
   and manual transitions must enforce the same behavior.
 
 **UI conventions:**
-- Lists use `useListControls`, `SortButton`, and `ListSearchPanel`. Do not add
-  inline filter rows under table headers.
+- Shared React primitives live in `apps/web/components/ui`: `AppButton`,
+  `AppNavLink`, and `AppDrawer`. Domain pages compose these primitives rather
+  than copying button/navigation/drawer class strings. Confirmation, feedback,
+  and list primitives remain in their dedicated shared components.
+- Web screens use `EntityList`; Expo screens use `NativeEntityList`. The
+  low-level list hooks are adapter internals, not page APIs. Do not add inline
+  filter rows under table headers.
 - Search panels expose all meaningful columns and keep advanced search available.
+- Every web list implementation uses `apps/web/components/entity-list.tsx`:
+  declare columns, selection mode, editability, commands, totals/footers, tabs,
+  and ordinary linked side panels in one definition. The top-level `render`
+  escape is limited to genuine workflow and matrix screens. This is mandatory
+  even for read-only tables and record selectors.
+- Creation belongs to the list frame: `onCreate` opts into the built-in `+ New`,
+  `canCreate`/`createDisabledReason` reflect real permissions, and
+  `ListCreatePanel` stays inside the list. Do not add a detached page, side form,
+  row action, or duplicate toolbar Add control for ordinary list creation.
+- CRUD list rows give `EntityList` an opaque resource from the server-only read
+  registry. Never call `useFrameworkListData` in a page, create a refresh action
+  per entity, or let the client choose a table/query. Ordinary CRUD refreshes
+  matching mounted list components, not the route or browser.
 - Sale overviews grouped by `target_sale_no` must show all brokers participating
   in that auction sale, because multiple brokers can sell tea in the same sale.
+- The dashboard sidebar uses drill-in sections, not expanding dropdown trees:
+  root shows standalone destinations plus handling sections; selecting a section
+  shows only its emphasized destination rows and a compact `Overview` back link.
+  Remove generic sidebar labels such as `SECTION`, and keep the section name
+  visually subordinate to its destinations. Use Next.js `Link`
+  for destinations and buttons only for local section/menu state.
+- Every non-overview page gets the shared linked breadcrumb `Overview / section /
+  current page`; do not duplicate it with page-specific back links.
+- Dashboard pages are top-left oriented and use the full available viewport width;
+  never reintroduce a centered global max-width. Desktop selector/record side
+  panels float inside page padding with rounded corners/elevation, stretch through
+  the available viewport height without hitting the bottom, and scroll only their
+  inner list body.
+- List headers expose an always-visible LOV select for every `ColumnDef` with an
+  accessor; omit the accessor only when an attribute is explicitly non-searchable.
+  Do not use a Google-style general search box. Advanced syntax appears only after
+  selecting `Advanced`, in a fixed viewport panel with its own max-height/scroll so
+  table overflow containers cannot clip it. List Search panels use the native
+  Popover API so Search/Clear and outside-click dismissal are consistent.
+- Search criteria stay collapsed by default and LOV changes do not filter until
+  the explicit `Search` action is selected.
+- Editable operational lists default to multi-select: leading row checkboxes plus
+  top-toolbar Edit and domain actions, never repeated row text actions. Edit accepts
+  exactly one selected row; compatible state actions may accept many. When framework
+  config explicitly sets `selectionMode: "single"`, omit checkboxes/bulk controls
+  and show edit only for the current row.
+- Related list work surfaces use `EntityList.tabs` for one partitioned resource
+  and `EntityListTabs` for independent lists rather than stacking dense tables.
+  Each tab preserves its own list controls; top tabs are keyboard navigable with
+  arrows and Home/End.
+- Appearance lives in the bottom `Settings` menu with explicit System, Light, and
+  Dark choices. New user preferences should extend this menu rather than adding
+  scattered shell buttons.
+- Every interactive action needs immediate acknowledgement through the shared
+  dashboard action-feedback layer: navigation shows Opening, forms/server
+  actions show Working, settings show Updating, and route completion shows Page
+  ready. Do not add silent new buttons or links; opt out only for decorative
+  controls with `data-action-feedback-ignore`.
+- Completed work/notices use green bottom-right toasts and failures use red
+  bottom-right toasts. Browser alerts and confirms are forbidden: consequential
+  actions use the shared `ConfirmationDialog` or `ConfirmSubmitButton` instead.
+- Navigation must also trigger the shared animated gradient progress bar. Links
+  are automatic; call `startNavigationFeedback()` before any direct
+  `router.push` or `router.replace` implementation.
+- The navigation control itself carries the shared animated gradient pending
+  state until its destination is ready; keep the top-right status message as
+  secondary confirmation rather than the primary loading indicator.
+- Dashboard charts must use `resolvedTheme`, remain legible in light and dark
+  modes, and show an explicit zero-data message instead of an empty plot.
 
 ## Domain cheat-sheet
 
@@ -229,8 +372,9 @@ Production pipeline (what each ERP stage records — full detail in PRODUCT.md):
    `factory_id` + index. Generate a migration AND add the RLS policy in it.
 2. **Routes:** `apps/web/app/dashboard/<module>/` with `page.tsx` + `actions.ts`
    (forms colocated). Every server action starts with `requireProfile([...roles])`.
-3. **Register** the module in `apps/web/lib/roles.ts` `MODULES` with its `roles` and
-   `entitlement` key.
+3. **Register** the module in `apps/web/lib/roles.ts`: add it to `MODULES` with its
+   `roles` and `entitlement` key, and add a `PAGE_DEFINITIONS` entry (via `page(...)`)
+   per concrete route so owners can grant/narrow custom-role permissions to it.
 4. **Gate** in MILESTONES.md with a concrete verification step; keep `db:verify-rls`
    passing.
 
@@ -264,10 +408,85 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
 - **Commit/PR only when the user asks.** Branch per change (e.g. `feat/m6-payments`);
   the user reviews via PR. `gh` CLI isn't installed — use the GitHub API with stored
   git credentials, or ask the user.
-- **Verify before claiming done:** type-check + the relevant `db:verify-*` gate +,
-  for UI, a `preview_*` walk-through. Clean up any test rows you create in the real
-  Supabase DB.
+- **Verify before claiming done:** type-check + lint + the relevant `db:verify-*`
+  gate +, for UI, a `preview_*` walk-through. Clean up any test rows you create in the
+  real Supabase DB.
 - **Keep the docs in lockstep.** A scope/ordering change means editing MILESTONES.md
   and PRODUCT.md (and this skill) in the same breath, plus the project memory file.
 - Known open items: confirm the real **payment formula** with the factory before M6;
   dashboard timestamps currently render in UTC, not Asia/Colombo (tracked separately).
+
+## Common gotchas & lessons learned
+
+These are mistakes that have burned us in PRs/CI. Read them before writing code.
+
+### Next.js App Router — client components
+
+- **`usePathname()` returns `string | null`.** It can be `null` during SSR or in
+  loading boundaries. Always write `usePathname() ?? ""` before calling
+  `.startsWith()` or other string methods — a null pathname will throw.
+- **Never use raw `<a>` for internal navigation.** Next.js lint
+  (`@next/next/no-html-link-for-pages`) forbids `<a href="/dashboard/...">`.
+  Always use `<Link>` from `next/link` instead. The CI `pnpm turbo lint` step is a
+  hard gate — raw `<a>` tags will fail the build.
+- **Server→client props are new references.** When a server component filters
+  `MODULES.filter(...)` and passes the result to a client component, that array is
+  a fresh reference on every SSR render. Never put it directly in a `useEffect`
+  dependency array — extract the derived value you actually care about via
+  `useMemo` and depend on that. Otherwise you get infinite re-render loops.
+- **`usePathname()` for section highlighting in sidebars:** compute active groups
+  with `useMemo`, sync expanded state with `useEffect` depending only on that
+  memoized value. The `useState` initializer should mirror the same logic so the
+  first render is correct (no flash of closed sections).
+
+### Supabase / Postgres — RPC & migrations
+
+- **RPC: TABLE returns an array.** When a Postgres function uses
+  `RETURNS TABLE(col type, ...)`, `supabase.rpc()` puts the rows in `data` as an
+  **array**. Access `data[0]` for a single-row result. Treating `data` as the
+  object directly (e.g., `data.approved`) will be `undefined` and cause silent
+  failures or "Cannot read properties of undefined".
+- **Hand-written migrations need manual tracking.** If you author a `.sql` file
+  by hand (not via `drizzle-kit generate`), you must also:
+  1. Add an entry to `packages/db/drizzle/meta/_journal.json` (increment `idx`,
+     set a `when` timestamp, and the `tag` matching the filename).
+  2. After applying the migration, insert a record into
+     `drizzle.__drizzle_migrations` so drizzle-kit doesn't try to re-apply it.
+     The `created_at` column is `bigint` (epoch ms), not a timestamp.
+  3. Use the `postgres` npm package (already a dependency of `packages/db`) to
+     run the SQL — `pg` is not installed separately.
+- **`pnpm install` before `db:migrate`.** If `packages/db/node_modules` is
+  missing, `db:migrate` will exit code 1 without a clear error. Run
+  `pnpm install` from the repo root first.
+- **`db:migrate` needs `.env` sourced:**
+  ```bash
+  cd ~/Desktop/board-leaf-project && set -a; . ./.env; set +a
+  ```
+
+### PostgreSQL functions — state machines & atomicity
+
+- **Always enforce state machines at the DB level.** A `CHECK` constraint only
+  validates the *domain* of values, not valid *transitions*. Add a `BEFORE UPDATE`
+  trigger that compares `OLD.status` with `NEW.status` and raises on invalid
+  transitions. This is defense-in-depth — even admin-client writes (bypassing RLS)
+  cannot skip the state machine.
+- **Atomic approve/update flows should live in a PG function.** Multi-step
+  app-code flows (read → check → insert → update) have TOCTOU race conditions
+  even with `.eq("status", "pending")` guards because the read and write aren't
+  in the same transaction. Wrap them in a single `LANGUAGE plpgsql` function
+  using `SELECT ... FOR UPDATE` to lock the row. Call it via `supabase.rpc()`.
+- **`SECURITY DEFINER` functions need `SET search_path = public`.** Otherwise
+  they're vulnerable to search-path injection. Every `SECURITY DEFINER` function
+  in this repo already follows this pattern — copy the existing ones.
+
+### CI pipeline
+
+- The CI runs **`pnpm turbo lint`** and **`pnpm turbo typecheck`** as hard gates.
+  Both must pass. Lint uses `next lint` which enforces `<Link>` usage, unused
+  variable checks, and other Next.js-specific rules.
+- **Run both locally before pushing:**
+  ```bash
+  pnpm turbo lint && pnpm turbo typecheck
+  ```
+- If `apps/web/.next` has stale type caches after deleting route folders, clear
+  it: `rm -rf apps/web/.next`.

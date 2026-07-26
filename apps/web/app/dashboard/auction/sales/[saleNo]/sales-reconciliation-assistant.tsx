@@ -1,5 +1,6 @@
 "use client";
 
+import { FileText, Upload } from "lucide-react";
 import { useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
@@ -48,17 +49,15 @@ export function SalesReconciliationAssistant({
 
   return (
     <>
-      <div className="flex justify-end">
-        <AppButton
-          type="button"
-          size="sm"
-          onClick={() => setOpen(true)}
-          className="rounded-full"
-        >
-          <DocumentIcon />
-          Document reconciliation
-        </AppButton>
-      </div>
+      <AppButton
+        type="button"
+        size="sm"
+        onClick={() => setOpen(true)}
+        className="rounded-full"
+      >
+        <FileText aria-hidden="true" className="h-4 w-4" />
+        Document reconciliation
+      </AppButton>
 
       <AppDrawer open={open} title="Document reconciliation" description={`Sale ${saleNo} · ${groups.length} broker${groups.length === 1 ? "" : "s"}`} onClose={() => setOpen(false)}>
               <div className="grid gap-4">
@@ -82,7 +81,7 @@ export function SalesReconciliationAssistant({
                               htmlFor={inputId}
                               className="inline-flex h-10 min-w-40 cursor-pointer items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-green-50 hover:text-green-800 hover:border-green-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300 dark:hover:border-green-700"
                             >
-                              <UploadIcon />
+                              <Upload aria-hidden="true" className="h-4 w-4" />
                               {doc.title}
                             </label>
                             <SubmitButton
@@ -100,21 +99,5 @@ export function SalesReconciliationAssistant({
               </div>
       </AppDrawer>
     </>
-  );
-}
-
-function DocumentIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.378 2H4.5Zm6.75 1.5v3.25h3.25L11.25 3.5ZM6.75 10a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Zm0 3a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
-function UploadIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path fillRule="evenodd" d="M4 4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-5.2L9.6 4.8A2 2 0 0 0 8.2 4H4Zm6 5.75a.75.75 0 0 1 1.5 0v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5H7.5a.75.75 0 0 1 0-1.5H10v-2.5Z" clipRule="evenodd" />
-    </svg>
   );
 }

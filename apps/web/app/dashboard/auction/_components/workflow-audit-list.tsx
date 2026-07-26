@@ -27,17 +27,20 @@ const LIST: ListDefinition<AuditListRow> = { columns: COLUMNS, selectionMode: "s
 
 export function WorkflowAuditList({
   rows,
+  scope,
   title = "Decision audit",
   description = "Select and search recorded workflow decisions.",
 }: {
   rows: WorkflowAuditRow[];
+  /** Distinct per host page: this list is reused on unrelated screens, and a shared scope would cross-contaminate their saved searches and locks. */
+  scope: string;
   title?: string;
   description?: string;
 }) {
   const listRows = rows.map((row, index) => ({ ...row, id: `${row.createdAt}:${row.action}:${index}` }));
   return (
     <EntityList
-      scope="workflow-audit"
+      scope={scope}
       initialRows={listRows}
       definition={LIST}
       getId={(row) => row.id}

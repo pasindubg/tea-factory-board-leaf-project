@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
@@ -126,6 +127,12 @@ export default async function AckReviewPage({
     ["Weight mismatches", s.weightMismatches, "bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300"],
   ];
 
+  const [visibleRows, visibleOrphans, visibleAudit] = await Promise.all([
+    applyServerListSearch(supabase, profile, "acknowledgement-reconciliation", rows),
+    applyServerListSearch(supabase, profile, "acknowledgement-orphan-resolver", orphans),
+    applyServerListSearch(supabase, profile, "workflow-audit-ack", audit),
+  ]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -183,9 +190,9 @@ export default async function AckReviewPage({
       </div>
 
       {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
-      <ComparePanel saleId={saleId} orphans={orphans} candidates={candidates} audit={audit} />
+      <ComparePanel saleId={saleId} orphans={visibleOrphans} candidates={candidates} audit={visibleAudit} />
 
-      <ReconTable rows={rows} warningInvoiceNos={warningInvoiceNos} />
+      <ReconTable rows={visibleRows} warningInvoiceNos={warningInvoiceNos} />
 
       {!confirmed && (
         <div className="flex gap-3">

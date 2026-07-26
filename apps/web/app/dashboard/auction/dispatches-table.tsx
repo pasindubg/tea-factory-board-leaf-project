@@ -158,9 +158,9 @@ export function DispatchesTable({
             (maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0),
             0,
           );
-          const nextDispatchNo = formatFourDigitNo(
+          const nextDispatchNo = `BI${formatFourDigitNo(
             Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1),
-          );
+          )}`;
           return (
             <NewDispatchForm
               {...creation}

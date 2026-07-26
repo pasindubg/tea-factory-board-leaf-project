@@ -123,9 +123,12 @@ List pages and list sections must use one consistent search pattern.
 - Keep the search surface collapsed by default. LOV selections are drafts until
   the user selects the explicit `Search` action; only then update the visible rows.
 - Creation is owned by `ListSurface`: providing `onCreate` displays its built-in
-  `+ New` button, while `canCreate` and `createDisabledReason` express the real
-  permission. Open `ListCreatePanel` inside that same list. Do not duplicate New
-  in the page header, command toolbar, row, or a persistent adjacent form.
+  icon-only `+` as the leftmost list-toolbar command, while `canCreate` and
+  `createDisabledReason` express the real permission. Open `ListCreatePanel`
+  inside that same list. Do not duplicate New in a page header, row, or a
+  persistent adjacent form.
+- Do not show instructional selection copy such as “Select rows to manage
+  records”. Show the selected count only after the user has selected records.
 - Editable lists use a selection toolbar above the list. Multi-select lists show a
   leading checkbox column and top-level Edit plus domain actions such as Deactivate
   and Reactivate; do not repeat text actions on every row. Edit requires exactly
@@ -163,7 +166,38 @@ Auction identifiers are similar but not interchangeable.
 
 Detail pages are operational work surfaces. Keep the user anchored on the record they are editing or reviewing.
 
-- Put the record title, identifying metadata, and current state machine in the header row. The state machine belongs on the top right on desktop and may wrap below the title on narrow screens.
+- Use `DetailWorkspace` from
+  `apps/web/components/detail-workspace.tsx` as the common detail-page shell.
+  It owns the responsive record rail, page header, command order, state
+  indicator, and main content slot. Page modules provide typed lifecycle steps,
+  domain commands, and tenant-safe entity actions; the shared component must
+  never infer a table, tenant, permission, or server mutation.
+- Invoice Details, physical Dispatch Details, and Sale Details are the reference
+  adapters. Their route modules retain domain data mapping and permissions while
+  the shared shell owns the repeated rail, header, lifecycle, and record-panel
+  presentation.
+- The shared detail header keeps commands together on the left in this order:
+  `+ New`, `Search`, `State`, `Delete`, then optional page-specific commands.
+  Keep the compact current-state indicator on the right. On narrow screens both
+  groups may wrap, but their order and semantics must remain unchanged.
+- `State` opens a compact list of the page adapter's allowed lifecycle commands;
+  use direct command labels and do not explain transitions inside the menu. The
+  compact current-state indicator shows the active step and operational metric,
+  then expands on pointer hover or keyboard focus to reveal the full lifecycle.
+  Lifecycle availability remains domain-specific and must also be enforced by
+  the server action.
+- Supply deletion to `DetailWorkspace` as an entity-specific typed callback.
+  The common shell owns the dustbin command and shared confirmation dialog;
+  authorization, tenant scoping, dependency checks, and the destination after a
+  successful delete remain in the page's domain adapter.
+- Use `DetailRecordPanel`, `DetailField`, and `DetailEmptyPanel` for the common
+  details-group structure. Keep the unique form and related `EntityList`
+  content in page-specific children so later detail-page migrations require
+  adapters instead of copied shells.
+- Detail workspaces include a shared header control to collapse or restore the
+  record rail. `DetailRecordPanel` groups are expandable by default and provide
+  their own accessible collapse control, so dense details can be reduced without
+  losing the record context or page-specific actions.
 - Lifecycle cards should show useful operational metrics instead of decorative step numbers: issue count, re-print count, sold/total, prompt date, or pending document state.
 - Keep field editing inside the main details group. Use a compact edit icon in the group header; avoid detached page-level edit buttons.
 - Move dense record metadata into a compact side panel when the main page task is table-heavy. The main column should carry the active work surface; the side panel should carry facts, actions, and owner-only edit controls.

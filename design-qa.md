@@ -1,77 +1,115 @@
-# Invoice Details redesign QA
+# Shared detail-workspace framework QA
 
 - Source visual truth: `/var/folders/r7/tyhnvynn76l_21dhr7ncs04r0000gn/T/codex-clipboard-a8f15095-9551-4882-a595-a868bda95424.png`
-- Browser-rendered implementation: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-state-expanded.png`
-- Combined comparison: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-state-design-comparison.png`
+- Browser-rendered implementation: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-framework-final-2026-07-20.png`
+- Full-view comparison evidence: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-framework-comparison-2026-07-20.png`
+- Focused header comparison evidence: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-header-comparison-2026-07-20.png`
 - Route: `http://localhost:3000/dashboard/auction/c1399b49-a284-4c55-94fe-496f05174146`
-- Viewport: `1654 × 958`, DPR 1
-- State: existing draft broker invoice 0016, state command group expanded, dark theme
+- Comparison viewport: `1774 × 1240`
+- State: existing draft broker invoice 0016, dark theme, no transient panel open
 
 ## Findings
 
 No actionable P0, P1, or P2 findings remain.
 
-- Layout and spacing: the invoice overview stays in the left work column, Invoice Details is the first main content group, and Lot invoices is directly below it. Search and New share one command row on both lists. The state machine is a compact top-right indicator rather than four persistent cards.
-- Fonts and typography: the existing Tea Factory Ops type scale, weights, uppercase field labels, and tabular invoice numbers are applied consistently. Labels and values remain readable at the source viewport.
-- Colors and visual tokens: the implementation intentionally maps the grey wireframe to the product's established stone, green, blue, and semantic-state tokens.
-- Image quality and assets: the wireframe contains no product imagery to reproduce. The existing factory logo asset is preserved; no placeholder or generated image substitutes were introduced.
-- Copy and content: labels are operationally specific, required fields are visibly marked, and create-mode guidance explains that lot rows become available after the invoice is saved.
-- Accessibility and responsiveness: controls use semantic buttons, labeled inputs, visible focus styles, and practical tap targets. At `390 × 844`, the page reported no document-level horizontal overflow.
+- Fonts and typography: the implementation uses the existing Tea Factory Ops
+  font stack, weights, uppercase field labels, and compact operational hierarchy.
+  The source is a low-fidelity wireframe, so production typography intentionally
+  follows the product tokens rather than the wireframe's default drawing font.
+- Spacing and layout rhythm: the record rail, page command header, Invoice
+  Details group, and Lot invoices group preserve the source's hierarchy. Header
+  commands are ordered `+`, Search, State, Delete on the left, while the compact
+  state indicator remains at the right edge.
+- Colors and visual tokens: the wireframe's neutral blocks are mapped to the
+  existing white/stone/green Tea Factory Ops surfaces. Red is reserved for the
+  destructive Delete command and blue remains the state-progress accent.
+- Image quality and asset fidelity: no illustrative source assets were required.
+  The existing factory logo remains unchanged, and all new command artwork uses
+  the installed Lucide icon family rather than text glyphs or hand-drawn SVGs.
+- Copy and content: page-specific labels remain operationally explicit:
+  `New invoice`, `Confirm broker invoice`, `Record GRN`, and
+  `Delete broker invoice`.
+- Icons and affordances: New, Search, State, Delete, Edit, and lifecycle
+  affordances use consistent icon weight, practical target sizes, and visible
+  keyboard focus.
+- Responsiveness: at `900 × 1000` the shell stacks without horizontal overflow;
+  at `390 × 844` commands wrap in source order, the indicator follows them, and
+  document width remains within the viewport.
+- Accessibility: State exposes `aria-expanded`, `aria-controls`, a semantic menu,
+  first-enabled-command focus, arrow/Home/End navigation, and Escape focus
+  restoration. Delete uses the shared semantic confirmation dialog. The state
+  sequence expands on both pointer hover and keyboard focus.
 
-## Full-view comparison evidence
+## Interaction evidence
 
-The combined comparison confirms the intended information architecture: overview list at left; state/progress and Invoice Details at the top of the main work area; related lot list below. The implementation retains the application's persistent navigation and converts the wireframe's placeholder blocks into existing production components.
-
-## Focused region comparison evidence
-
-- New invoice state: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-details-new-inline.png`
-  - The main detail card becomes an inline empty invoice form without changing the two-column workspace.
-  - Cancel and the primary `Save new invoice` action stay at the top.
-- New lot state: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-details-new-lot-inline.png`
-  - The list inserts one editable table row with typed/selectable values.
-  - Cancel and Save remain in the list command row; no dialog or detached panel opens.
-- Edit invoice state: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-details-edit-top-save.png`
-  - Editable fields remain inside the same Invoice Details card.
-  - `Save changes` is visible in the top action area.
-- State machine collapsed: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-state-collapsed.png`
-  - The top-right indicator shows the current state, current metric, and compact progress bar.
-- State machine expanded: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-state-expanded.png`
-  - Hover or keyboard focus reveals Draft, Invoiced, GRN, and Catalogued with their metrics.
-  - The next valid transition exposes its command in context; the tested draft state offers `Confirm`.
+- State command group:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-state-menu-2026-07-20.png`
+- Expanded state indicator:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-state-indicator-2026-07-20.png`
+- Delete confirmation:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-delete-confirmation-2026-07-20.png`
+- Inline invoice creation:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-new-inline-2026-07-20.png`
+- Inline lot creation:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-lot-inline-2026-07-20.png`
+- Tablet layout:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-tablet-2026-07-20.png`
+- Mobile layout:
+  `/Users/pasindu/Desktop/board-leaf-project/.artifacts/detail-workspace-mobile-2026-07-20.png`
 
 ## Comparison history
 
-### Pass 1
+### Iteration 1
 
-- Finding: P2 spacing/readability — horizontal label/value pairs compressed the selling mark and editable fields at the source-sized viewport.
-- Fix: changed detail values and edit controls to a stacked label/value rhythm within the existing four-column grid.
-- Post-fix evidence: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-details-redesign-final2-1654x958.png`
-- Result: the selling mark is fully readable, field alignment is consistent, and no new overflow was introduced.
+- [P2] State and Delete clicks triggered generic global messages such as
+  `State selected` and `Delete selected` even though those controls already
+  opened a visible menu or confirmation.
+- Fix: marked the shared detail commands and confirmation-dialog controls as
+  self-reporting actions so the global fallback does not duplicate their
+  feedback.
+- Post-fix evidence: the State menu and Delete confirmation open with no
+  temporary status message; the final screenshot and focused header comparison
+  show the clean header state.
 
-### Pass 2
+### Iteration 2
 
-- No remaining P0, P1, or P2 differences.
-- Primary interactions tested without persisting data: open/cancel New invoice, open/cancel New lot, open/cancel Edit invoice.
-- Browser console errors checked: none.
-- Responsive check: `390 × 844`, no document-level horizontal overflow.
+- [P2] The first framework draft nested a second `<main>` landmark inside the
+  dashboard's existing `<main>`, which would make landmark navigation ambiguous
+  for assistive technology.
+- Fix: changed the framework content slot to a neutral
+  `data-detail-workspace-body` container while retaining the same grid placement
+  and visual layout.
+- Post-fix evidence: the rendered page contains one workspace body and zero
+  nested `main main` landmarks; visual comparison is unchanged.
 
-### Pass 3
+### Iteration 3
 
-- Finding from user review: P1 state-machine mismatch — four persistent status boxes did not match the compact top-right indicator and expanding command group in the reference.
-- Fix: replaced the boxes and detached confirmation action with one top-right state indicator. It shows the active state and metric when collapsed, then reveals the full state sequence and valid transition commands on hover or keyboard focus.
-- Post-fix evidence: `/Users/pasindu/Desktop/board-leaf-project/.artifacts/invoice-state-expanded.png`
-- Fresh browser-console window after restarting the local preview: no errors.
-- Result: no remaining P0, P1, or P2 differences.
+- Recompared the revised desktop render against the source in the full-view and
+  focused-header composites. No actionable P0, P1, or P2 differences remained.
+
+## Verification
+
+- Web TypeScript typecheck: passed
+- Monorepo TypeScript typecheck: passed
+- Web and monorepo lint: passed with no warnings or errors
+- Vitest: 6 files, 45 tests passed
+- Browser console: no warnings or errors
+- Primary interactions tested without persisting or deleting data: header order,
+  Search open/apply, State open/Escape, keyboard focus restoration, current-state
+  expansion, Delete open/cancel, inline New invoice open/cancel, inline Edit
+  open/cancel, and inline New lot open/cancel
 
 ## Implementation checklist
 
-- [x] Keep Invoice Details above the lot list.
-- [x] Place Search and New in the same list command row.
-- [x] Create lot attributes in an inline editable row.
-- [x] Open new invoice fields inside the existing detail group.
-- [x] Keep clear Save actions at the top of create and edit states.
-- [x] Use a compact top-right state indicator with an expanding state command group.
-- [x] Preserve tenant-safe server actions and existing dispatch validation.
-- [x] Verify type checking, lint, tests, interactions, responsive overflow, and browser console.
+- [x] Extract the record rail, header, command order, responsive grid, state
+  indicator, state command menu, and delete confirmation into one typed framework.
+- [x] Keep entity permissions, tenant-scoped mutations, transitions, forms, and
+  related lists in page-specific adapters.
+- [x] Put New before Search and keep State in the left command group.
+- [x] Add the dustbin Delete command to eligible detail headers.
+- [x] Preserve the compact current-state indicator on the right.
+- [x] Preserve inline invoice create/edit and inline lot creation.
+- [x] Document the migration contract for later detail pages.
+- [x] Add lifecycle model tests to the normal web test suite.
 
 final result: passed

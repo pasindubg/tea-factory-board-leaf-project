@@ -231,7 +231,7 @@ export async function nextDispatchNo(supabase: Supa): Promise<string> {
     const match = (row.sale_no as string | null)?.match(/\d+$/);
     return match ? Math.max(max, Number(match[0])) : max;
   }, 0);
-  return formatFourDigitNo(maxNo + 1);
+  return `BI${formatFourDigitNo(maxNo + 1)}`;
 }
 
 // Resolve (or create) a dispatch by sale number for the report-analyser auto flow.

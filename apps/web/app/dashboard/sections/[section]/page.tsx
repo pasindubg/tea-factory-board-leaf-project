@@ -14,6 +14,7 @@ export default async function HandlingSectionPage({ params }: { params: Promise<
   const overrideMap = Object.fromEntries((overrides ?? []).map((row) => [row.module_key, row.allowed_roles as string[]]));
   const modules = MODULES.filter((module) => {
     if (module.group !== group) return false;
+    if (module.visibleInNavigation === false) return false;
     if (profile.role === "owner") return true;
     return (overrideMap[module.key] ?? [...module.roles]).includes(profile.role as Role);
   });

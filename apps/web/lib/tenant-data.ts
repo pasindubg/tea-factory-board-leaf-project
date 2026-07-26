@@ -21,6 +21,8 @@ const FACTORY_SCOPED_TABLES = new Set([
   "buyers",
   "collectors",
   "doc_imports",
+  "list_search_locks",
+  "list_search_states",
   "lot_invoices",
   "marks",
   "module_permissions",
