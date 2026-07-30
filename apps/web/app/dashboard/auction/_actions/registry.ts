@@ -5,7 +5,8 @@ import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/pr
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, gradeAliasKey, type Supa } from "./_shared";
+import { AUC, str, gradeAliasKey, colomboToday, type Supa } from "./_shared";
+import { CATEGORY_LETTER, type InvoiceCategory } from "../invoice-number";
 
 // ---------- Registry: brokers & marks ----------
 export async function createBroker(formData: FormData): Promise<ListMutationResult> {
@@ -210,6 +211,8 @@ export async function createAuctionGrade(formData: FormData): Promise<ListMutati
   const code = str(formData.get("code")).toUpperCase();
   const name = str(formData.get("name")) || code;
   const sortOrder = Number(str(formData.get("sort_order")) || "0");
+  const sampleWeight = parseSampleWeight(formData);
+  const defaultKgPerBag = parseDefaultKgPerBag(formData);
   const aliases = parseGradeAliases(formData, code, name);
   if (!code) return { ok: false, error: "Grade code is required." };
   const aliasConflict = await ambiguousGradeAlias(supabase, profile.factory_id, aliases);
@@ -219,6 +222,8 @@ export async function createAuctionGrade(formData: FormData): Promise<ListMutati
     code,
     name,
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+    sample_weight: sampleWeight,
+    default_kg_per_bag: defaultKgPerBag,
     active: true,
   }).select("id").single();
   if (error) return { ok: false, error: friendlyError(error) };
@@ -244,6 +249,8 @@ export async function updateAuctionGrade(id: string, formData: FormData): Promis
   const code = str(formData.get("code")).toUpperCase();
   const name = str(formData.get("name")) || code;
   const sortOrder = Number(str(formData.get("sort_order")) || "0");
+  const sampleWeight = parseSampleWeight(formData);
+  const defaultKgPerBag = parseDefaultKgPerBag(formData);
   const active = formData.get("active") === "on";
   const aliases = parseGradeAliases(formData, code, name);
   if (!code) return { ok: false, error: "Grade code is required." };
@@ -264,6 +271,8 @@ export async function updateAuctionGrade(id: string, formData: FormData): Promis
       code,
       name,
       sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+      sample_weight: sampleWeight,
+      default_kg_per_bag: defaultKgPerBag,
       active,
     })
     .eq("id", id)
@@ -348,6 +357,20 @@ export async function updateAuctionWarehouse(id: string, formData: FormData): Pr
   return { ok: true, notice: "Warehouse updated." };
 }
 
+function parseSampleWeight(formData: FormData): number | null {
+  const raw = str(formData.get("sample_weight"));
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function parseDefaultKgPerBag(formData: FormData): number | null {
+  const raw = str(formData.get("default_kg_per_bag"));
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function parseGradeAliases(formData: FormData, code: string, name: string): string[] {
   const canonical = new Set([gradeAliasKey(code), gradeAliasKey(name)].filter(Boolean));
   return [
@@ -410,4 +433,74 @@ export async function saveBrokerGradeThreshold(formData: FormData): Promise<List
   if (error) return { ok: false, error: friendlyError(error) };
   revalidatePath(settings);
   return { ok: true, notice: "Threshold updated." };
+}
+
+// ---------- Invoice number prefixes ----------
+// Creating/activating a numbering "book" is supervisor and above; picking an
+// abnormal (non-active) prefix on an actual invoice is what routes lower
+// roles through the approval queue (see ../invoice-number.ts + prefix-approvals).
+const PREFIX_ADMIN_ROLES = ["owner", "manager", "supervisor"] as const;
+
+export async function createInvoicePrefix(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireProfile(PREFIX_ADMIN_ROLES);
+  const category = str(formData.get("category")) as InvoiceCategory;
+  if (category !== "broker_invoice" && category !== "regular_invoice") {
+    return { ok: false, error: "Pick a category." };
+  }
+  const { data: existing, error: existingError } = await supabase
+    .from("invoice_number_prefixes")
+    .select("prefix")
+    .eq("factory_id", profile.factory_id)
+    .eq("category", category);
+  if (existingError) return { ok: false, error: friendlyError(existingError) };
+  const maxCycle = (existing ?? []).reduce((max, row) => {
+    const match = String(row.prefix ?? "").match(/(\d{2})$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  const year = colomboToday().slice(2, 4);
+  const prefix = `${year}${CATEGORY_LETTER[category]}${String(maxCycle + 1).padStart(2, "0")}`;
+  const { error } = await supabase.from("invoice_number_prefixes").insert({
+    factory_id: profile.factory_id,
+    category,
+    prefix,
+    active: false,
+    created_by: profile.id,
+  });
+  if (error) return { ok: false, error: friendlyError(error) };
+  revalidatePath(`${AUC}/invoice-prefixes`);
+  return { ok: true, notice: `Prefix ${prefix} created. Activate it to start using it.`, invalidate: [
+    { kind: "exact", resource: { key: "auction.invoice-prefixes" } },
+  ] };
+}
+
+export async function activateInvoicePrefix(id: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireProfile(PREFIX_ADMIN_ROLES);
+  const { data: target, error: targetError } = await supabase
+    .from("invoice_number_prefixes")
+    .select("id, category")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (targetError) return { ok: false, error: friendlyError(targetError) };
+  if (!target) return { ok: false, error: "Unknown invoice number prefix." };
+
+  const { error: deactivateError } = await supabase
+    .from("invoice_number_prefixes")
+    .update({ active: false })
+    .eq("factory_id", profile.factory_id)
+    .eq("category", target.category as string)
+    .eq("active", true);
+  if (deactivateError) return { ok: false, error: friendlyError(deactivateError) };
+
+  const { error: activateError } = await supabase
+    .from("invoice_number_prefixes")
+    .update({ active: true, activated_by: profile.id, activated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (activateError) return { ok: false, error: friendlyError(activateError) };
+
+  revalidatePath(`${AUC}/invoice-prefixes`);
+  return { ok: true, notice: "Prefix activated.", invalidate: [
+    { kind: "exact", resource: { key: "auction.invoice-prefixes" } },
+  ] };
 }

@@ -10,6 +10,8 @@ export const ENTITY_LIST_METADATA: Record<ListResourceKey, { title: string; desc
   "auction.marks": { title: "Selling marks", description: "Factory selling marks used on broker invoices." },
   "auction.broker-rates": { title: "Broker rate cards", description: "Effective-dated deductions used for settlement calculations." },
   "auction.grades": { title: "Tea grades", description: "Canonical grade names and acknowledgement aliases." },
+  "auction.invoice-prefixes": { title: "Invoice number prefixes", description: "Numbering books for broker and regular invoices." },
+  "auction.prefix-approvals": { title: "Prefix approvals", description: "Abnormal invoice-number-prefix requests awaiting supervisor decision." },
   "auction.warehouses": { title: "Warehouses", description: "Physical locations used when grouping broker invoices for dispatch." },
   "auction.broker-grade-thresholds": { title: "Broker grade thresholds", description: "Minimum net weights that apply to each broker and grade." },
   "auction.sale-lines": { title: "Sale lines", description: "Lots and realised sale values for this auction sale." },

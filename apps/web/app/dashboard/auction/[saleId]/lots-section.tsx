@@ -2,12 +2,14 @@
 
 import { DispatchedLotsTable } from "./dispatched-lots-table";
 import type { LotRow } from "./lot-row";
+import type { InvoicePrefixOption } from "../invoice-number";
 
 export function LotsSection({
   rows,
   saleId,
   isOwner,
   grades,
+  lotPrefixes,
   canEdit,
   canAdd,
   soldLotIds,
@@ -17,7 +19,8 @@ export function LotsSection({
   rows: LotRow[];
   saleId: string;
   isOwner: boolean;
-  grades: { code: string; name: string }[];
+  grades: { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null }[];
+  lotPrefixes: InvoicePrefixOption[];
   canEdit: boolean;
   canAdd: boolean;
   soldLotIds: string[];
@@ -32,6 +35,7 @@ export function LotsSection({
       canEdit={canEdit}
       canAdd={canAdd}
       grades={grades}
+      lotPrefixes={lotPrefixes}
       soldLotIds={soldLotIds}
       title={title}
       onRowsChange={onRowsChange}

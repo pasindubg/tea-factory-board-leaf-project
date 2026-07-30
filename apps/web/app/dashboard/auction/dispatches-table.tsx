@@ -7,7 +7,8 @@ import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
 import { createDispatch, deleteSale, updateSale } from "./actions";
 import { NewDispatchForm, type DispatchCreationOptions } from "./new-dispatch-form";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "./sale-number";
+import { formatSaleNo } from "./sale-number";
+import { buildCompositeInvoiceNo, parseCompositeInvoiceNo } from "./invoice-number";
 
 type SaleRow = AuctionDispatchListRow;
 
@@ -154,13 +155,17 @@ export function DispatchesTable({
         panelTitle: "New broker invoice",
         disabledReason: "Finish the current broker-invoice action first.",
         render: ({ action, close, rows }) => {
-          const latestSaleNo = rows.reduce(
-            (maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0),
-            0,
-          );
-          const nextDispatchNo = `BI${formatFourDigitNo(
-            Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1),
-          )}`;
+          const suggested = parseCompositeInvoiceNo(creation.nextDispatchNo);
+          const suggestedPrefix = suggested?.prefix ?? "";
+          const suggestedSeq = Number(suggested?.seq ?? "0") || 0;
+          const latestSeq = rows.reduce((maximum, row) => {
+            const parsed = parseCompositeInvoiceNo(row.sale_no);
+            if (!parsed || parsed.prefix !== suggestedPrefix) return maximum;
+            return Math.max(maximum, Number(parsed.seq) || 0);
+          }, 0);
+          const nextDispatchNo = suggestedPrefix
+            ? buildCompositeInvoiceNo(suggestedPrefix, Math.max(suggestedSeq, latestSeq + 1))
+            : creation.nextDispatchNo;
           return (
             <NewDispatchForm
               {...creation}

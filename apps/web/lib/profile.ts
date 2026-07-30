@@ -203,15 +203,47 @@ async function permittedHome(
   return roleHome(profile.role);
 }
 
+// "Overview" and "My settings" are every signed-in user's landing/personal
+// pages — a custom role's explicit deny rows (created with every page denied
+// by default, see createAccessRole) must never block them, or a role that
+// never had these two pages explicitly re-enabled gets redirected away from
+// its own dashboard home in a loop. Base-role access (page.roles) still applies.
+const ALWAYS_VIEWABLE_PAGES = new Set(["overview", "personal-settings"]);
+
+// A custom role's `role_page_permissions` rows are seeded once, for every
+// page that existed at the time the role was created (see createAccessRole).
+// A page added to PAGE_DEFINITIONS afterwards has no row for that role at
+// all — that must mean "not yet granted", never "fall back to the base
+// role's default access". Otherwise every existing custom role silently
+// inherits full base-role access to any brand-new page the moment it ships.
+async function resolvePageViewAccess(
+  supabase: Awaited<ReturnType<typeof resolveProfile>>["supabase"],
+  profile: Profile,
+  pageKey: string,
+) {
+  if (profile.access_role_id) {
+    const explicit = await explicitPagePermission(supabase, profile, pageKey);
+    return explicit?.can_view ?? false;
+  }
+  return fallbackModuleAccess(supabase, profile, pageKey);
+}
+
 /** Gates a concrete dashboard page. Custom-role rows are fail-closed. */
 export async function requirePageAccess(pageKey: string) {
   const { supabase, profile } = await resolveProfile();
   const page = getPageDefinition(pageKey);
   if (!page) throw new Error(`Unknown page permission key: ${pageKey}`);
   if (profile.role === "owner") return { supabase, profile };
+  // The page's base `roles` list is a hard ceiling — a custom role's explicit
+  // permission row can only narrow it, never widen it. Without this check, a
+  // role tightened out of a page's base roles (e.g. accountant removed from
+  // an owner/manager/supervisor-only page) keeps viewing it forever via a
+  // stale `can_view: true` row granted back when it was still allowed.
+  if (!page.roles.includes(profile.role)) redirect(await permittedHome(supabase, profile));
 
-  const explicit = await explicitPagePermission(supabase, profile, pageKey);
-  const allowed = explicit ? explicit.can_view : await fallbackModuleAccess(supabase, profile, pageKey);
+  const allowed = ALWAYS_VIEWABLE_PAGES.has(pageKey)
+    ? await fallbackModuleAccess(supabase, profile, pageKey)
+    : await resolvePageViewAccess(supabase, profile, pageKey);
   if (!allowed) redirect(await permittedHome(supabase, profile));
   return { supabase, profile };
 }

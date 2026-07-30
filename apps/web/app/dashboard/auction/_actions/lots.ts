@@ -9,6 +9,7 @@ import { AUC, str, num, writeAudit, type Supa } from "./_shared";
 import { formatFourDigitNo } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
+import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 
 async function dispatchEditError(
   supabase: Supa,
@@ -187,8 +188,23 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   const editError = await dispatchEditError(supabase, saleId, profile.factory_id, profile.role);
   if (editError) return { ok: false, error: editError };
   const updates: Record<string, string | number | null> = {};
-  const invoiceList = invoiceNumbers(formData);
-  const invoiceNo = invoiceList[0] ?? "";
+  const rawInvoiceList = invoiceNumbers(formData);
+  const rawInvoiceNo = rawInvoiceList[0] ?? "";
+  let invoiceNo = "";
+  if (rawInvoiceNo) {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    if (prefixResult.needsApproval) {
+      return {
+        ok: false,
+        error: "That prefix isn't the active one for regular invoices. Only owner, manager, or supervisor can assign an abnormal prefix directly — use the New lot flow for a supervisor-approved entry instead.",
+      };
+    }
+    invoiceNo = buildCompositeInvoiceNo(prefixResult.prefix.prefix, rawInvoiceNo);
+  }
   const grade = str(formData.get("grade"));
   const bags = num(formData.get("bags"));
   const kgPerBag = num(formData.get("kg_per_bag"));
@@ -429,22 +445,69 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
 
 export type CreateDispatchedLotResult =
   | { ok: true; row: LotRow; notice: string }
+  | { ok: true; pending: true; notice: string }
   | { ok: false; error: string };
 
 /** List-local create command. It returns the canonical saved row so the lot
  * list can update itself without an optimistic placeholder or route refresh. */
-export async function createDispatchedLotForList(saleId: string, formData: FormData): Promise<CreateDispatchedLotResult> {
+export async function createDispatchedLotForList(
+  saleId: string,
+  formData: FormData,
+  options: { bypassPrefixId?: string } = {},
+): Promise<CreateDispatchedLotResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const invoiceList = invoiceNumbers(formData);
-  const invoiceNo = invoiceList[0] ?? "";
+  const rawInvoiceList = invoiceNumbers(formData);
+  const rawInvoiceNo = rawInvoiceList[0] ?? "";
   const grade = str(formData.get("grade"));
   const bags = num(formData.get("bags"));
   const kgPerBag = num(formData.get("kg_per_bag"));
   const sampleKg = sampleAllowance(formData);
-  if (!invoiceNo) return { ok: false, error: "Invoice number is required." };
+  if (!rawInvoiceNo) return { ok: false, error: "Invoice number is required." };
   if (!grade) return { ok: false, error: "Grade is required." };
   if (!(bags > 0) || !(kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
   if (sampleKg >= bags * kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+
+  let prefixString: string;
+  if (options.bypassPrefixId) {
+    const { data: prefixRow, error: prefixError } = await supabase
+      .from("invoice_number_prefixes")
+      .select("prefix")
+      .eq("id", options.bypassPrefixId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (prefixError) return { ok: false, error: friendlyError(prefixError) };
+    if (!prefixRow) return { ok: false, error: "Unknown invoice number prefix." };
+    prefixString = prefixRow.prefix as string;
+  } else {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    if (prefixResult.needsApproval) {
+      const payload = {
+        invoice_no: rawInvoiceList,
+        lot_no: str(formData.get("lot_no")),
+        grade,
+        bags: String(bags),
+        kg_per_bag: String(kgPerBag),
+        sample_allowance: String(sampleKg),
+      };
+      const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
+        factory_id: profile.factory_id,
+        category: "regular_invoice",
+        requested_prefix_id: prefixResult.requestedPrefixId,
+        context_id: saleId,
+        payload,
+        requested_by: profile.id,
+      });
+      if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
+      return { ok: true, pending: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
+    }
+    prefixString = prefixResult.prefix.prefix;
+  }
+  const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, n));
+  const invoiceNo = invoiceList[0] ?? "";
   const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList);
   if (!reprintSource.ok) return reprintSource;
   const netWt = netWeight(bags, kgPerBag, sampleKg);
@@ -522,6 +585,26 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
       lot_invoices: invoiceList.map((invoice) => ({ invoice_no: invoice })),
     },
   };
+}
+
+/** Replays a lot creation from an approved invoice_prefix_exceptions row. */
+export async function createLotFromApprovedException(
+  saleId: string,
+  payload: Record<string, unknown>,
+  requestedPrefixId: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const formData = new FormData();
+  const invoiceNos = Array.isArray(payload.invoice_no) ? (payload.invoice_no as unknown[]).map(String) : [String(payload.invoice_no ?? "")];
+  for (const value of invoiceNos) formData.append("invoice_no", value);
+  if (payload.lot_no != null) formData.set("lot_no", String(payload.lot_no));
+  if (payload.grade != null) formData.set("grade", String(payload.grade));
+  if (payload.bags != null) formData.set("bags", String(payload.bags));
+  if (payload.kg_per_bag != null) formData.set("kg_per_bag", String(payload.kg_per_bag));
+  if (payload.sample_allowance != null) formData.set("sample_allowance", String(payload.sample_allowance));
+  const result = await createDispatchedLotForList(saleId, formData, { bypassPrefixId: requestedPrefixId });
+  if (!result.ok) return result;
+  if ("pending" in result) return { ok: false, error: "Unexpected pending state while replaying an approved lot." };
+  return { ok: true, id: result.row.id };
 }
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).

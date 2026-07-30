@@ -25,7 +25,8 @@ import {
 } from "../actions";
 import { AUC } from "../_actions/_shared";
 import { stateBucket } from "../state-buckets";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { buildCompositeInvoiceNo, parseCompositeInvoiceNo, type InvoicePrefixOption } from "../invoice-number";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
@@ -48,7 +49,7 @@ type SaleDetail = {
 };
 
 type MarkOption = { id: string; code: string; name: string | null };
-type GradeOption = { code: string; name: string };
+type GradeOption = { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null };
 type DispatchListItem = AuctionDispatchListRow;
 type DispatchStats = {
   totalLots: number;
@@ -111,6 +112,7 @@ export function DispatchDetailEditor({
   grades,
   isOwner,
   soldLotIds,
+  lotPrefixes,
   creation,
 }: {
   sale: SaleDetail;
@@ -121,6 +123,7 @@ export function DispatchDetailEditor({
   grades: GradeOption[];
   isOwner: boolean;
   soldLotIds: string[];
+  lotPrefixes: InvoicePrefixOption[];
   creation: DispatchCreationOptions;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -192,15 +195,22 @@ export function DispatchDetailEditor({
     }
   }
 
-  const latestSaleNo = dispatches.reduce(
-    (maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0),
-    0,
-  );
+  // Prefix-aware live preview: only bump the sequence among dispatches that
+  // share the same suggested prefix (an older/abnormal prefix's numbers don't
+  // affect this one's next available number).
+  const suggested = parseCompositeInvoiceNo(creation.nextDispatchNo);
+  const suggestedPrefix = suggested?.prefix ?? "";
+  const suggestedSeq = Number(suggested?.seq ?? "0") || 0;
+  const latestSeq = dispatches.reduce((maximum, row) => {
+    const parsed = parseCompositeInvoiceNo(row.sale_no);
+    if (!parsed || parsed.prefix !== suggestedPrefix) return maximum;
+    return Math.max(maximum, Number(parsed.seq) || 0);
+  }, 0);
   const liveCreation: DispatchCreationOptions = {
     ...creation,
-    nextDispatchNo: `BI${formatFourDigitNo(
-      Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1),
-    )}`,
+    nextDispatchNo: suggestedPrefix
+      ? buildCompositeInvoiceNo(suggestedPrefix, Math.max(suggestedSeq, latestSeq + 1))
+      : creation.nextDispatchNo,
     dispatchHistory: dispatches.map((row) => ({
       saleNo: row.sale_no,
       targetSaleNo: row.target_sale_no,
@@ -442,6 +452,7 @@ export function DispatchDetailEditor({
           saleId={sale.id}
           isOwner={isOwner}
           grades={grades}
+          lotPrefixes={lotPrefixes}
           canEdit={canAddLots}
           canAdd={canAddLots}
           soldLotIds={soldLotIds}

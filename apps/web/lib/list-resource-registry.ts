@@ -904,7 +904,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     async load({ supabase }) {
       const [{ data: grades, error }, { data: aliases, error: aliasError }] = await Promise.all([
-        supabase.from("auction_grades").select("id, code, name, active, sort_order").order("sort_order").order("code"),
+        supabase.from("auction_grades").select("id, code, name, active, sort_order, sample_weight, default_kg_per_bag").order("sort_order").order("code"),
         supabase.from("auction_grade_aliases").select("grade_id, alias").order("alias"),
       ]);
       if (error || aliasError) return { ok: false, error: friendlyError(error ?? aliasError) };
@@ -914,13 +914,80 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       }
       return {
         ok: true,
-        rows: ((grades ?? []) as { id: string; code: string; name: string; active: boolean; sort_order: number | null }[]).map((grade) => ({
+        rows: ((grades ?? []) as { id: string; code: string; name: string; active: boolean; sort_order: number | null; sample_weight: string | number | null; default_kg_per_bag: string | number | null }[]).map((grade) => ({
           id: grade.id,
           code: grade.code,
           name: grade.name,
           active: grade.active,
           sortOrder: grade.sort_order ?? 0,
+          sampleWeight: grade.sample_weight == null ? null : Number(grade.sample_weight),
+          defaultKgPerBag: grade.default_kg_per_bag == null ? null : Number(grade.default_kg_per_bag),
           aliases: aliasesByGrade.get(grade.id) ?? [],
+        })),
+      };
+    },
+  },
+  "auction.invoice-prefixes": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const { data, error } = await supabase
+        .from("invoice_number_prefixes")
+        .select("id, category, prefix, active, created_at")
+        .order("category")
+        .order("prefix");
+      if (error) return { ok: false, error: friendlyError(error) };
+      return {
+        ok: true,
+        rows: ((data ?? []) as { id: string; category: string; prefix: string; active: boolean; created_at: string | null }[]).map((row) => ({
+          id: row.id,
+          category: row.category,
+          prefix: row.prefix,
+          active: row.active,
+          createdAt: row.created_at,
+        })),
+      };
+    },
+  },
+  "auction.prefix-approvals": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const [{ data, error }, { data: prefixRows, error: prefixError }] = await Promise.all([
+        supabase
+          .from("invoice_prefix_exceptions")
+          .select("id, category, requested_prefix_id, context_id, payload, status, requested_by, requested_at, decided_by, decided_at, created_record_id, note")
+          .order("requested_at", { ascending: false }),
+        supabase.from("invoice_number_prefixes").select("id, prefix"),
+      ]);
+      if (error || prefixError) return { ok: false, error: friendlyError(error ?? prefixError) };
+      const prefixById = new Map(((prefixRows ?? []) as { id: string; prefix: string }[]).map((p) => [p.id, p.prefix]));
+      const userIds = [...new Set(
+        (data ?? []).flatMap((row) => [row.requested_by as string | null, row.decided_by as string | null]).filter((id): id is string => Boolean(id)),
+      )];
+      const { data: userRows } = userIds.length
+        ? await supabase.from("users").select("id, name").in("id", userIds)
+        : { data: [] as { id: string; name: string }[] };
+      const nameById = new Map(((userRows ?? []) as { id: string; name: string }[]).map((u) => [u.id, u.name]));
+      return {
+        ok: true,
+        rows: ((data ?? []) as {
+          id: string; category: string; requested_prefix_id: string; context_id: string | null;
+          payload: Record<string, unknown>; status: string; requested_by: string | null; requested_at: string | null;
+          decided_by: string | null; decided_at: string | null; created_record_id: string | null; note: string | null;
+        }[]).map((row) => ({
+          id: row.id,
+          category: row.category,
+          requestedPrefix: prefixById.get(row.requested_prefix_id) ?? "—",
+          contextId: row.context_id,
+          status: row.status,
+          requestedByName: row.requested_by ? nameById.get(row.requested_by) ?? null : null,
+          requestedAt: row.requested_at,
+          decidedByName: row.decided_by ? nameById.get(row.decided_by) ?? null : null,
+          decidedAt: row.decided_at,
+          createdRecordId: row.created_record_id,
+          note: row.note,
+          payload: row.payload ?? {},
         })),
       };
     },

@@ -19,8 +19,8 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
 
-export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "User Handling";
-export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "User Handling"];
+export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "Index Cycle Management" | "User Handling";
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "Index Cycle Management", "User Handling"];
 
 export type ModuleDef = {
   key: string;
@@ -49,6 +49,8 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "auction-reports", href: "/dashboard/auction/reports", label: "Report Reconciliations", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-registry", href: "/dashboard/auction/registry", label: "Brokers & marks", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-settings", href: "/dashboard/auction/settings", label: "Auction setup", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
+  { key: "auction-invoice-prefixes", href: "/dashboard/auction/invoice-prefixes", label: "Invoice number prefixes", roles: ["owner", "manager", "supervisor"], entitlement: "auction", group: "Index Cycle Management" },
+  { key: "auction-prefix-approvals", href: "/dashboard/auction/prefix-approvals", label: "Prefix approvals", roles: ["owner", "manager", "supervisor"], entitlement: "auction", group: "Index Cycle Management" },
   { key: "auction", href: "/dashboard/auction", label: "Invoice Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling", visibleInNavigation: false },
   { key: "auction-dispatch-detail", href: "/dashboard/auction", label: "Invoice Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-dispatch-overview", href: "/dashboard/auction/dispatches", label: "Dispatch Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling", visibleInNavigation: false },
@@ -100,6 +102,8 @@ export const PAGE_DEFINITIONS: readonly PageDef[] = [
   page("auction-reports", "Report reconciliations", "/dashboard/auction/reports", "Sales Handling", "auction-reports", ["owner", "manager", "accountant"]),
   page("auction-registry", "Brokers & marks", "/dashboard/auction/registry", "Sales Handling", "auction-registry", ["owner", "manager", "accountant"]),
   page("auction-settings", "Auction setup", "/dashboard/auction/settings", "Sales Handling", "auction-settings", ["owner", "manager", "accountant"]),
+  page("auction-invoice-prefixes", "Invoice number prefixes", "/dashboard/auction/invoice-prefixes", "Index Cycle Management", "auction-invoice-prefixes", ["owner", "manager", "supervisor"]),
+  page("auction-prefix-approvals", "Prefix approvals", "/dashboard/auction/prefix-approvals", "Index Cycle Management", "auction-prefix-approvals", ["owner", "manager", "supervisor"]),
   page("auction-invoices", "Invoice overview", "/dashboard/auction", "Dispatch Handling", "auction", ["owner", "manager", "accountant"]),
   page("auction-invoice-new", "New broker invoice", "/dashboard/auction/new", "Dispatch Handling", "auction", ["owner", "manager", "accountant"]),
   page("auction-invoice-detail", "Invoice details", "/dashboard/auction/[saleId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
@@ -136,7 +140,7 @@ export function roleMayPerformPageAction(role: Role, pageDef: PageDef, action: R
   if (action === "view") return true;
   if (role === "manager") return true;
 
-  const operational = new Set(["weighings", "suppliers", "collectors", "requests", "messages"]);
+  const operational = new Set(["weighings", "suppliers", "collectors", "requests", "messages", "auction-invoice-prefixes", "auction-prefix-approvals"]);
   if (role === "supervisor") return action !== "delete" && operational.has(pageDef.moduleKey);
   if (role === "accountant") return action !== "delete" && (pageDef.moduleKey === "payments" || pageDef.moduleKey.startsWith("auction"));
   if (role === "collector") return action !== "delete" && pageDef.moduleKey === "weighings";

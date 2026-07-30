@@ -288,6 +288,20 @@
       "when": 1784997930194,
       "tag": "0040_lame_raza",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1785320010599,
+      "tag": "0041_auction_grade_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1785337597640,
+      "tag": "0042_invoice_number_prefixes",
+      "breakpoints": true
     }
   ]
 }

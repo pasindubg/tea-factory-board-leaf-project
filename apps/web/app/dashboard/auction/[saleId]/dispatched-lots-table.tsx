@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
@@ -10,6 +11,7 @@ import { LOT_STATES } from "../lot-states";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
+import type { InvoicePrefixOption } from "../invoice-number";
 
 const REPRINTABLE_STATES = new Set(["acknowledged", "catalogued", "valued", "withdrawn"]);
 const inputClass = "w-20 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
@@ -207,10 +209,16 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
 function InlineCreateCells({
   formId,
   grades,
+  lotPrefixes,
 }: {
   formId: string;
-  grades: { code: string; name: string }[];
+  grades: { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null }[];
+  lotPrefixes: InvoicePrefixOption[];
 }) {
+  const sampleInputRef = useRef<HTMLInputElement>(null);
+  const kgPerBagInputRef = useRef<HTMLInputElement>(null);
+  const [useDifferentPrefix, setUseDifferentPrefix] = useState(false);
+
   return (
     <>
       <td className="px-4 py-3">
@@ -225,6 +233,25 @@ function InlineCreateCells({
           }}
           className={createInputClass}
         />
+        {lotPrefixes.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setUseDifferentPrefix((v) => !v)}
+              className="mt-1 block text-[11px] text-green-700 dark:text-green-400 hover:underline"
+            >
+              {useDifferentPrefix ? "Use active prefix" : "Different prefix"}
+            </button>
+            {useDifferentPrefix && (
+              <select form={formId} name="prefix_id" defaultValue="" aria-label="Invoice number prefix" className={`${createInputClass} mt-1 text-xs`}>
+                <option value="">Active prefix</option>
+                {lotPrefixes.map((p) => (
+                  <option key={p.id} value={p.id}>{p.prefix}{p.active ? " (active)" : ""}</option>
+                ))}
+              </select>
+            )}
+          </>
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-stone-400">Assigned after save</td>
       <td className="px-4 py-3">
@@ -240,7 +267,23 @@ function InlineCreateCells({
         />
       </td>
       <td className="px-4 py-3">
-        <select form={formId} name="grade" required defaultValue="" aria-label="Grade" className={createInputClass}>
+        <select
+          form={formId}
+          name="grade"
+          required
+          defaultValue=""
+          aria-label="Grade"
+          className={createInputClass}
+          onChange={(event) => {
+            const grade = grades.find((option) => option.code === event.currentTarget.value);
+            if (sampleInputRef.current && grade?.sampleWeight != null) {
+              sampleInputRef.current.value = grade.sampleWeight.toFixed(2);
+            }
+            if (kgPerBagInputRef.current && grade?.defaultKgPerBag != null) {
+              kgPerBagInputRef.current.value = grade.defaultKgPerBag.toFixed(2);
+            }
+          }}
+        >
           <option value="" disabled>Select</option>
           {grades.map((grade) => (
             <option key={grade.code} value={grade.code}>{grade.code}</option>
@@ -248,13 +291,34 @@ function InlineCreateCells({
         </select>
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="bags" type="number" min="1" step="1" required placeholder="0" aria-label="Bags" className={`${createInputClass} text-right`} />
+        <input form={formId} name="bags" type="number" min="1" step="1" required defaultValue={10} aria-label="Bags" className={`${createInputClass} text-right`} />
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="kg_per_bag" type="number" min="0.01" step="0.01" required placeholder="0.00" aria-label="Kilograms per bag" className={`${createInputClass} text-right`} />
+        <input
+          ref={kgPerBagInputRef}
+          form={formId}
+          name="kg_per_bag"
+          type="number"
+          min="0.01"
+          step="0.01"
+          required
+          placeholder="0.00"
+          aria-label="Kilograms per bag"
+          className={`${createInputClass} text-right`}
+        />
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="sample_allowance" type="number" min="0" step="0.01" defaultValue="0" aria-label="Sample kilograms" className={`${createInputClass} text-right`} />
+        <input
+          ref={sampleInputRef}
+          form={formId}
+          name="sample_allowance"
+          type="number"
+          min="0"
+          step="0.01"
+          defaultValue="0"
+          aria-label="Sample kilograms"
+          className={`${createInputClass} text-right`}
+        />
       </td>
       <td className="px-4 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400">Calculated</td>
       <td className="px-4 py-3">
@@ -290,6 +354,7 @@ export function DispatchedLotsTable({
   canEdit,
   canAdd,
   grades,
+  lotPrefixes,
   soldLotIds,
   title = "Lot invoices",
   onRowsChange,
@@ -299,7 +364,8 @@ export function DispatchedLotsTable({
   isOwner: boolean;
   canEdit: boolean;
   canAdd: boolean;
-  grades: { code: string; name: string }[];
+  grades: { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null }[];
+  lotPrefixes: InvoicePrefixOption[];
   soldLotIds: string[];
   title?: string;
   onRowsChange?: (rows: LotRow[]) => void;
@@ -354,7 +420,7 @@ export function DispatchedLotsTable({
         action: (formData) => createDispatchedLotForList(saleId, formData),
         label: "New lot",
         disabledReason: "Finish the current lot action first.",
-        renderRow: ({ formId }) => <InlineCreateCells formId={formId} grades={grades} />,
+        renderRow: ({ formId }) => <InlineCreateCells formId={formId} grades={grades} lotPrefixes={lotPrefixes} />,
       } : undefined}
       createPlacement="toolbar"
       edit={canEdit ? {

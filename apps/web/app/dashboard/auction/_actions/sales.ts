@@ -9,6 +9,7 @@ import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { resolveInvoicePrefix } from "../invoice-number";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
   const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
@@ -109,13 +110,53 @@ function duplicateDraftInvoiceError(invoice: OpenDraftInvoice) {
 }
 
 // ---------- Broker invoices ----------
-async function insertDispatch(formData: FormData): Promise<
+const DISPATCH_PAYLOAD_FIELDS = [
+  "broker_id", "target_sale_no", "sale_date", "dispatch_date",
+  "selling_mark_id", "broker_lorry_no", "driver_name",
+] as const;
+
+type InsertDispatchResult =
   | { ok: true; id: string }
-  | { ok: false; error: string }
-> {
+  | { ok: true; pending: true }
+  | { ok: false; error: string };
+
+async function insertDispatch(formData: FormData, options: { bypassPrefixId?: string } = {}): Promise<InsertDispatchResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
   const brokerId = str(formData.get("broker_id"));
-  const saleNo = await nextDispatchNo(supabase);
+
+  let saleNoPrefix: string;
+  if (options.bypassPrefixId) {
+    const { data: prefixRow, error: prefixError } = await supabase
+      .from("invoice_number_prefixes")
+      .select("prefix")
+      .eq("id", options.bypassPrefixId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (prefixError) return { ok: false, error: friendlyError(prefixError) };
+    if (!prefixRow) return { ok: false, error: "Unknown invoice number prefix." };
+    saleNoPrefix = prefixRow.prefix as string;
+  } else {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "broker_invoice", role: profile.role, requestedPrefixId,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    if (prefixResult.needsApproval) {
+      const payload = Object.fromEntries(DISPATCH_PAYLOAD_FIELDS.map((field) => [field, str(formData.get(field))]));
+      const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
+        factory_id: profile.factory_id,
+        category: "broker_invoice",
+        requested_prefix_id: prefixResult.requestedPrefixId,
+        context_id: null,
+        payload,
+        requested_by: profile.id,
+      });
+      if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
+      return { ok: true, pending: true };
+    }
+    saleNoPrefix = prefixResult.prefix.prefix;
+  }
+  const saleNo = await nextDispatchNo(supabase, profile.factory_id, saleNoPrefix);
   const targetSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
   const dispatchDate = str(formData.get("dispatch_date"));
@@ -189,6 +230,7 @@ async function insertDispatch(formData: FormData): Promise<
 export async function createSale(formData: FormData): Promise<ListMutationResult> {
   const result = await insertDispatch(formData);
   if (!result.ok) return result;
+  if ("pending" in result) return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
   return { ok: true, notice: "Broker invoice created." };
 }
 
@@ -197,11 +239,27 @@ export async function createSaleWithId(formData: FormData): Promise<
 > {
   const result = await insertDispatch(formData);
   if (!result.ok) return result;
+  if ("pending" in result) return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
   return { ok: true, id: result.id, notice: "Broker invoice created." };
 }
 
 export { createSale as createDispatch };
 export { createSaleWithId as createDispatchWithId };
+
+/** Replays a broker-invoice creation from an approved invoice_prefix_exceptions row. */
+export async function createDispatchFromApprovedException(
+  payload: Record<string, unknown>,
+  requestedPrefixId: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value != null) formData.set(key, String(value));
+  }
+  const result = await insertDispatch(formData, { bypassPrefixId: requestedPrefixId });
+  if (!result.ok) return result;
+  if ("pending" in result) return { ok: false, error: "Unexpected pending state while replaying an approved broker invoice." };
+  return result;
+}
 
 export async function deleteSale(id: string): Promise<ListMutationResult> {
   const { supabase, profile } = await requireModuleRole("auction", ["owner"]);

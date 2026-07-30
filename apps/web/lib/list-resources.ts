@@ -42,7 +42,32 @@ export type AuctionGradeListRow = {
   name: string;
   active: boolean;
   sortOrder: number;
+  sampleWeight: number | null;
+  defaultKgPerBag: number | null;
   aliases: string[];
+};
+
+export type AuctionInvoicePrefixListRow = {
+  id: string;
+  category: string;
+  prefix: string;
+  active: boolean;
+  createdAt: string | null;
+};
+
+export type AuctionPrefixExceptionListRow = {
+  id: string;
+  category: string;
+  requestedPrefix: string;
+  contextId: string | null;
+  status: string;
+  requestedByName: string | null;
+  requestedAt: string | null;
+  decidedByName: string | null;
+  decidedAt: string | null;
+  createdRecordId: string | null;
+  note: string | null;
+  payload: Record<string, unknown>;
 };
 
 export type AuctionWarehouseListRow = {
@@ -328,6 +353,8 @@ export type ListResourceContracts = {
   "auction.marks": { params: undefined; row: AuctionMarkListRow };
   "auction.broker-rates": { params: undefined; row: AuctionBrokerRateListRow };
   "auction.grades": { params: undefined; row: AuctionGradeListRow };
+  "auction.invoice-prefixes": { params: undefined; row: AuctionInvoicePrefixListRow };
+  "auction.prefix-approvals": { params: undefined; row: AuctionPrefixExceptionListRow };
   "auction.warehouses": { params: undefined; row: AuctionWarehouseListRow };
   "auction.broker-grade-thresholds": { params: undefined; row: AuctionThresholdListRow };
   "auction.sale-lines": { params: { saleId: string }; row: AuctionSaleLineListRow };
@@ -361,6 +388,8 @@ export const LIST_RESOURCE_KEYS = [
   "auction.marks",
   "auction.broker-rates",
   "auction.grades",
+  "auction.invoice-prefixes",
+  "auction.prefix-approvals",
   "auction.warehouses",
   "auction.broker-grade-thresholds",
   "auction.sale-lines",
