@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import {
   DetailField,
   DetailRecordPanel,
-  DetailWorkspace,
 } from "@/components/detail-workspace";
 import { EntityListTabs } from "@/components/entity-list";
 import { requirePageAccess } from "@/lib/profile";
@@ -15,6 +14,7 @@ import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-s
 import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
+import { SaleDetailWorkspace } from "./sale-detail-workspace";
 
 const SEARCH_PANEL_ID = "auction-sale-detail-search";
 
@@ -193,46 +193,12 @@ export default async function SaleDetailPage({
     { label: "Re-print", count: lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length },
     { label: "Missing", count: lotCount(lotRows, ["missing"]) },
   ].filter((item) => item.count > 0);
-  const saleListSummaries = new Map<string, {
-    saleNo: string;
-    dispatchNos: Map<string, string>;
-    brokers: Set<string>;
-    saleDate: string | null;
-    statuses: Set<string>;
-  }>();
-  const allDispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
-  function addSaleSummary(key: string, dispatch: DispatchRow) {
-    const current = saleListSummaries.get(key) ?? {
-      saleNo: key,
-      dispatchNos: new Map<string, string>(),
-      brokers: new Set<string>(),
-      saleDate: dispatch.sale_date,
-      statuses: new Set<string>(),
-    };
-    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
-    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
-    current.saleDate ??= dispatch.sale_date;
-    current.statuses.add(stateBucket(dispatch.status).label);
-    saleListSummaries.set(key, current);
-  }
-  for (const dispatch of allDispatchRows) {
-    const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
-    if (key) addSaleSummary(key, dispatch);
-  }
-  for (const lot of allLotRows) {
-    const dispatch = allDispatchById.get(lot.sale_id);
-    const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
-    if (dispatch && key) addSaleSummary(key, dispatch);
-  }
-  const saleListRows: SaleSideListRow[] = [...saleListSummaries.values()]
-    .sort((a, b) => b.saleNo.localeCompare(a.saleNo, undefined, { numeric: true }))
-    .map((sale) => ({
-      saleNo: sale.saleNo,
-      dispatchNos: [...sale.dispatchNos.values()],
-      brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
-      saleDate: sale.saleDate,
-      statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
-    }));
+  // Shared with the side rail's own client-side refetch on search — one
+  // source of truth for the sale-grouping aggregation instead of duplicating
+  // it here for the initial render.
+  const saleListResource = await loadListResource({ key: "auction.sales-side-list" });
+  if (!saleListResource.ok) throw new Error(saleListResource.error);
+  const saleListRows: SaleSideListRow[] = saleListResource.rows;
 
   const dispatchTableRows: DispatchInSaleRow[] = dispatches.map((dispatch) => {
     const state = stateBucket(dispatch.status);
@@ -276,7 +242,10 @@ export default async function SaleDetailPage({
   ]);
 
   return (
-    <DetailWorkspace
+    <SaleDetailWorkspace
+      saleNo={displaySaleNo}
+      isOwner={profile.role === "owner"}
+      saleListRows={saleListRows}
       rail={
         <SalesSideList
           rows={visibleSaleListRows}
@@ -285,7 +254,7 @@ export default async function SaleDetailPage({
         />
       }
       railAriaLabel="Auction sales"
-      searchAction={{ panelId: SEARCH_PANEL_ID }}
+      searchPanelId={SEARCH_PANEL_ID}
       state={{
         currentKey: currentStateKey,
         steps: lifecycleSteps,
@@ -341,6 +310,6 @@ export default async function SaleDetailPage({
           { id: "dispatches", label: "Broker invoices", count: `${visibleDispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
         ]}
       />
-    </DetailWorkspace>
+    </SaleDetailWorkspace>
   );
 }

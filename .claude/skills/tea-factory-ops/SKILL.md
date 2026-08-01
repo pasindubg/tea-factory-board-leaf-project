@@ -327,11 +327,10 @@ once in `apps/web/lib/roles.ts`.**
 - Appearance lives in the bottom `Settings` menu with explicit System, Light, and
   Dark choices. New user preferences should extend this menu rather than adding
   scattered shell buttons.
-- Every interactive action needs immediate acknowledgement through the shared
-  dashboard action-feedback layer: navigation shows Opening, forms/server
-  actions show Working, settings show Updating, and route completion shows Page
-  ready. Do not add silent new buttons or links; opt out only for decorative
-  controls with `data-action-feedback-ignore`.
+- There is no generic per-click toast (removed: it fired on every click/submit/
+  change and was judged too noisy). The only per-click feedback left is the
+  clicked control dimming via `data-action-pending` while a route/server action
+  settles; opt a control out of even that with `data-action-feedback-ignore`.
 - Completed work/notices use green bottom-right toasts and failures use red
   bottom-right toasts. Browser alerts and confirms are forbidden: consequential
   actions use the shared `ConfirmationDialog` or `ConfirmSubmitButton` instead.

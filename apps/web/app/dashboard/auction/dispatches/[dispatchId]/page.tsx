@@ -8,31 +8,55 @@ import { DispatchDetailView } from "../dispatch-detail-view";
 import { type PhysicalDispatchListRow } from "../dispatch-list";
 
 type Invoice = { id: string; sale_no: string; dispatch_date: string | null; status: string; brokers: { name: string } | null; auction_lots: Lot[] | null };
-type Lot = { id: string; invoice_no: string | null; lot_no: string | null; grade: string | null; bags: number | null; net_wt: string | number | null; state: string | null };
+type Lot = {
+  id: string;
+  invoice_no: string | null;
+  lot_no: string | null;
+  grade: string | null;
+  bags: number | null;
+  net_wt: string | number | null;
+  state: string | null;
+  marks: { code: string; name: string | null } | null;
+};
 type DispatchInvoice = { auction_sales: Invoice | null };
 
 export default async function DispatchDetailPage({ params }: { params: Promise<{ dispatchId: string }> }) {
   const { supabase, profile } = await requirePageAccess("auction-dispatch-detail-view");
   const { dispatchId } = await params;
-  const [{ data: dispatch }, dispatchResource, { data: links }] = await Promise.all([
+  const [{ data: dispatch }, dispatchResource, eligibleInvoicesResource, warehousesResource, { data: links }] = await Promise.all([
     supabase
       .from("auction_bundled_dispatches")
       .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, created_at")
       .eq("id", dispatchId)
       .maybeSingle(),
     loadListResource({ key: "auction.physical-dispatches" }),
+    loadListResource({ key: "auction.eligible-broker-invoices" }),
+    loadListResource({ key: "auction.warehouses" }),
     supabase
       .from("auction_bundled_dispatch_invoices")
-      .select("auction_sales(id, sale_no, dispatch_date, status, brokers(name), auction_lots(id, invoice_no, lot_no, grade, bags, net_wt, state))")
+      .select("auction_sales(id, sale_no, dispatch_date, status, brokers(name), auction_lots(id, invoice_no, lot_no, grade, bags, net_wt, state, marks(code, name)))")
       .eq("bundled_dispatch_id", dispatchId),
   ]);
   if (!dispatch) notFound();
 
   if (!dispatchResource.ok) throw new Error(dispatchResource.error);
+  if (!eligibleInvoicesResource.ok) throw new Error(eligibleInvoicesResource.error);
+  if (!warehousesResource.ok) throw new Error(warehousesResource.error);
   const dispatchRows: PhysicalDispatchListRow[] = dispatchResource.rows;
   const invoiceRecords = ((links ?? []) as unknown as DispatchInvoice[]).flatMap((link) => link.auction_sales ? [link.auction_sales] : []).sort((a, b) => String(a.sale_no).localeCompare(String(b.sale_no)));
   const invoices: DispatchInvoiceRow[] = invoiceRecords.map((invoice) => ({ id: invoice.id, invoiceNo: formatFourDigitNo(invoice.sale_no), broker: invoice.brokers?.name ?? "—", invoiceDate: invoice.dispatch_date, lotsCount: invoice.auction_lots?.length ?? 0, status: invoice.status }));
-  const lots: DispatchLotRow[] = invoiceRecords.flatMap((invoice) => (invoice.auction_lots ?? []).map((lot) => ({ id: lot.id, brokerInvoiceNo: formatFourDigitNo(invoice.sale_no), lotNo: formatFourDigitNo(lot.lot_no) || "—", grade: lot.grade ?? "—", bags: lot.bags, netWt: lot.net_wt, state: lot.state ?? "—" })));
+  const lots: DispatchLotRow[] = invoiceRecords.flatMap((invoice) => (invoice.auction_lots ?? []).map((lot) => ({
+    id: lot.id,
+    invoiceNo: lot.invoice_no ?? "—",
+    brokerInvoiceNo: formatFourDigitNo(invoice.sale_no),
+    broker: invoice.brokers?.name ?? "—",
+    mark: lot.marks ? `${lot.marks.code}${lot.marks.name ? ` — ${lot.marks.name}` : ""}` : "—",
+    lotNo: formatFourDigitNo(lot.lot_no) || "—",
+    grade: lot.grade ?? "—",
+    bags: lot.bags,
+    netWt: lot.net_wt,
+    state: lot.state ?? "—",
+  })));
 
   const [visibleInvoices, visibleLots] = await Promise.all([
     applyServerListSearch(supabase, profile, "dispatch-detail-invoices", invoices),
@@ -44,5 +68,9 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
     dispatches={dispatchRows}
     invoices={visibleInvoices}
     lots={visibleLots}
+    eligibleInvoices={eligibleInvoicesResource.rows}
+    warehouses={warehousesResource.rows}
+    canCreate={profile.role === "owner" || profile.role === "manager"}
+    isOwner={profile.role === "owner"}
   />;
 }

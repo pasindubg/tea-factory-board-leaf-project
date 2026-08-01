@@ -20,16 +20,16 @@ export default async function SaleDetailPage({
 
   const { data: sale } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, bundled_dispatch_id, created_date, brokers(name)")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)")
     .eq("id", saleId)
     .single();
 
   if (!sale) {
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Sale not found.{" "}
-        <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-          Back to Invoice Overview
+        Broker invoice not found.{" "}
+        <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
+          Back to Invoice Details
         </Link>
       </div>
     );
@@ -80,6 +80,7 @@ export default async function SaleDetailPage({
           selling_mark: sellingMark ? `${sellingMark.code as string}${sellingMark.name ? ` — ${sellingMark.name as string}` : ""}` : null,
           broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
+          transporter: (sale as { transporter?: string | null }).transporter ?? null,
           bundle_dispatch_no: currentDispatch?.bundle_dispatch_no ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
         }}

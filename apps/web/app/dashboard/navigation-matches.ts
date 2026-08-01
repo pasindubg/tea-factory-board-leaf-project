@@ -18,18 +18,13 @@ export function moduleMatchesPath(item: ModuleDef, pathname: string): boolean {
       !pathname.startsWith("/dashboard/auction/registry") &&
       !pathname.startsWith("/dashboard/auction/settings") &&
       !pathname.startsWith("/dashboard/auction/dispatches") &&
-      !pathname.startsWith("/dashboard/auction/warehouses") &&
-      !pathname.startsWith("/dashboard/auction/new") &&
-      pathname !== "/dashboard/auction";
+      !pathname.startsWith("/dashboard/auction/warehouses");
   }
-  if (item.key === "auction-dispatch-overview") return pathname === "/dashboard/auction/dispatches";
   if (item.key === "auction-bundled-dispatch-details") {
     return pathname === "/dashboard/auction/dispatches/details" ||
       (pathname.startsWith("/dashboard/auction/dispatches/") &&
-        !pathname.startsWith("/dashboard/auction/dispatches/new") &&
         !pathname.startsWith("/dashboard/auction/dispatches/details"));
   }
-  if (item.key === "auction") return pathname === "/dashboard/auction" || pathname.startsWith("/dashboard/auction/new");
   if (item.key === "overview") return pathname === "/dashboard";
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }

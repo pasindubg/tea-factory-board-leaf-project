@@ -16,24 +16,23 @@
 
 ## Application Shell And Navigation
 
-- Every user action must acknowledge itself immediately. The shared dashboard
-  action-feedback layer reports navigation as `Opening…`, server/form actions as
-  `Working…`, setting changes as `Updating…`, and completed route changes as
-  `Page ready`. New buttons, links, popovers, and settings controls inherit
-  this behavior automatically; use `data-action-feedback-ignore` only for
-  decorative controls that do not perform an action.
 - Completed work and server notices appear as green bottom-right toasts; errors
-  appear as red bottom-right toasts. Do not use browser `alert` or `confirm`.
+  appear as red bottom-right toasts (`showAppToast` from
+  `components/action-feedback.tsx`). Do not use browser `alert` or `confirm`.
   Destructive or consequential operations must use the shared in-app
   `ConfirmationDialog` (or `ConfirmSubmitButton` for server-action forms), with
   clear consequences and an explicit cancel choice.
+- There is deliberately no generic per-click toast (no `Opening…`/`Working…`/
+  `Updating…`/`Page ready` message on every click, submit, or change) — that
+  layer existed but was removed for being noisy on every interaction. The only
+  per-click feedback is the clicked control dimming briefly via
+  `data-action-pending` (styled in `globals.css`) while a route or server
+  action settles; use `data-action-feedback-ignore` on a control to opt it out
+  of even that dim.
 - Navigation additionally starts the shared animated gradient progress bar before
   the route transition and keeps it visible until the destination is ready.
   Use `startNavigationFeedback()` before `router.push`/`router.replace` calls;
   regular Next.js links are detected automatically.
-- The clicked navigation link or button itself must carry the animated gradient
-  pending state while that route loads. The top-right notification is secondary
-  acknowledgement, not the only navigation-loading signal.
 
 - Use a Material 3-inspired visual language: tonal surfaces, rounded containers,
   restrained elevation, clear focus rings, and touch targets of at least 44 px.

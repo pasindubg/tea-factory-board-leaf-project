@@ -19,7 +19,7 @@ async function nextBundledDispatchNo(
   return { ok: true, value: formatFourDigitNo(maximum + 1) };
 }
 
-export async function createBundledDispatch(formData: FormData): Promise<ListMutationResult> {
+export async function createBundledDispatch(formData: FormData): Promise<ListMutationResult & { id?: string }> {
   const { supabase, profile } = await requireModuleRole("auction", ["owner", "manager"]);
   const dispatchDateFrom = str(formData.get("dispatch_date_from"));
   const dispatchDateTo = str(formData.get("dispatch_date_to"));
@@ -144,8 +144,37 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
 
   return {
     ok: true,
+    id: bundleId,
     notice: `Dispatch ${dispatchNo} created.`,
     invalidate: [
+      { kind: "exact", resource: { key: "auction.eligible-broker-invoices" } },
+      { kind: "all", key: "auction.dispatches" },
+    ],
+  };
+}
+
+/**
+ * Owner-only. Deleting a bundled (physical) dispatch does not delete the
+ * broker invoices linked to it — `auction_sales.bundled_dispatch_id` is
+ * ON DELETE SET NULL, so they simply become unbundled (eligible for a new
+ * dispatch again) while the join rows cascade away with the dispatch.
+ */
+export async function deleteBundledDispatch(id: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const { data: dispatch } = await supabase
+    .from("auction_bundled_dispatches")
+    .select("id")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (!dispatch) return { ok: false, error: "Dispatch not found." };
+  const { error: deleteError } = await deleteTenantRow(supabase, "auction_bundled_dispatches", id);
+  if (deleteError) return { ok: false, error: deleteError };
+  return {
+    ok: true,
+    notice: "Dispatch deleted.",
+    invalidate: [
+      { kind: "all", key: "auction.physical-dispatches" },
       { kind: "exact", resource: { key: "auction.eligible-broker-invoices" } },
       { kind: "all", key: "auction.dispatches" },
     ],

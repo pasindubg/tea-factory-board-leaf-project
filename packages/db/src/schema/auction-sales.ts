@@ -23,6 +23,7 @@ export const auctionSales = pgTable(
     sellingMarkId: uuid("selling_mark_id").references(() => marks.id),
     brokerLorryNo: text("broker_lorry_no"),
     driverName: text("driver_name"),
+    transporter: text("transporter"),
     bundledDispatchId: uuid("bundled_dispatch_id").references(() => auctionBundledDispatches.id, { onDelete: "set null" }),
     saleKind: text("sale_kind", { enum: ["dispatch", "reprint"] })
       .default("dispatch")

@@ -14,8 +14,6 @@ import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import { AppDrawer } from "@/components/ui/drawer";
 import { showAppToast } from "@/components/action-feedback";
-import { EntityList } from "@/components/entity-list";
-import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import {
   completeGrn,
   confirmDispatchDraft,
@@ -23,13 +21,17 @@ import {
   deleteSale,
   updateSale,
 } from "../actions";
-import { AUC } from "../_actions/_shared";
 import { stateBucket } from "../state-buckets";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import {
+  InvoiceSideList,
+  INVOICE_SEARCH_PANEL_ID,
+  cappedDispatchStatus,
+  type DispatchListItem,
+} from "../invoice-side-list";
 import { buildCompositeInvoiceNo, parseCompositeInvoiceNo, type InvoicePrefixOption } from "../invoice-number";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
-import type { AuctionDispatchListRow } from "@/lib/list-resources";
 import { NewDispatchFields, type DispatchCreationOptions } from "../new-dispatch-form";
 
 type SaleDetail = {
@@ -44,13 +46,13 @@ type SaleDetail = {
   selling_mark: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
+  transporter: string | null;
   bundle_dispatch_no: string | null;
   created_date: string | null;
 };
 
 type MarkOption = { id: string; code: string; name: string | null };
 type GradeOption = { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null };
-type DispatchListItem = AuctionDispatchListRow;
 type DispatchStats = {
   totalLots: number;
   cataloguedLots: number;
@@ -70,24 +72,6 @@ const DISPATCH_STEPS: DispatchStep[] = [
   { key: "catalogued", label: "Catalogued", metric: (stats) => `${stats.cataloguedLots}/${stats.totalLots} lots` },
 ];
 
-const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
-  { key: "sale_no", label: "Broker invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
-  { key: "broker", label: "Broker", accessor: (row) => row.brokers?.name ?? null, sortable: true, filter: "select" },
-  { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
-  { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
-  { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
-  { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select" },
-];
-
-const DISPATCH_LIST = {
-  columns: DISPATCH_LIST_COLUMNS,
-  selectionMode: "single",
-  add: true,
-  edit: false,
-  delete: false,
-} satisfies ListDefinition<DispatchListItem>;
-
-const INVOICE_SEARCH_PANEL_ID = "invoice-overview-search";
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
   const index = DISPATCH_STEPS.findIndex((step) => step.key === normalizedStatus);
@@ -99,9 +83,6 @@ function effectiveDispatchStatus(status: string | null, stats: DispatchStats) {
   return status === "dispatched" ? "draft" : status;
 }
 
-function cappedDispatchStatus(status: string | null) {
-  return ["valued", "sold", "settled", "broker_statement"].includes(status ?? "") ? "catalogued" : status;
-}
 
 export function DispatchDetailEditor({
   sale,
@@ -133,7 +114,9 @@ export function DispatchDetailEditor({
   const [liveRows, setLiveRows] = useState(rows);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const canDelete = isOwner && (sale.status === "dispatched" || sale.status === "draft");
+  // Owner can delete a broker invoice in any state, not just draft/dispatched.
+  // No other role can ever delete it.
+  const canDelete = isOwner;
   const canEditDetails = isOwner;
   const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
   const canConfirmDraft = !creatingInvoice && !isEditing && isDraftStatus;
@@ -142,6 +125,13 @@ export function DispatchDetailEditor({
   const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
   const reprintLots = liveRows.filter((row) => row.state === "re-print").length;
   const appliedThresholdGrades = new Set(liveRows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
+  const invoiceCount = new Set(
+    liveRows.flatMap((row) =>
+      row.lot_invoices?.length ? row.lot_invoices.map((invoice) => invoice.invoice_no) : row.invoice_no ? [row.invoice_no] : [],
+    ),
+  ).size;
+  const totalBags = liveRows.reduce((sum, row) => sum + Number(row.bags ?? 0), 0);
+  const totalNetWt = liveRows.reduce((sum, row) => sum + Number(row.net_wt ?? 0), 0);
   const dispatchStats: DispatchStats = {
     totalLots: liveRows.length,
     cataloguedLots,
@@ -230,7 +220,7 @@ export function DispatchDetailEditor({
     <DetailWorkspace
       railAriaLabel="Broker invoices"
       rail={
-        <DispatchSideList
+        <InvoiceSideList
           rows={dispatches}
           currentId={creatingInvoice ? "" : sale.id}
           currentDisplayStatus={displayStatus}
@@ -298,7 +288,15 @@ export function DispatchDetailEditor({
               action: () => deleteSale(sale.id),
               onSuccess: () => {
                 startNavigationFeedback();
-                router.replace(AUC);
+                // No overview list to fall back to — go to whichever other
+                // broker invoice is now most recent, or the bootstrap/create
+                // page if that was the last one.
+                const remaining = dispatches.filter((row) => row.id !== sale.id);
+                const latest = [...remaining].sort((a, b) => {
+                  const byDate = String(b.dispatch_date ?? "").localeCompare(String(a.dispatch_date ?? ""));
+                  return byDate !== 0 ? byDate : String(b.sale_no ?? "").localeCompare(String(a.sale_no ?? ""));
+                })[0];
+                router.replace(latest ? `/dashboard/auction/${latest.id}` : "/dashboard/auction/new");
               },
             }
           : undefined
@@ -413,6 +411,12 @@ export function DispatchDetailEditor({
                 disabled={!isEditing}
               />
               <CompactField
+                label="Transporter"
+                name="transporter"
+                defaultValue={sale.transporter ?? ""}
+                disabled={!isEditing}
+              />
+              <CompactField
                 label="Sale no."
                 name="target_sale_no"
                 defaultValue={sale.target_sale_no ?? ""}
@@ -426,6 +430,9 @@ export function DispatchDetailEditor({
                 defaultValue={sale.sale_date ?? ""}
                 disabled={!isEditing}
               />
+              <DetailField label="Invoices" value={`${invoiceCount}`} />
+              <DetailField label="Total bags" value={`${totalBags}`} />
+              <DetailField label="Net weight" value={`${totalNetWt.toFixed(2)} kg`} />
               <DetailField label="Issues" value={`${issueLots} lots`} />
               <DetailField label="Re-print" value={`${reprintLots} lots`} />
               <DetailField
@@ -491,63 +498,6 @@ export function DispatchDetailEditor({
   );
 }
 
-function DispatchSideList({
-  rows,
-  currentId,
-  currentDisplayStatus,
-  onSelect,
-  onCreate,
-}: {
-  rows: DispatchListItem[];
-  currentId: string;
-  currentDisplayStatus: string | null;
-  onSelect: () => void;
-  onCreate: () => void;
-}) {
-  return (
-    <EntityList
-      resource={{ key: "auction.dispatches" }}
-      initialRows={rows}
-      definition={DISPATCH_LIST}
-      getId={(row) => row.id}
-      rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
-      create={{
-        action: createDispatchWithId,
-        disabledReason: "Finish creating the current broker invoice first.",
-        onOpen: onCreate,
-      }}
-      chrome="records-only"
-      searchPanelId={INVOICE_SEARCH_PANEL_ID}
-      className="h-full min-h-0 xl:flex-col"
-      emptyMessage="No broker invoices."
-      filteredEmptyMessage="No broker invoices match."
-      sideList={{
-        href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
-        onSelect,
-        isActive: (dispatch) => dispatch.id === currentId,
-        sortColumnKey: "sale_no",
-        searchLabel: "Search",
-        showSelectionSummary: false,
-        content: (dispatch, { active }) => {
-          const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
-          return (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
-                {active && <span className="text-stone-400">‹</span>}
-              </div>
-              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
-              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
-                <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
-              </div>
-            </>
-          );
-        },
-      }}
-    />
-  );
-}
 
 function CompactField({
   label,

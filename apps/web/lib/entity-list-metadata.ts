@@ -19,6 +19,7 @@ export const ENTITY_LIST_METADATA: Record<ListResourceKey, { title: string; desc
   "auction.dispatch-lots": { title: "Invoice lots", description: "Lots attached to this broker invoice." },
   "auction.reprint-overview": { title: "Re-print overview", description: "Historic and current lots that have been re-printed." },
   "auction.physical-dispatches": { title: "Physical dispatches", description: "Outbound warehouse movements that group broker invoices." },
+  "auction.sales-side-list": { title: "Auction sales", description: "Sales grouped by target sale number, for the sale detail side rail." },
   "auction.eligible-broker-invoices": { title: "Eligible broker invoices", description: "Invoices that can still be assigned to a physical dispatch." },
   "leaf.suppliers": { title: "Suppliers", description: "Leaf suppliers registered to this factory." },
   "leaf.collectors": { title: "Collectors", description: "Collection staff registered to this factory." },

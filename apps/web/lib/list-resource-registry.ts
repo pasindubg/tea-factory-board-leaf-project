@@ -5,7 +5,7 @@ import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
 import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
-import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "@/app/dashboard/auction/sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
 import { stateBucket } from "@/app/dashboard/auction/state-buckets";
 import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
@@ -87,6 +87,7 @@ type RefreshLotRow = {
   state: string | null;
   reprint_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
+  marks: { code: string; name: string | null } | null;
 };
 
 type RefreshDispatchLotRow = RefreshLotRow & {
@@ -678,7 +679,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: sales, error }, { data: marks, error: markError }, { data: bundles, error: bundleError }] = await Promise.all([
         supabase
           .from("auction_sales")
-          .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, bundled_dispatch_id, created_date, brokers(name)")
+          .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)")
           .eq("sale_kind", "dispatch")
           .order("created_at", { ascending: false }),
         supabase.from("marks").select("id, code, name").order("code"),
@@ -700,6 +701,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
           selling_mark: markById.get((sale as { selling_mark_id?: string | null }).selling_mark_id ?? "") ?? null,
           broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
+          transporter: (sale as { transporter?: string | null }).transporter ?? null,
           bundle_dispatch_no: bundleNoById.get((sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id ?? "") ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
           brokers: (sale.brokers as unknown as { name: string } | null) ?? null,
@@ -751,6 +753,81 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
           invoiceCount: dispatch.auction_bundled_dispatch_invoices?.length ?? 0,
           status: dispatch.status,
         })),
+      };
+    },
+  },
+  // A "sale" is a virtual grouping over auction_sales.target_sale_no (or its
+  // own sale_no before assignment), not a real table — so this stays a plain
+  // JS aggregation rather than a `search`-config'd SQL query like the
+  // dispatches resource above. It's still registry-backed (not a local/scope
+  // list), so it gets the same real, persisted, role-locked search enforcement
+  // as every other rail: the generic `filterRowsByCriteria` fallback in
+  // `loadListResource` below matches criteria keys straight against these
+  // rows' own fields, and every applySearch re-executes this loader instead
+  // of only filtering whatever rows were fetched once at initial render.
+  "auction.sales-side-list": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const [{ data: dispatches, error: dispatchError }, { data: lots, error: lotError }] = await Promise.all([
+        supabase
+          .from("auction_sales")
+          .select("id, sale_no, target_sale_no, sale_date, status, brokers(name)")
+          .eq("sale_kind", "dispatch"),
+        supabase
+          .from("auction_lots")
+          .select("id, sale_id, provisional_sale_no, final_sale_no"),
+      ]);
+      if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
+
+      type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; sale_date: string | null; status: string; brokers: { name: string } | null };
+      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null };
+      const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
+      const lotRows = (lots ?? []) as unknown as LotRow[];
+      const dispatchById = new Map(dispatchRows.map((dispatch) => [dispatch.id, dispatch]));
+
+      const summaries = new Map<string, {
+        saleNo: string;
+        dispatchNos: Map<string, string>;
+        brokers: Set<string>;
+        saleDate: string | null;
+        statuses: Set<string>;
+      }>();
+      function addSummary(key: string, dispatch: DispatchRow) {
+        const current = summaries.get(key) ?? {
+          saleNo: key,
+          dispatchNos: new Map<string, string>(),
+          brokers: new Set<string>(),
+          saleDate: dispatch.sale_date,
+          statuses: new Set<string>(),
+        };
+        current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
+        if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
+        current.saleDate ??= dispatch.sale_date;
+        current.statuses.add(stateBucket(dispatch.status).label);
+        summaries.set(key, current);
+      }
+      for (const dispatch of dispatchRows) {
+        const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
+        if (key) addSummary(key, dispatch);
+      }
+      for (const lot of lotRows) {
+        const dispatch = dispatchById.get(lot.sale_id);
+        const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
+        if (dispatch && key) addSummary(key, dispatch);
+      }
+
+      return {
+        ok: true,
+        rows: [...summaries.values()]
+          .sort((a, b) => b.saleNo.localeCompare(a.saleNo, undefined, { numeric: true }))
+          .map((sale) => ({
+            saleNo: sale.saleNo,
+            dispatchNos: [...sale.dispatchNos.values()],
+            brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
+            saleDate: sale.saleDate,
+            statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
+          })),
       };
     },
   },
@@ -1053,12 +1130,12 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: allDispatches, error: dispatchError }, { data: allLots, error: lotError }] = await Promise.all([
         supabase
           .from("auction_sales")
-          .select("id, sale_no, target_sale_no")
+          .select("id, sale_no, target_sale_no, brokers(name)")
           .eq("factory_id", profile.factory_id)
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no)")
+          .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no), marks(code, name)")
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
       ]);
@@ -1094,7 +1171,13 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
         : [{ data: [], error: null }, { data: [], error: null }];
       if (lineError || reprintError) return { ok: false, error: friendlyError(lineError ?? reprintError) };
 
-      const dispatchById = new Map((dispatches ?? []).map((dispatch) => [dispatch.id as string, dispatch.sale_no as string | null]));
+      const dispatchById = new Map((dispatches ?? []).map((dispatch) => [
+        dispatch.id as string,
+        {
+          saleNo: dispatch.sale_no as string | null,
+          broker: (dispatch as unknown as { brokers: { name: string } | null }).brokers?.name ?? null,
+        },
+      ]));
       const lineByLotId = new Map(
         ((lines ?? []) as unknown as RefreshSaleLineRow[])
           .filter((line) => line.lot_id)
@@ -1110,14 +1193,16 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
         ok: true,
         rows: lotRows.map((lot) => {
           const line = lineByLotId.get(lot.id);
-          const dispatchSaleNo = dispatchById.get(lot.sale_id);
+          const dispatch = dispatchById.get(lot.sale_id);
           const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
           const state = stateBucket(lot.state);
           return {
             id: lot.id,
             saleId: lot.sale_id,
             dispatchId: dispatchById.has(lot.sale_id) ? lot.sale_id : null,
-            dispatchSaleNo: dispatchSaleNo ? formatFourDigitNo(dispatchSaleNo) : null,
+            dispatchSaleNo: dispatch?.saleNo ? formatFourDigitNo(dispatch.saleNo) : null,
+            broker: dispatch?.broker ?? null,
+            mark: lot.marks ? `${lot.marks.code}${lot.marks.name ? ` — ${lot.marks.name}` : ""}` : null,
             lotNo: formatFourDigitNo(lot.lot_no),
             invoiceNo: invoices.length > 0 ? invoices.join(", ") : formatFourDigitNo(lot.invoice_no),
             grade: lot.grade ?? null,

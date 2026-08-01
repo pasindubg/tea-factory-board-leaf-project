@@ -111,26 +111,25 @@ export function NewDispatchFields({
           </select>
         </div>
         <div>
-          <label className={label}>Broker lorry no. <span className="font-normal text-stone-400">(optional)</span></label>
+          <label className={label}>Broker lorry no.</label>
           <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
         </div>
         <div>
-          <label className={label}>Driver <span className="font-normal text-stone-400">(optional)</span></label>
+          <label className={label}>Driver</label>
           <input name="driver_name" placeholder="Driver name" className={input} />
         </div>
         <div>
+          <label className={label}>Transporter</label>
+          <input name="transporter" placeholder="Transporter name" className={input} />
+        </div>
+        <div>
           <label className={label}>Broker invoice number</label>
-          <div className="mt-1 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">System generated</p>
-                <p className="font-mono text-sm font-medium tabular-nums text-stone-800 dark:text-stone-200">{nextDispatchNo}</p>
-              </div>
-              <span className="rounded-full border border-stone-200 dark:border-stone-700 bg-white/80 dark:bg-stone-900 px-2 py-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
-                Locked
-              </span>
-            </div>
-          </div>
+          <input
+            value={nextDispatchNo}
+            readOnly
+            aria-label="Broker invoice number"
+            className={`${input} cursor-not-allowed bg-stone-50 font-mono tabular-nums text-stone-500 dark:bg-stone-800 dark:text-stone-400`}
+          />
           {prefixes.length > 1 && (
             <>
               <button

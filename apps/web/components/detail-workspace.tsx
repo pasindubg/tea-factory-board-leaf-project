@@ -422,16 +422,17 @@ function DetailDeleteCommand({
     <>
       <AppButton
         type="button"
-        variant="danger"
+        variant="ghost"
+        size="icon"
+        className="text-red-600 hover:bg-stone-100 dark:text-red-400 dark:hover:bg-stone-800"
         data-action-feedback-ignore
         disabled={config.disabled}
         busy={deleting}
-        busyLabel="Deleting…"
-        title={config.disabledReason}
+        title={config.disabledReason ?? config.label ?? "Delete"}
+        aria-label={config.label ?? "Delete"}
         onClick={() => setConfirming(true)}
       >
         <Trash2 aria-hidden="true" className="h-4 w-4" />
-        {config.label ?? "Delete"}
       </AppButton>
       <ConfirmationDialog
         open={confirming}

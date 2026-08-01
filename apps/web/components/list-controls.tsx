@@ -108,8 +108,6 @@ export type FrameworkListSearchState = {
   canManageLocks: boolean;
 };
 
-const EMPTY_SEARCH_STATE: FrameworkListSearchState = { saved: null, savedAdvancedQuery: null, locked: {}, canManageLocks: false };
-
 /**
  * Owns the live rows for one framework list. After a successful mutation it
  * asks the central server registry for this allowlisted resource and replaces
@@ -131,7 +129,13 @@ export function useFrameworkListData<Key extends ListResourceKey>(
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [searchState, setSearchState] = useState<FrameworkListSearchState>(EMPTY_SEARCH_STATE);
+  // Starts undefined (not a placeholder object) so the seeding effect in
+  // useListControls waits for the real fetch below instead of "seeding" once
+  // from empty data and never applying the actual saved criteria that arrive
+  // moments later — that was silently dropping restored search filters on
+  // every fresh mount (refresh/re-login) even though the rows came back
+  // correctly filtered server-side.
+  const [searchState, setSearchState] = useState<FrameworkListSearchState | undefined>(undefined);
   const identity = listResourceIdentity(resource);
   const resourceRef = useRef(resource);
   const refreshGeneration = useRef(0);
@@ -408,20 +412,30 @@ function SearchGlyph() {
 }
 
 function ListHeaderButton({ kind, action }: { kind: "edit" | "delete"; action: ListHeaderAction }) {
-  const destructive = kind === "delete";
+  if (kind === "delete") {
+    const label = action.label ?? "Delete";
+    return (
+      <button
+        type="button"
+        onClick={action.onClick}
+        disabled={action.disabled || action.busy}
+        title={label}
+        aria-label={label}
+        className="inline-flex h-10 w-10 items-center justify-center rounded-full text-red-600 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400 dark:hover:bg-stone-800"
+      >
+        {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <DeleteGlyph />}
+      </button>
+    );
+  }
   return (
     <button
       type="button"
       onClick={action.onClick}
       disabled={action.disabled || action.busy}
-      className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-        destructive
-          ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
-          : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
-      }`}
+      className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
     >
-      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
-      {action.busy ? "Working…" : action.label ?? (kind === "edit" ? "Edit" : "Delete")}
+      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <EditGlyph />}
+      {action.busy ? "Working…" : action.label ?? "Edit"}
     </button>
   );
 }

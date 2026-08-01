@@ -91,6 +91,8 @@ export type AuctionSaleLineListRow = {
   saleId: string;
   dispatchId: string | null;
   dispatchSaleNo: string | null;
+  broker: string | null;
+  mark: string | null;
   lotNo: string | null;
   invoiceNo: string;
   grade: string | null;
@@ -121,6 +123,7 @@ export type AuctionDispatchListRow = {
   selling_mark: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
+  transporter: string | null;
   bundle_dispatch_no: string | null;
   created_date: string | null;
   status: string;
@@ -136,6 +139,15 @@ export type AuctionPhysicalDispatchListRow = {
   warehouse: string;
   invoiceCount: number;
   status: string;
+};
+
+/** The Auction Sale side rail — a virtual grouping over auction_sales by target sale no. */
+export type AuctionSalesSideListRow = {
+  saleNo: string;
+  dispatchNos: string[];
+  brokers: string[];
+  saleDate: string | null;
+  statuses: string[];
 };
 
 /** Broker Invoices that may still be assigned to a physical dispatch. */
@@ -362,6 +374,7 @@ export type ListResourceContracts = {
   "auction.dispatch-lots": { params: { saleId: string }; row: AuctionDispatchLotListRow };
   "auction.reprint-overview": { params: undefined; row: AuctionReprintOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
+  "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
   "leaf.collectors": { params: undefined; row: CollectorListRow };
@@ -397,6 +410,7 @@ export const LIST_RESOURCE_KEYS = [
   "auction.dispatch-lots",
   "auction.reprint-overview",
   "auction.physical-dispatches",
+  "auction.sales-side-list",
   "auction.eligible-broker-invoices",
   "leaf.suppliers",
   "leaf.collectors",

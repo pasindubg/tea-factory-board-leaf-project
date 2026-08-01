@@ -6,7 +6,10 @@ import type { ListDefinition } from "@/components/list-controls";
 
 export type DispatchLotRow = {
   id: string;
+  invoiceNo: string;
   brokerInvoiceNo: string;
+  broker: string;
+  mark: string;
   lotNo: string;
   grade: string;
   bags: number | null;
@@ -24,7 +27,10 @@ export type DispatchInvoiceRow = {
 };
 
 const LOT_COLUMNS: EntityListColumn<DispatchLotRow>[] = [
-  { key: "brokerInvoiceNo", label: "Invoice", accessor: (row) => row.brokerInvoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-mono font-medium" },
+  { key: "invoiceNo", label: "Invoice no.", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-mono font-medium" },
+  { key: "brokerInvoiceNo", label: "Broker invoice", accessor: (row) => row.brokerInvoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-mono" },
+  { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  { key: "mark", label: "Mark", accessor: (row) => row.mark, sortable: true, filter: "select" },
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.lotNo, sortable: true, filter: "text", lov: false },
   { key: "grade", label: "Grade", accessor: (row) => row.grade, sortable: true, filter: "select" },
   { key: "bags", label: "Bags", accessor: (row) => row.bags, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.bags ?? "—" },

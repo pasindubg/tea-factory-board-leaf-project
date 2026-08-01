@@ -2,6 +2,10 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-07-31 - Broker Invoice Transporter Attribute
+
+- Added migration `0043_auction_sale_transporter.sql`: a nullable `transporter` text column on `auction_sales`, captured alongside the existing lorry no./driver fields on a Broker Invoice. No RLS change is needed (the table's `factory_isolation` policy already covers it). Apply migrations through `0043`.
+
 ## 2026-07-26 - Production Migrations Moved Into the Vercel Build
 
 - **Migrations now run inside Vercel's own production build**, not a separate GitHub Actions job. `apps/web/vercel.json`'s `buildCommand` runs `pnpm --filter @tea/db db:migrate` only when `VERCEL_ENV=production`, before `pnpm run build`. This fixes a real ordering problem: GitHub Actions and Vercel used to trigger independently off the same push with no guarantee migrations finished before the new code went live. Now a failed or slow migration fails the build outright, so Vercel never activates a deployment whose migration didn't succeed — the old version keeps serving traffic.

@@ -302,6 +302,13 @@
       "when": 1785337597640,
       "tag": "0042_invoice_number_prefixes",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1785615969448,
+      "tag": "0043_auction_sale_transporter",
+      "breakpoints": true
     }
   ]
 }

@@ -5,10 +5,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
-import { friendlyError } from "@/lib/errors";
+import { friendlyDeleteError, friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
 import { resolveInvoicePrefix } from "../invoice-number";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
@@ -112,7 +112,7 @@ function duplicateDraftInvoiceError(invoice: OpenDraftInvoice) {
 // ---------- Broker invoices ----------
 const DISPATCH_PAYLOAD_FIELDS = [
   "broker_id", "target_sale_no", "sale_date", "dispatch_date",
-  "selling_mark_id", "broker_lorry_no", "driver_name",
+  "selling_mark_id", "broker_lorry_no", "driver_name", "transporter",
 ] as const;
 
 type InsertDispatchResult =
@@ -163,6 +163,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
   const sellingMarkId = str(formData.get("selling_mark_id"));
   const brokerLorryNo = str(formData.get("broker_lorry_no"));
   const driverName = str(formData.get("driver_name"));
+  const transporter = str(formData.get("transporter"));
   if (!brokerId) return { ok: false, error: "Pick a broker." };
   if (!targetSaleNo) return { ok: false, error: "Sale number is required." };
   if (!saleDate) return { ok: false, error: "Sale date is required." };
@@ -199,6 +200,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
       selling_mark_id: sellingMarkId,
       broker_lorry_no: brokerLorryNo || null,
       driver_name: driverName || null,
+      transporter: transporter || null,
       bundled_dispatch_id: bundleId,
       status: "draft",
     })
@@ -276,6 +278,92 @@ export async function deleteSale(id: string): Promise<ListMutationResult> {
   return { ok: true, notice: "Broker invoice deleted." };
 }
 
+/**
+ * Owner-only. A "sale" is a virtual grouping of broker invoices by
+ * target_sale_no (see auction.sales-side-list) — deleting one deletes every
+ * broker invoice assigned to it, which cascades to their lots/lot_invoices
+ * at the DB level exactly like a single deleteSale call.
+ *
+ * sale_lines, vat_ledger, and settlements are declared restrictive in the
+ * schema so an accidental single-invoice or single-lot delete can never
+ * silently destroy financial history. Deleting a whole sale is the one
+ * deliberate exception: this removes that owned financial subtree first,
+ * innermost dependency outwards, so the invoice deletes below succeed.
+ * The FKs stay restrictive for every other delete path.
+ */
+export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const [{ data: dispatches, error: dispatchError }, { data: lots, error: lotError }] = await Promise.all([
+    supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no")
+      .eq("factory_id", profile.factory_id)
+      .eq("sale_kind", "dispatch"),
+    supabase
+      .from("auction_lots")
+      .select("sale_id, provisional_sale_no, final_sale_no")
+      .eq("factory_id", profile.factory_id),
+  ]);
+  if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
+
+  const dispatchIds = new Set(
+    (dispatches ?? [])
+      .filter((dispatch) => saleNoMatches(dispatch.target_sale_no as string | null, saleNo) || saleNoMatches(dispatch.sale_no as string, saleNo))
+      .map((dispatch) => dispatch.id as string),
+  );
+  for (const lot of (lots ?? []) as { sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null }[]) {
+    if (saleNoMatches(lot.final_sale_no || lot.provisional_sale_no, saleNo)) dispatchIds.add(lot.sale_id);
+  }
+  if (dispatchIds.size === 0) return { ok: false, error: "Sale not found." };
+  const invoiceIds = [...dispatchIds];
+
+  // A sale line is normally reachable by its own sale_id, but it also carries a
+  // restrictive lot_id — so collect both ways, or a stray line would block its
+  // lot from cascading away with the invoice below.
+  const { data: lotIdRows, error: lotIdError } = await supabase
+    .from("auction_lots")
+    .select("id")
+    .in("sale_id", invoiceIds);
+  if (lotIdError) return { ok: false, error: friendlyError(lotIdError) };
+  const lotIds = (lotIdRows ?? []).map((row) => row.id as string);
+
+  const [{ data: linesBySale, error: linesBySaleError }, { data: linesByLot, error: linesByLotError }] = await Promise.all([
+    supabase.from("sale_lines").select("id").in("sale_id", invoiceIds),
+    lotIds.length > 0
+      ? supabase.from("sale_lines").select("id").in("lot_id", lotIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (linesBySaleError || linesByLotError) return { ok: false, error: friendlyError(linesBySaleError ?? linesByLotError) };
+  const saleLineIds = [...new Set([...(linesBySale ?? []), ...(linesByLot ?? [])].map((row) => row.id as string))];
+
+  if (saleLineIds.length > 0) {
+    const { error: vatError } = await supabase.from("vat_ledger").delete().in("sale_line_id", saleLineIds);
+    if (vatError) return { ok: false, error: friendlyDeleteError(vatError) };
+    const { error: saleLineError } = await supabase.from("sale_lines").delete().in("id", saleLineIds);
+    if (saleLineError) return { ok: false, error: friendlyDeleteError(saleLineError) };
+  }
+  // settlement_charges cascade with their settlement; matched bank_txns are
+  // only unlinked (ON DELETE SET NULL), so bank history itself survives.
+  const { error: settlementError } = await supabase.from("settlements").delete().in("sale_id", invoiceIds);
+  if (settlementError) return { ok: false, error: friendlyDeleteError(settlementError) };
+
+  let succeeded = 0;
+  const failures: string[] = [];
+  for (const id of dispatchIds) {
+    const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
+    if (deleteError) failures.push(deleteError);
+    else succeeded += 1;
+  }
+  if (succeeded === 0) {
+    return { ok: false, error: failures[0] ?? "No broker invoices were deleted." };
+  }
+  revalidatePath(AUC);
+  return {
+    ok: true,
+    notice: `Sale ${formatSaleNo(saleNo)} deleted (${succeeded} broker invoice${succeeded === 1 ? "" : "s"})${failures.length ? `; ${failures.length} could not be deleted` : ""}.`,
+  };
+}
+
 export async function updateSale(id: string, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
   const updates: Record<string, string | null> = {};
@@ -327,6 +415,10 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   if (formData.has("driver_name")) {
     const driverName = str(formData.get("driver_name"));
     updates.driver_name = driverName || null;
+  }
+  if (formData.has("transporter")) {
+    const transporter = str(formData.get("transporter"));
+    updates.transporter = transporter || null;
   }
   if (Object.keys(updates).length > 0) {
     const { data: updatedSale, error } = await supabase

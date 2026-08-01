@@ -42,6 +42,8 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
       </Link>
     ) : "—",
   },
+  { key: "broker", label: "Broker", accessor: (row) => row.broker ?? null, sortable: true, filter: "select" },
+  { key: "mark", label: "Mark", accessor: (row) => row.mark ?? null, sortable: true, filter: "select" },
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.lotNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-medium" },
   { key: "grade", label: "Grade", accessor: (row) => row.grade ?? null, sortable: true, filter: "select" },
