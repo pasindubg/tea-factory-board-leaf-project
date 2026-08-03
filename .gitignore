@@ -13,6 +13,9 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
-.artifacts/*.png
+# Local design/QA screenshots and scratch output. Ignore the whole directory:
+# the previous `.artifacts/*.png` matched only PNGs sitting directly inside it,
+# so any other format or nested file still got committed.
+.artifacts/
 *.chagptcode
 *.chatgptcode
