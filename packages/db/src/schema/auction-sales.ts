@@ -64,12 +64,15 @@ export const auctionSales = pgTable(
     // new attributes remain valid while all new, fully-specified invoices are
     // protected from a duplicate broker + selling mark in one bundle.
     uniqueIndex("uq_auction_sales_bundle_broker_mark").on(t.factoryId, t.bundledDispatchId, t.brokerId, t.sellingMarkId),
-    // A broker can only have one open Broker Invoice for a selling mark. The
-    // dispatch date and physical bundle are intentionally not part of this
-    // key: opening the same draft on another day would create duplicate work.
+    // A broker can only have one open Broker Invoice for a selling mark ON ONE
+    // DISPATCH DATE. Each dispatch day is genuinely separate work, so the date
+    // is part of the key; without it a second day's invoice for the same
+    // broker and mark could never be created. Same-day duplicates are still
+    // rejected here (and again by uq_auction_sales_bundle_broker_mark, since
+    // the auto-created bundle is per dispatch date).
     // `dispatched` is retained here as the legacy name for an open draft.
     uniqueIndex("uq_auction_sales_open_broker_mark")
-      .on(t.factoryId, t.brokerId, t.sellingMarkId)
+      .on(t.factoryId, t.brokerId, t.sellingMarkId, t.dispatchDate)
       .where(sql`"sale_kind" = 'dispatch' AND "status" IN ('draft', 'dispatched') AND "selling_mark_id" IS NOT NULL`),
   ],
 );

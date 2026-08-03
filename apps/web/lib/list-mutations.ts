@@ -20,6 +20,7 @@ export type ListRefreshResult<T> =
       savedCriteria?: Record<string, string>;
       savedAdvancedQuery?: string | null;
       locked?: Record<string, string>;
+      lockedAdvancedQuery?: string | null;
       canManageLocks?: boolean;
     }
   | { ok: false; error: string };

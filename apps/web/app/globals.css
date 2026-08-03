@@ -211,3 +211,100 @@ body {
     animation-iteration-count: 1 !important;
   }
 }
+
+/*
+ * Printing a Broker Invoice. The workspace is never what should come out of
+ * the printer, so every direct child of <body> is removed except the printout
+ * (which is portalled onto <body> for exactly this reason) and Next.js's own
+ * dev/portal nodes are dropped with it.
+ *
+ * `display: none` matters here: `visibility: hidden` would keep the whole
+ * full-height workspace's layout boxes alive and emit a trailing blank sheet
+ * for an invoice that only needs one page. For the same reason the height
+ * constraints the app shell sets on html/body are released, so the printed
+ * flow is exactly as tall as the invoice content and no taller.
+ */
+@media print {
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff;
+  }
+
+  body > *:not([data-print-document]) {
+    display: none !important;
+  }
+
+  [data-print-document] {
+    display: block !important;
+    height: auto;
+    min-height: 0;
+    color: #000;
+    background: #fff;
+  }
+
+  /* Keep a lot row from splitting across two sheets, and repeat the header
+     when the list genuinely runs long enough to need a second page. */
+  [data-print-document] tr {
+    break-inside: avoid;
+  }
+
+  [data-print-document] thead {
+    display: table-header-group;
+  }
+
+  /* A trailing margin/border on the last block can spill past the page box and
+     pull an otherwise-empty sheet after it. */
+  [data-print-document] > *:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
+/*
+ * Framework list tables scroll horizontally when their columns exceed the
+ * available width. macOS (and iOS) hide overlay scrollbars until the user
+ * scrolls, so a wide table gives no hint that more columns exist off-screen.
+ * This keeps the bar permanently visible on any list that opts in, without
+ * affecting page-level scrolling.
+ */
+.list-scroll-x {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-outline) transparent;
+}
+
+.list-scroll-x::-webkit-scrollbar {
+  height: 10px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.list-scroll-x::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--md-outline) 12%, transparent);
+  border-radius: 999px;
+}
+
+.list-scroll-x::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--md-outline) 65%, transparent);
+  border-radius: 999px;
+}
+
+.list-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: var(--md-outline);
+}
+
+@media print {
+  /* Never print a scrollbar or clip a column off the sheet. */
+  .list-scroll-x {
+    overflow-x: visible;
+  }
+}

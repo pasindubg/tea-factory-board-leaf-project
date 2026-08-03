@@ -21,6 +21,14 @@ export type Profile = {
   active: boolean | null;
   access_role_id: string | null;
   access_role_name: string | null;
+  /**
+   * True only when a factory-defined CUSTOM role narrows this user below their
+   * base role. Every user is assigned an access role — the seeded ones
+   * ("Owner", "Manager", …) mirror the base role exactly and narrow nothing —
+   * so `access_role_id` being set says nothing on its own. Anything deciding
+   * "is this user's base role fully intact?" must read this flag, not the id.
+   */
+  access_role_custom: boolean;
 };
 
 /**
@@ -70,21 +78,24 @@ async function resolveProfile() {
     throw new Error(`Could not load your personal profile. ${friendlyError(personalProfileError)}`);
   }
   let accessRoleName: string | null = null;
+  let accessRoleCustom = false;
   if (data.access_role_id) {
     const { data: accessRole, error: accessRoleError } = await supabase
       .from("access_roles")
-      .select("name")
+      .select("name, system_role")
       .eq("id", data.access_role_id)
       .maybeSingle();
     if (accessRoleError) {
       throw new Error(`Could not load your access role. ${friendlyError(accessRoleError)}`);
     }
     accessRoleName = accessRole?.name ?? null;
+    accessRoleCustom = accessRole?.system_role === false;
   }
   const profile: Profile = {
     ...(data as Profile),
     name: String(personalProfile?.full_name ?? data.name).trim() || data.name,
     access_role_name: accessRoleName,
+    access_role_custom: accessRoleCustom,
   };
   if (profile.active === false) {
     await supabase.auth.signOut();

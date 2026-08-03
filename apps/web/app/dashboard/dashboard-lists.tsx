@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
+import { formatDateTime } from "@/lib/dates";
 
 export type CollectorIntakeRow = { id: string; name: string; kg: number };
 export type RecentWeighingRow = { id: string; supplier: string; collector: string; collectedAt: string; weightKg: number };
@@ -15,7 +16,7 @@ const COLLECTOR_COLUMNS: EntityListColumn<CollectorIntakeRow>[] = [
 const RECENT_COLUMNS: EntityListColumn<RecentWeighingRow>[] = [
   { key: "supplier", label: "Supplier", accessor: (row) => row.supplier, sortable: true, filter: "select", cellClassName: "font-medium" },
   { key: "collector", label: "Collector", accessor: (row) => row.collector, sortable: true, filter: "select" },
-  { key: "collectedAt", label: "Collected", accessor: (row) => row.collectedAt, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => new Date(row.collectedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) },
+  { key: "collectedAt", label: "Collected", accessor: (row) => row.collectedAt, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => formatDateTime(row.collectedAt) },
   { key: "weightKg", label: "Weight kg", accessor: (row) => row.weightKg, sortable: true, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right font-medium tabular-nums", render: (row) => `${row.weightKg.toFixed(2)} kg` },
 ];
 

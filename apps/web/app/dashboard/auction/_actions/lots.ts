@@ -9,7 +9,8 @@ import { AUC, str, num, writeAudit, type Supa } from "./_shared";
 import { formatFourDigitNo } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
-import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
+import { buildCompositeInvoiceNo, invoiceSeqOf, resolveInvoicePrefix } from "../invoice-number";
+import { resolveBrokerInvoiceForLot } from "./sales";
 
 async function dispatchEditError(
   supabase: Supa,
@@ -180,7 +181,7 @@ async function appliedThresholdForLot(
 type SavedLotPatch = Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">;
 
 export type UpdateLotResult =
-  | { ok: true; row: SavedLotPatch; notice: string }
+  | { ok: true; row: SavedLotPatch; notice: string; invalidate?: Extract<ListMutationResult, { ok: true }>["invalidate"] }
   | { ok: false; error: string };
 
 export async function updateLot(id: string, saleId: string, formData: FormData): Promise<UpdateLotResult> {
@@ -203,7 +204,9 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
         error: "That prefix isn't the active one for regular invoices. Only owner, manager, or supervisor can assign an abnormal prefix directly — use the New lot flow for a supervisor-approved entry instead.",
       };
     }
-    invoiceNo = buildCompositeInvoiceNo(prefixResult.prefix.prefix, rawInvoiceNo);
+    // invoiceSeqOf strips any prefix the edit form pre-filled, so re-saving a
+    // lot cannot compose "26I01-26I01-0003".
+    invoiceNo = buildCompositeInvoiceNo(prefixResult.prefix.prefix, invoiceSeqOf(rawInvoiceNo));
   }
   const grade = str(formData.get("grade"));
   const bags = num(formData.get("bags"));
@@ -285,6 +288,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   return {
     ok: true,
     notice: "Lot updated.",
+    invalidate: OVERVIEW_INVALIDATION(saleId),
     row: {
       invoice_no: updatedLot.invoice_no as string | null,
       lot_no: updatedLot.lot_no as string | null,
@@ -506,7 +510,7 @@ export async function createDispatchedLotForList(
     }
     prefixString = prefixResult.prefix.prefix;
   }
-  const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, n));
+  const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, invoiceSeqOf(n)));
   const invoiceNo = invoiceList[0] ?? "";
   const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList);
   if (!reprintSource.ok) return reprintSource;
@@ -587,6 +591,40 @@ export async function createDispatchedLotForList(
   };
 }
 
+/**
+ * Invoice Overview create: adds a lot invoice straight from the overview,
+ * attaching it to the broker invoice for its broker + selling mark + dispatch
+ * date and opening that broker invoice first if none is open yet. Both steps
+ * are the existing ones — this only sequences them, so the overview cannot
+ * drift from what the broker invoice pages do.
+ *
+ * It returns no row: the overview's row shape is a join of lot and broker
+ * invoice fields, so the list refetches through `invalidate` rather than
+ * splicing in a locally-built row that could disagree with the server.
+ */
+export async function createInvoiceFromOverview(formData: FormData): Promise<ListMutationResult> {
+  const resolved = await resolveBrokerInvoiceForLot(formData);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  if ("pending" in resolved) {
+    return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
+  }
+
+  const created = await createDispatchedLotForList(resolved.saleId, formData);
+  if (!created.ok) return { ok: false, error: created.error };
+  const notice = "pending" in created
+    ? created.notice
+    : resolved.created
+      ? "Invoice created, and a new broker invoice was opened for it."
+      : created.notice;
+  return { ok: true, notice, invalidate: OVERVIEW_INVALIDATION(resolved.saleId) };
+}
+
+const OVERVIEW_INVALIDATION = (saleId: string): NonNullable<Extract<ListMutationResult, { ok: true }>["invalidate"]> => [
+  { kind: "all", key: "auction.invoice-overview" },
+  { kind: "all", key: "auction.dispatches" },
+  { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId } } },
+];
+
 /** Replays a lot creation from an approved invoice_prefix_exceptions row. */
 export async function createLotFromApprovedException(
   saleId: string,
@@ -637,5 +675,5 @@ export async function deleteLot(id: string, saleId: string): Promise<ListMutatio
   if (deleteError) return { ok: false, error: deleteError };
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
   if (!synced.ok) return synced;
-  return { ok: true, notice: "Lot deleted." };
+  return { ok: true, notice: "Lot deleted.", invalidate: OVERVIEW_INVALIDATION(saleId) };
 }

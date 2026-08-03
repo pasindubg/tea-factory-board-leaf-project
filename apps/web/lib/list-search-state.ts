@@ -3,7 +3,7 @@ import "server-only";
 import type { createClient } from "@/lib/supabase/server";
 import { withTenantDataScope } from "@/lib/tenant-data";
 import type { Profile } from "@/lib/profile";
-import { filterRowsByCriteria } from "@/lib/list-search-query";
+import { filterRowsByAdvancedQuery, filterRowsByCriteria } from "@/lib/list-search-query";
 
 type Supabase = ReturnType<typeof withTenantDataScope> extends infer T ? T : Awaited<ReturnType<typeof createClient>>;
 
@@ -11,22 +11,36 @@ export type ListSearchState = {
   saved: Record<string, string> | null;
   savedAdvancedQuery: string | null;
   locked: Record<string, string>;
+  /** A locked role's mandatory advanced-query prefix — see mergeAdvancedQuery. */
+  lockedAdvancedQuery: string | null;
   canManageLocks: boolean;
 };
 
 /**
  * The one place that resolves "what search state applies to this user, on
- * this list instance" — a user's own saved criteria plus any role lock,
- * owner/manager exempt from locks entirely. `listScope` is the framework's
- * existing per-list-instance key (`EntityList`'s `scope`/`resource.key`); no
- * other identifying information is ever required from the caller.
+ * this list instance" — a user's own saved criteria plus any role lock. Only
+ * a TRUE owner/manager (not narrowed by a custom access role) is exempt from
+ * locks entirely. A custom role built on top of the manager base role (e.g.
+ * "Dispatch Manager") must NOT inherit that exemption — the owner deliberately
+ * created a narrower role and must be able to lock its search too, exactly
+ * like it already narrows that role's page permissions. Checking
+ * `profile.role` alone would let every manager-based custom role bypass any
+ * lock set specifically for it, since `profile.role` only ever holds the
+ * underlying base role, never the custom role itself. Checking
+ * `access_role_id` instead is equally wrong in the opposite direction: every
+ * user has one (the seeded "Owner"/"Manager" roles narrow nothing), so that
+ * test would strip the owner of lock management — hence `access_role_custom`.
+ *
+ * `listScope` is the framework's existing per-list-instance key (`EntityList`'s
+ * `scope`/`resource.key`); no other identifying information is ever required
+ * from the caller.
  */
 export async function resolveListSearchState(
   supabase: Supabase,
   profile: Profile,
   listScope: string,
 ): Promise<ListSearchState> {
-  const canManageLocks = profile.role === "owner" || profile.role === "manager";
+  const canManageLocks = (profile.role === "owner" || profile.role === "manager") && !profile.access_role_custom;
 
   const [savedResult, lockResult] = await Promise.all([
     supabase
@@ -36,27 +50,31 @@ export async function resolveListSearchState(
       .eq("list_scope", listScope)
       .maybeSingle(),
     canManageLocks
-      ? Promise.resolve({ data: [] as { base_role: string | null; access_role_id: string | null; criteria: Record<string, string> }[] })
+      ? Promise.resolve({ data: [] as { base_role: string | null; access_role_id: string | null; criteria: Record<string, string>; advanced_query: string | null }[] })
       : supabase
           .from("list_search_locks")
-          .select("base_role, access_role_id, criteria")
+          .select("base_role, access_role_id, criteria, advanced_query")
           .eq("list_scope", listScope),
   ]);
 
   const savedRow = savedResult.data as { criteria: Record<string, string> | null; advanced_query: string | null } | null;
 
   let locked: Record<string, string> = {};
+  let lockedAdvancedQuery: string | null = null;
   if (!canManageLocks) {
-    const rows = (lockResult.data ?? []) as { base_role: string | null; access_role_id: string | null; criteria: Record<string, string> }[];
+    const rows = (lockResult.data ?? []) as { base_role: string | null; access_role_id: string | null; criteria: Record<string, string>; advanced_query: string | null }[];
     const byAccessRole = profile.access_role_id ? rows.find((row) => row.access_role_id === profile.access_role_id) : undefined;
     const byBaseRole = rows.find((row) => row.access_role_id === null && row.base_role === profile.role);
-    locked = (byAccessRole ?? byBaseRole)?.criteria ?? {};
+    const matched = byAccessRole ?? byBaseRole;
+    locked = matched?.criteria ?? {};
+    lockedAdvancedQuery = matched?.advanced_query ?? null;
   }
 
   return {
     saved: savedRow?.criteria ?? null,
     savedAdvancedQuery: savedRow?.advanced_query ?? null,
     locked,
+    lockedAdvancedQuery,
     canManageLocks,
   };
 }
@@ -77,6 +95,20 @@ export function mergeListCriteria(args: {
 }
 
 /**
+ * A locked advanced query is a mandatory AND-ed prefix, not a replacement —
+ * unlike column criteria (where a locked key fully overrides), the locked
+ * role can still add its own further terms, which are ANDed onto this one
+ * because the query language already ANDs every token together.
+ */
+export function mergeAdvancedQuery(args: {
+  lockedAdvancedQuery: string | null;
+  requested?: string | null;
+}): string | null {
+  const parts = [args.lockedAdvancedQuery, args.requested].map((value) => (value ?? "").trim()).filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+/**
  * Server-side search/lock enforcement for a "local" list — a detail-page side
  * panel whose rows are fetched by its own server component rather than through
  * the list-resource registry. Call it in that server component on the rows it
@@ -94,5 +126,7 @@ export async function applyServerListSearch<Row>(
   rows: Row[],
 ): Promise<Row[]> {
   const state = await resolveListSearchState(supabase, profile, listScope);
-  return filterRowsByCriteria(rows, mergeListCriteria({ saved: state.saved, locked: state.locked }));
+  const criteriaFiltered = filterRowsByCriteria(rows, mergeListCriteria({ saved: state.saved, locked: state.locked }));
+  const advancedQuery = mergeAdvancedQuery({ lockedAdvancedQuery: state.lockedAdvancedQuery, requested: state.savedAdvancedQuery });
+  return filterRowsByAdvancedQuery(criteriaFiltered, advancedQuery);
 }

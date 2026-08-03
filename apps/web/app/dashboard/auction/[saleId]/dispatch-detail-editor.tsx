@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Printer } from "lucide-react";
 import {
   DetailEmptyPanel,
   DetailField,
@@ -21,7 +21,7 @@ import {
   deleteSale,
   updateSale,
 } from "../actions";
-import { stateBucket } from "../state-buckets";
+import { isOpenDraft, stateBucket } from "../state-buckets";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import {
   InvoiceSideList,
@@ -30,6 +30,7 @@ import {
   type DispatchListItem,
 } from "../invoice-side-list";
 import { buildCompositeInvoiceNo, parseCompositeInvoiceNo, type InvoicePrefixOption } from "../invoice-number";
+import { BrokerInvoicePrintout } from "./broker-invoice-printout";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
 import { NewDispatchFields, type DispatchCreationOptions } from "../new-dispatch-form";
@@ -110,15 +111,17 @@ export function DispatchDetailEditor({
   const [isEditing, setIsEditing] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [printAfterConfirm, setPrintAfterConfirm] = useState(false);
   const [grnOpen, setGrnOpen] = useState(false);
   const [liveRows, setLiveRows] = useState(rows);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  // Owner can delete a broker invoice in any state, not just draft/dispatched.
-  // No other role can ever delete it.
-  const canDelete = isOwner;
-  const canEditDetails = isOwner;
-  const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
+  const isDraftStatus = isOpenDraft(sale.status);
+  // The owner can edit or delete a broker invoice in any state. Everyone else
+  // may do so only while it is still an unconfirmed draft — once confirmed it
+  // is downstream financial work and stops being theirs to change.
+  const canDelete = isOwner || isDraftStatus;
+  const canEditDetails = isOwner || isDraftStatus;
   const canConfirmDraft = !creatingInvoice && !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
   const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
@@ -166,11 +169,22 @@ export function DispatchDetailEditor({
         showAppToast(result.error, "error");
         return;
       }
+      setPrintAfterConfirm(true);
       router.refresh();
     } finally {
       setIsConfirming(false);
     }
   }
+
+  // Confirming a draft hands the invoice straight to the printer. It waits for
+  // the refreshed status to arrive rather than printing immediately, so the
+  // sheet shows the confirmed invoice and not the draft it was a moment ago.
+  useEffect(() => {
+    if (!printAfterConfirm || isOpenDraft(sale.status)) return;
+    setPrintAfterConfirm(false);
+    const timer = window.setTimeout(() => window.print(), 0);
+    return () => window.clearTimeout(timer);
+  }, [printAfterConfirm, sale.status]);
 
   async function createNewDispatch(formData: FormData) {
     const result = await createDispatchWithId(formData);
@@ -307,7 +321,7 @@ export function DispatchDetailEditor({
           <DetailRecordPanel
             tone="draft"
             eyebrow="Draft broker invoice"
-            title={`Invoice Details · ${liveCreation.nextDispatchNo}`}
+            title={`Broker Invoice Details · ${liveCreation.nextDispatchNo}`}
             description="Enter the invoice details here. The workspace stays in place after saving."
             contentClassName="pt-5"
             actions={
@@ -331,8 +345,8 @@ export function DispatchDetailEditor({
       ) : (
         <form ref={formRef} action={saveDispatch}>
           <DetailRecordPanel
-            eyebrow="Invoice details"
-            title={`Invoice Details · ${sale.sale_no}`}
+            eyebrow="Broker invoice details"
+            title={`Broker Invoice Details · ${sale.sale_no}`}
             description={
               <>
                 {broker}
@@ -343,6 +357,16 @@ export function DispatchDetailEditor({
             contentClassName=""
             actions={
               <>
+                {!isEditing ? (
+                  <AppButton
+                    type="button"
+                    variant="secondary"
+                    onClick={() => window.print()}
+                  >
+                    <Printer aria-hidden="true" className="h-4 w-4" />
+                    Print
+                  </AppButton>
+                ) : null}
                 {canEditDetails && !isEditing ? (
                   <AppButton
                     type="button"
@@ -494,6 +518,25 @@ export function DispatchDetailEditor({
         </div>
       </form>
     </AppDrawer>
+    {/* Off-screen; only the print stylesheet ever lays this out. Skipped while
+        creating a new invoice, which has nothing to print yet. */}
+    {!creatingInvoice && (
+      <BrokerInvoicePrintout
+        saleNo={sale.sale_no}
+        broker={broker}
+        sellingMark={sale.selling_mark}
+        dispatchDate={sale.dispatch_date}
+        saleDate={sale.sale_date}
+        promptDate={sale.prompt_date}
+        targetSaleNo={sale.target_sale_no}
+        transporter={sale.transporter}
+        brokerLorryNo={sale.broker_lorry_no}
+        driverName={sale.driver_name}
+        bundleDispatchNo={sale.bundle_dispatch_no}
+        status={displayStatus}
+        rows={liveRows}
+      />
+    )}
     </>
   );
 }

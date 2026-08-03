@@ -34,6 +34,21 @@ export function parseCompositeInvoiceNo(value: string | null | undefined): { pre
   return { prefix: raw.slice(0, dash), seq: raw.slice(dash + 1) };
 }
 
+/**
+ * The sequence part of a submitted invoice number, whether or not it still
+ * carries a prefix.
+ *
+ * Every edit form pre-fills its input with the stored value, which is the full
+ * composite ("26I01-0003"). Feeding that straight back into
+ * buildCompositeInvoiceNo prefixes it a second time and stores
+ * "26I01-26I01-0003" — note that formatFourDigitNo does NOT strip a prefix, it
+ * only pads the trailing digits, so it cannot catch this on its own. Always
+ * run user-submitted invoice numbers through here before re-composing.
+ */
+export function invoiceSeqOf(value: string | null | undefined): string {
+  return parseCompositeInvoiceNo(value)?.seq ?? String(value ?? "").trim();
+}
+
 export type ResolveInvoicePrefixResult =
   | { ok: true; needsApproval: false; prefix: { id: string; prefix: string } }
   | { ok: true; needsApproval: true; requestedPrefixId: string }

@@ -1,0 +1,1 @@
+ALTER TABLE "list_search_locks" ADD COLUMN "advanced_query" text;

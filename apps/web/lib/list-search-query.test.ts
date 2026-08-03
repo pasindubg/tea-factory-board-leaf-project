@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeEmbeds, applyListFilters, embedSelect, filterRowsByCriteria, resolveSearchColumn, splitPage } from "./list-search-query";
+import { activeEmbeds, applyListFilters, embedSelect, filterRowsByAdvancedQuery, filterRowsByCriteria, resolveSearchColumn, splitPage } from "./list-search-query";
 
 describe("resolveSearchColumn", () => {
   it("auto-maps a plain UI key to its snake_case base column", () => {
@@ -121,6 +121,43 @@ describe("filterRowsByCriteria", () => {
   it("drops every row when a criterion names a field the rows do not have", () => {
     // Fail closed: an unknown locked key must not silently widen access.
     expect(filterRowsByCriteria(rows, { missingField: "x" })).toHaveLength(0);
+  });
+});
+
+describe("filterRowsByAdvancedQuery", () => {
+  const rows = [
+    { id: "1", broker: "BPML", netKg: 120, area: "Akmeemana" },
+    { id: "2", broker: "ASIA SIYAKA", netKg: 80, area: "Akmeemana" },
+    { id: "3", broker: "BPML", netKg: 200, area: "Baddegama" },
+  ];
+
+  it("returns every row for an empty query", () => {
+    expect(filterRowsByAdvancedQuery(rows, "")).toHaveLength(3);
+    expect(filterRowsByAdvancedQuery(rows, null)).toHaveLength(3);
+    expect(filterRowsByAdvancedQuery(rows, undefined)).toHaveLength(3);
+  });
+
+  it("free-text tokens OR-match across every row value", () => {
+    expect(filterRowsByAdvancedQuery(rows, "akmeemana").map((r) => r.id)).toEqual(["1", "2"]);
+  });
+
+  it("a key:value token substring-matches that row property", () => {
+    expect(filterRowsByAdvancedQuery(rows, "broker:BPML").map((r) => r.id)).toEqual(["1", "3"]);
+  });
+
+  it("a key>value token numeric-compares that row property", () => {
+    expect(filterRowsByAdvancedQuery(rows, "netKg>100").map((r) => r.id)).toEqual(["1", "3"]);
+  });
+
+  it("ANDs multiple tokens together — this is how a locked query composes with a role's own further terms", () => {
+    // Simulates: lockedAdvancedQuery = "broker:BPML", role types "netKg>150".
+    const locked = "broker:BPML";
+    const own = "netKg>150";
+    expect(filterRowsByAdvancedQuery(rows, `${locked} ${own}`).map((r) => r.id)).toEqual(["3"]);
+  });
+
+  it("falls back to a free-text match when the key does not exist on the row", () => {
+    expect(filterRowsByAdvancedQuery(rows, "missing:x")).toHaveLength(0);
   });
 });
 

@@ -24,6 +24,10 @@ export const listSearchLocks = pgTable(
     }),
     accessRoleId: uuid("access_role_id").references(() => accessRoles.id, { onDelete: "cascade" }),
     criteria: jsonb("criteria").$type<Record<string, string>>().default({}).notNull(),
+    // A locked role's advanced query is a mandatory AND-ed prefix, never a
+    // full replacement: the role can still type its own further terms, which
+    // are ANDed onto this one (see mergeAdvancedQuery in list-search-state.ts).
+    advancedQuery: text("advanced_query"),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   },

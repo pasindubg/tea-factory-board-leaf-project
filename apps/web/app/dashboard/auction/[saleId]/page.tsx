@@ -29,7 +29,7 @@ export default async function SaleDetailPage({
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
         Broker invoice not found.{" "}
         <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
-          Back to Invoice Details
+          Back to Broker Invoice Details
         </Link>
       </div>
     );

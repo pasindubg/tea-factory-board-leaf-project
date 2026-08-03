@@ -11,9 +11,10 @@ import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionPrefixExceptionListRow } from "@/lib/list-resources";
 import { approveInvoicePrefixException, declineInvoicePrefixException } from "../actions";
 import { CATEGORY_LABEL, type InvoiceCategory } from "../invoice-number";
+import { formatDateTime } from "@/lib/dates";
 
 function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
+  return formatDateTime(value);
 }
 
 function summarizePayload(row: AuctionPrefixExceptionListRow): string {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Keyboard
 import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
 import { showAppToast } from "@/components/action-feedback";
 import { refreshListResource } from "@/lib/list-resource-action";
-import { removeListSearchLock, saveListSearchLock, saveListSearchState } from "@/lib/list-search-actions";
+import { listLockableRoles, removeListSearchLock, saveListSearchLock, saveListSearchState } from "@/lib/list-search-actions";
 import type { Role } from "@/lib/roles";
 import type { ListMutationResult, ListRefreshResult } from "@/lib/list-mutations";
 import { listResourceIdentity, type ListInvalidation, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
@@ -105,6 +105,10 @@ export type FrameworkListSearchState = {
   saved: Record<string, string> | null;
   savedAdvancedQuery: string | null;
   locked: Record<string, string>;
+  /** A locked role's mandatory advanced-query prefix, ANDed in server-side
+   * regardless of what the client sends — never merged into the editable
+   * advancedQuery input, only shown alongside it (see ListSearchPanel). */
+  lockedAdvancedQuery: string | null;
   canManageLocks: boolean;
 };
 
@@ -151,6 +155,7 @@ export function useFrameworkListData<Key extends ListResourceKey>(
       saved: result.savedCriteria ?? null,
       savedAdvancedQuery: result.savedAdvancedQuery ?? null,
       locked: result.locked ?? {},
+      lockedAdvancedQuery: result.lockedAdvancedQuery ?? null,
       canManageLocks: Boolean(result.canManageLocks),
     });
   }, []);
@@ -590,12 +595,18 @@ export function useListControls<T>(
   const [appliedAdvancedQuery, setAppliedAdvancedQuery] = useState("");
   const [storageHydrated, setStorageHydrated] = useState(!options.storageKey);
   const [locked, setLocked] = useState<Record<string, string>>({});
+  const [lockedAdvancedQuery, setLockedAdvancedQuery] = useState<string | null>(null);
   const seededSearchState = useRef(false);
 
   useEffect(() => {
     if (!options.searchState) return;
-    const { saved, savedAdvancedQuery, locked: nextLocked } = options.searchState;
+    const { saved, savedAdvancedQuery, locked: nextLocked, lockedAdvancedQuery: nextLockedAdvancedQuery } = options.searchState;
     setLocked(nextLocked);
+    // Kept separate from the editable advancedQuery state below — this is
+    // display-only. The lock is enforced server-side (loadListResource ANDs
+    // it in unconditionally); the client never needs to splice it into what
+    // it sends.
+    setLockedAdvancedQuery(nextLockedAdvancedQuery ?? null);
     if (!seededSearchState.current) {
       seededSearchState.current = true;
       const merged = { ...(saved ?? {}), ...nextLocked };
@@ -765,6 +776,7 @@ export function useListControls<T>(
     activeFilterCount,
     optionsFor,
     locked,
+    lockedAdvancedQuery,
     canManageLocks: options.searchState?.canManageLocks ?? false,
   };
 }
@@ -871,13 +883,18 @@ export function ListSearchPanel<T>({
                   <ColumnSearchInput col={col} controls={controls} />
                 </label>
               ))}
-              <details className="group sm:col-span-2 lg:col-span-3">
+              <details className="group sm:col-span-2 lg:col-span-3" open={Boolean(controls.lockedAdvancedQuery) || undefined}>
                 <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-1 rounded-full border border-stone-300 px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800 [&::-webkit-details-marker]:hidden">
                   Advanced <span aria-hidden="true">⌄</span>
                 </summary>
                 <div className="mt-3 rounded-2xl bg-stone-50 p-4 dark:bg-stone-900">
+                  {controls.lockedAdvancedQuery && (
+                    <p className="mb-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      Always applied by your role: <span className="font-mono">{controls.lockedAdvancedQuery}</span>
+                    </p>
+                  )}
                   <label className="grid gap-2 text-xs font-semibold text-stone-500 dark:text-stone-400">
-                    Advanced query
+                    {controls.lockedAdvancedQuery ? "Add your own terms (combined with the query above)" : "Advanced query"}
                     <input value={controls.advancedQuery} onChange={(event) => controls.setAdvancedQuery(event.target.value)} placeholder='broker:BPML netKg>100 saleNo:019 "Galle"' className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100" />
                   </label>
                 </div>
@@ -922,16 +939,43 @@ export function ListSearchPanel<T>({
 // Owner/manager only, rendered inline in this same search panel — locking a
 // search is configured at the list it applies to, not a separate admin
 // screen. Invisible to every other role (gated by controls.canManageLocks).
+//
+// A selection is either a base role ("base:supervisor") or a specific
+// factory-defined custom role ("custom:<access_role_id>") — the lock itself
+// (list_search_locks) and its server-side enforcement already support both;
+// this control just needs to offer the custom-role list too.
 function LockSearchControl<T>({ listScope, controls }: { listScope: string; controls: ListControls<T> }) {
-  const [role, setRole] = useState<Role>(LOCKABLE_ROLES[0]!);
+  const [selection, setSelection] = useState<string>(`base:${LOCKABLE_ROLES[0]}`);
+  const [customRoles, setCustomRoles] = useState<{ id: string; name: string; baseRole: string }[]>([]);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listLockableRoles().then((result) => {
+      if (!cancelled && result.ok) setCustomRoles(result.roles);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function target(): { role: { baseRole: Role } | { accessRoleId: string }; label: string } {
+    if (selection.startsWith("custom:")) {
+      const id = selection.slice("custom:".length);
+      const found = customRoles.find((r) => r.id === id);
+      return { role: { accessRoleId: id }, label: found?.name ?? "this role" };
+    }
+    const baseRole = selection.slice("base:".length) as Role;
+    return { role: { baseRole }, label: baseRole };
+  }
 
   async function lock() {
     setBusy(true);
     try {
+      const { role, label } = target();
       const criteria = { ...controls.columnSearches, ...controls.locked };
-      const result = await saveListSearchLock({ listScope, role: { baseRole: role }, criteria });
-      showAppToast(result.ok ? `Search locked for ${role}.` : result.error, result.ok ? undefined : "error");
+      const result = await saveListSearchLock({ listScope, role, criteria, advancedQuery: controls.advancedQuery });
+      showAppToast(result.ok ? `Search locked for ${label}.` : result.error, result.ok ? undefined : "error");
     } finally {
       setBusy(false);
     }
@@ -940,8 +984,9 @@ function LockSearchControl<T>({ listScope, controls }: { listScope: string; cont
   async function unlock() {
     setBusy(true);
     try {
-      const result = await removeListSearchLock({ listScope, role: { baseRole: role } });
-      showAppToast(result.ok ? `Lock removed for ${role}.` : result.error, result.ok ? undefined : "error");
+      const { role, label } = target();
+      const result = await removeListSearchLock({ listScope, role });
+      showAppToast(result.ok ? `Lock removed for ${label}.` : result.error, result.ok ? undefined : "error");
     } finally {
       setBusy(false);
     }
@@ -951,11 +996,18 @@ function LockSearchControl<T>({ listScope, controls }: { listScope: string; cont
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span className="font-semibold text-amber-800 dark:text-amber-300">Lock this search for role:</span>
       <select
-        value={role}
-        onChange={(event) => setRole(event.target.value as Role)}
+        value={selection}
+        onChange={(event) => setSelection(event.target.value)}
         className="rounded border border-amber-300 bg-white px-2 py-1 dark:border-amber-800 dark:bg-stone-900"
       >
-        {LOCKABLE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+        <optgroup label="Base role">
+          {LOCKABLE_ROLES.map((r) => <option key={r} value={`base:${r}`}>{r}</option>)}
+        </optgroup>
+        {customRoles.length > 0 && (
+          <optgroup label="Custom role">
+            {customRoles.map((r) => <option key={r.id} value={`custom:${r.id}`}>{r.name} ({r.baseRole})</option>)}
+          </optgroup>
+        )}
       </select>
       <button type="button" disabled={busy} onClick={lock} className="min-h-8 rounded-full bg-amber-700 px-3 font-semibold text-white disabled:opacity-50 dark:bg-amber-600">
         Lock current search
@@ -964,7 +1016,7 @@ function LockSearchControl<T>({ listScope, controls }: { listScope: string; cont
         Remove lock
       </button>
       <span className="basis-full text-[0.7rem] font-normal text-amber-700/80 dark:text-amber-400/80">
-        Owner and manager always see unrestricted data. Other roles on this list will have these fields fixed and disabled.
+        Owner and manager see unrestricted data, unless a custom role narrows them. Every other role on this list will have these fields fixed and disabled.
       </span>
     </div>
   );

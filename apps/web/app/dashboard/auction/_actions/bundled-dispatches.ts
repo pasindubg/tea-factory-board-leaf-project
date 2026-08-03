@@ -154,6 +154,94 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
 }
 
 /**
+ * Owner-only. Edits the dispatch's own attributes — the date range and the
+ * warehouse it leaves from. The dispatch number is system-assigned and the
+ * set of bundled broker invoices is managed by create/delete, so neither is
+ * editable here.
+ *
+ * The date range still has to contain every broker invoice already bundled
+ * into this dispatch: narrowing it past one of them would leave that invoice
+ * in a dispatch whose dates it falls outside, which is exactly the state
+ * createBundledDispatch refuses to produce.
+ */
+export async function updateBundledDispatch(id: string, formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const dispatchDateFrom = str(formData.get("dispatch_date_from"));
+  const dispatchDateTo = str(formData.get("dispatch_date_to"));
+  const warehouseId = str(formData.get("warehouse_id"));
+
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoDate.test(dispatchDateFrom) || !isoDate.test(dispatchDateTo)) {
+    return { ok: false, error: "Choose a valid dispatch date range." };
+  }
+  if (dispatchDateFrom > dispatchDateTo) {
+    return { ok: false, error: "Dispatch start date must be on or before the end date." };
+  }
+  if (!warehouseId) return { ok: false, error: "Choose a warehouse." };
+
+  const { data: dispatch, error: dispatchError } = await supabase
+    .from("auction_bundled_dispatches")
+    .select("id")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (dispatchError) return { ok: false, error: friendlyError(dispatchError) };
+  if (!dispatch) return { ok: false, error: "Dispatch not found." };
+
+  // Same untrusted-LOV handling as create: resolve the warehouse inside this
+  // factory and reject a retired one even if a disabled option was forged.
+  const { data: warehouse, error: warehouseError } = await supabase
+    .from("auction_warehouses")
+    .select("name, active")
+    .eq("id", warehouseId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (warehouseError) return { ok: false, error: friendlyError(warehouseError) };
+  if (!warehouse) return { ok: false, error: "Unknown warehouse." };
+  const warehouseRecord = warehouse as { name: string; active: boolean };
+  if (!warehouseRecord.active) {
+    return { ok: false, error: "This warehouse is inactive and cannot be used for a dispatch." };
+  }
+
+  const { data: bundled, error: bundledError } = await supabase
+    .from("auction_sales")
+    .select("sale_no, dispatch_date")
+    .eq("factory_id", profile.factory_id)
+    .eq("bundled_dispatch_id", id);
+  if (bundledError) return { ok: false, error: friendlyError(bundledError) };
+  const outside = (bundled ?? []).filter((invoice) => {
+    const date = invoice.dispatch_date as string | null;
+    return !date || date < dispatchDateFrom || date > dispatchDateTo;
+  });
+  if (outside.length > 0) {
+    const names = outside.map((invoice) => formatFourDigitNo(invoice.sale_no as string) || "unknown").join(", ");
+    return { ok: false, error: `This date range excludes Broker Invoice ${names}, which is bundled into this dispatch. Widen the range or remove the invoice first.` };
+  }
+
+  const { error: updateError } = await supabase
+    .from("auction_bundled_dispatches")
+    .update({
+      // dispatch_date is the legacy start-date column and must track the range.
+      dispatch_date: dispatchDateFrom,
+      dispatch_date_from: dispatchDateFrom,
+      dispatch_date_to: dispatchDateTo,
+      warehouse: warehouseRecord.name,
+    })
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id);
+  if (updateError) return { ok: false, error: friendlyError(updateError) };
+
+  return {
+    ok: true,
+    notice: "Dispatch updated.",
+    invalidate: [
+      { kind: "all", key: "auction.physical-dispatches" },
+      { kind: "all", key: "auction.dispatches" },
+    ],
+  };
+}
+
+/**
  * Owner-only. Deleting a bundled (physical) dispatch does not delete the
  * broker invoices linked to it — `auction_sales.bundled_dispatch_id` is
  * ON DELETE SET NULL, so they simply become unbundled (eligible for a new

@@ -5,6 +5,7 @@ import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import { createInvoicePrefix, activateInvoicePrefix } from "../actions";
 import { CATEGORY_LABEL, type InvoiceCategory } from "../invoice-number";
+import { formatDate } from "@/lib/dates";
 
 export type PrefixTableRow = {
   id: string;
@@ -54,7 +55,7 @@ const COLUMNS: EntityListColumn<PrefixTableRow>[] = [
     label: "Created",
     accessor: (row) => row.createdAt ?? "",
     sortable: true,
-    render: (row) => row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "—",
+    render: (row) => formatDate(row.createdAt),
   },
 ];
 

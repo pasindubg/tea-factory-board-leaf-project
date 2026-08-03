@@ -121,7 +121,7 @@ export function applyListFilters<Q>(query: Q, criteria: ListSearchCriteria | und
   return result as unknown as Q;
 }
 
-function tokeniseAdvancedQuery(query: string): string[] {
+export function tokeniseAdvancedQuery(query: string): string[] {
   return query.match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) ?? [];
 }
 
@@ -228,4 +228,43 @@ export function filterRowsByCriteria<Row>(rows: Row[], criteria: ListSearchCrite
       return String(raw ?? "").toLowerCase().includes(value.toLowerCase());
     }),
   );
+}
+
+/**
+ * Row-level advanced-query filter — the same `key:value`/`key>value`/free-text
+ * mini language as `applyAdvancedQuery`, but matched against a row's own
+ * properties in memory instead of pushed into SQL. This is what gives a
+ * locked advanced query real enforcement for local/aggregated lists (the ones
+ * that can't push a `search` config into SQL), exactly like
+ * `filterRowsByCriteria` already does for locked column criteria.
+ */
+export function filterRowsByAdvancedQuery<Row>(rows: Row[], advancedQuery: string | null | undefined): Row[] {
+  const tokens = tokeniseAdvancedQuery((advancedQuery ?? "").trim());
+  if (tokens.length === 0) return rows;
+  return rows.filter((row) => tokens.every((token) => matchesRowToken(row, token)));
+}
+
+function matchesRowToken(row: unknown, token: string): boolean {
+  const record = row as Record<string, unknown>;
+  const match = token.match(/^([a-zA-Z0-9_]+)(>=|<=|=|>|<|:)(.+)$/);
+  if (match) {
+    const [, key, op, rawValue] = match;
+    if (Object.hasOwn(record, key)) {
+      const raw = record[key];
+      const value = rawValue.trim();
+      if (op === ":") return String(raw ?? "").toLowerCase().includes(value.toLowerCase());
+      if (op === "=") return String(raw ?? "").toLowerCase() === value.toLowerCase();
+      const left = Number(raw);
+      const right = Number(value);
+      if (Number.isNaN(left) || Number.isNaN(right)) return false;
+      if (op === ">") return left > right;
+      if (op === ">=") return left >= right;
+      if (op === "<") return left < right;
+      return left <= right;
+    }
+    // Unknown key on this row shape — fall through and treat the whole token
+    // as free text rather than silently matching everything.
+  }
+  const needle = token.toLowerCase();
+  return Object.values(record).some((value) => String(value ?? "").toLowerCase().includes(needle));
 }

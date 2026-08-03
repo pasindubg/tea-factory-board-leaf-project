@@ -58,10 +58,10 @@ const COLUMNS: EntityListColumn<ContractLineRow>[] = [
   },
   { key: "buyerName", label: "Buyer", accessor: (row) => row.buyerName, sortable: true, filter: "select", cellClassName: "text-xs" },
   { key: "netWt", label: "Nett kg", accessor: (row) => row.netWt, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.netWt.toLocaleString(undefined, { minimumFractionDigits: 2 }) },
-  { key: "pricePerKg", label: "Price/kg", accessor: (row) => row.pricePerKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.pricePerKg.toLocaleString() },
+  { key: "pricePerKg", label: "Price/kg", accessor: (row) => row.pricePerKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.pricePerKg.toLocaleString("en-LK") },
   { key: "priceMin", label: "Valuation /kg", accessor: (row) => row.priceMin ?? null, sortable: true, render: (row) => row.priceMin == null ? "—" : row.priceMin === row.priceMax ? row.priceMin.toFixed(0) : `${row.priceMin}–${row.priceMax}` },
   { key: "classification", label: "vs range", accessor: (row) => row.classification, sortable: true, filter: "select", filterOptions: CLASS_OPTIONS.map((classification) => ({ value: classification, label: classification })), render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${CLASS_STYLE[row.classification]}`}>{row.classification}</span> },
-  { key: "proceeds", label: "Proceeds", accessor: (row) => row.proceeds, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.proceeds.toLocaleString() },
+  { key: "proceeds", label: "Proceeds", accessor: (row) => row.proceeds, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.proceeds.toLocaleString("en-LK") },
   {
     key: "proceedsCheck",
     label: "Proceeds check",
@@ -70,8 +70,8 @@ const COLUMNS: EntityListColumn<ContractLineRow>[] = [
     filterOptions: [{ value: "Matches", label: "Matches" }, { value: "Mismatch", label: "Mismatch" }, { value: "Not sold", label: "Not sold" }],
     render: (row) => <ProceedsCheck row={row} />,
   },
-  { key: "variance", label: "Δ vs projected", accessor: (row) => row.variance ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.variance == null ? "—" : `${row.variance > 0 ? "+" : ""}${row.variance.toLocaleString()}` },
-  { key: "vatAmount", label: "VAT", accessor: (row) => row.vatAmount, sortable: true, cellClassName: "text-xs", render: (row) => <>{row.vatAmount.toLocaleString()}{row.onGuarantee && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-800 dark:bg-amber-900 dark:text-amber-400">guar.</span>}</> },
+  { key: "variance", label: "Δ vs projected", accessor: (row) => row.variance ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.variance == null ? "—" : `${row.variance > 0 ? "+" : ""}${row.variance.toLocaleString("en-LK")}` },
+  { key: "vatAmount", label: "VAT", accessor: (row) => row.vatAmount, sortable: true, cellClassName: "text-xs", render: (row) => <>{row.vatAmount.toLocaleString("en-LK")}{row.onGuarantee && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-800 dark:bg-amber-900 dark:text-amber-400">guar.</span>}</> },
 ];
 
 const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<ContractLineRow>;
@@ -106,7 +106,7 @@ function ProceedsCheck({ row }: { row: ContractLineRow }) {
   }
   return (
     <span className="text-xs font-medium text-red-700 dark:text-red-300">
-      Expected {row.expectedProceeds.toLocaleString()} ({row.proceedsVariance > 0 ? "+" : ""}{row.proceedsVariance.toLocaleString()})
+      Expected {row.expectedProceeds.toLocaleString("en-LK")} ({row.proceedsVariance > 0 ? "+" : ""}{row.proceedsVariance.toLocaleString("en-LK")})
     </span>
   );
 }

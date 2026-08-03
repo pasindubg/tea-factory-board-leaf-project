@@ -9,6 +9,7 @@ import { friendlyDeleteError, friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
+import { isOpenDraft } from "../state-buckets";
 import { resolveInvoicePrefix } from "../invoice-number";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
@@ -77,22 +78,30 @@ type OpenDraftInvoice = { id: string; sale_no: string; dispatch_date: string | n
 
 /**
  * There must be one and only one open Broker Invoice for a broker + selling
- * mark. This deliberately ignores dispatch day: making a second bundle on a
- * later day must not reopen the same invoice work.
+ * mark ON A GIVEN DISPATCH DATE. A later dispatch day is separate work and
+ * gets its own invoice, so the date is part of the key — mirroring the
+ * uq_auction_sales_open_broker_mark index that backs this check.
+ *
+ * A null dispatch date can never collide (Postgres treats nulls as distinct in
+ * a unique index), so it short-circuits rather than matching other null-dated
+ * rows and reporting a conflict the database would happily accept.
  */
 async function findOpenDraftInvoice(
   supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
   factoryId: string,
   brokerId: string,
   sellingMarkId: string,
+  dispatchDate: string | null,
   excludingId?: string,
 ): Promise<OpenDraftInvoice | null> {
+  if (!dispatchDate) return null;
   let query = supabase
     .from("auction_sales")
     .select("id, sale_no, dispatch_date")
     .eq("factory_id", factoryId)
     .eq("broker_id", brokerId)
     .eq("selling_mark_id", sellingMarkId)
+    .eq("dispatch_date", dispatchDate)
     .eq("sale_kind", "dispatch")
     .in("status", ["draft", "dispatched"])
     .order("created_at", { ascending: true })
@@ -105,8 +114,8 @@ async function findOpenDraftInvoice(
 
 function duplicateDraftInvoiceError(invoice: OpenDraftInvoice) {
   const invoiceNo = formatFourDigitNo(invoice.sale_no) || invoice.sale_no;
-  const date = invoice.dispatch_date ? ` (dispatch date ${invoice.dispatch_date})` : "";
-  return `Broker Invoice ${invoiceNo}${date} is already a draft for this broker and selling mark. Confirm, delete, or reuse it before creating another.`;
+  const date = invoice.dispatch_date ? ` on ${invoice.dispatch_date}` : "";
+  return `Broker Invoice ${invoiceNo} is already open for this broker and selling mark${date}. Confirm, delete, or reuse it, or use a different dispatch date.`;
 }
 
 // ---------- Broker invoices ----------
@@ -176,7 +185,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
   if (!broker) return { ok: false, error: "Unknown broker." };
   if (!mark) return { ok: false, error: "Unknown selling mark." };
   try {
-    const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId);
+    const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
     if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
@@ -206,7 +215,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
     })
     .select("id")
     .single();
-  if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice. Refresh the list and reuse or finish that draft before creating another." };
+  if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice on this dispatch date. Refresh the list and reuse or finish that draft, or use a different dispatch date." };
   if (error || !data) return { ok: false, error: friendlyError(error ?? { message: "Could not create the broker invoice." }) };
   const { error: linkError } = await supabase.from("auction_bundled_dispatch_invoices").insert({
     factory_id: profile.factory_id,
@@ -248,6 +257,45 @@ export async function createSaleWithId(formData: FormData): Promise<
 export { createSale as createDispatch };
 export { createSaleWithId as createDispatchWithId };
 
+export type ResolvedBrokerInvoice =
+  | { ok: true; saleId: string; created: boolean }
+  | { ok: true; pending: true }
+  | { ok: false; error: string };
+
+/**
+ * The broker invoice a lot invoice belongs to, given its broker, selling mark
+ * and dispatch date. Used by the Invoice Overview page so a lot invoice can be
+ * added without first navigating to its broker invoice.
+ *
+ * The grouping rule is deliberately not re-implemented here: it reuses the
+ * same findOpenDraftInvoice lookup that governs direct broker invoice
+ * creation, and when nothing is open it creates the invoice through
+ * insertDispatch itself — so numbering, prefix resolution and the
+ * one-open-invoice-per broker+mark+dispatch-date rule stay identical whichever
+ * page the user starts from.
+ */
+export async function resolveBrokerInvoiceForLot(formData: FormData): Promise<ResolvedBrokerInvoice> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const brokerId = str(formData.get("broker_id"));
+  const sellingMarkId = str(formData.get("selling_mark_id"));
+  const dispatchDate = str(formData.get("dispatch_date"));
+  if (!brokerId) return { ok: false, error: "Pick a broker." };
+  if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
+  if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
+
+  try {
+    const existing = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
+    if (existing) return { ok: true, saleId: existing.id, created: false };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
+  }
+
+  const created = await insertDispatch(formData);
+  if (!created.ok) return created;
+  if ("pending" in created) return { ok: true, pending: true };
+  return { ok: true, saleId: created.id, created: true };
+}
+
 /** Replays a broker-invoice creation from an approved invoice_prefix_exceptions row. */
 export async function createDispatchFromApprovedException(
   payload: Record<string, unknown>,
@@ -264,14 +312,19 @@ export async function createDispatchFromApprovedException(
 }
 
 export async function deleteSale(id: string): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const { supabase, profile } = await requireModuleAccess("auction");
   // Preserve the entity-specific role and tenant guard. PostgreSQL then owns
   // the atomic relationship behavior: operational lots/configuration cascade,
   // while sale proceeds, VAT and settlements reject deletion with a readable
   // dependent-record error.
   const { data: sale } = await supabase
-    .from("auction_sales").select("id").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
+    .from("auction_sales").select("id, status").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
   if (!sale) return { ok: false, error: "Broker invoice not found." };
+  // The owner may delete at any point in the lifecycle; everyone else only
+  // while it is still an unconfirmed draft.
+  if (profile.role !== "owner" && !isOpenDraft(sale.status as string | null)) {
+    return { ok: false, error: "This broker invoice has been confirmed — only the owner can delete it now." };
+  }
   const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
   if (deleteError) return { ok: false, error: deleteError };
   revalidatePath(AUC);
@@ -365,7 +418,22 @@ export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutati
 }
 
 export async function updateSale(id: string, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireProfile(["owner"]);
+  const { supabase, profile } = await requireModuleAccess("auction");
+  // Fetched once up front: the owner may edit at any point in the lifecycle,
+  // everyone else only while the invoice is still an unconfirmed draft. The
+  // selling-mark branch below reuses this row rather than re-reading it.
+  const { data: currentSale, error: currentSaleError } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_kind, status, dispatch_date")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (currentSaleError) return { ok: false, error: friendlyError(currentSaleError) };
+  if (!currentSale) return { ok: false, error: "Broker invoice not found." };
+  if (profile.role !== "owner" && !isOpenDraft(currentSale.status as string | null)) {
+    return { ok: false, error: "This broker invoice has been confirmed — only the owner can edit it now." };
+  }
+
   const updates: Record<string, string | null> = {};
   const target = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
@@ -384,21 +452,14 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
       .maybeSingle();
     if (markError) return { ok: false, error: friendlyError(markError) };
     if (!mark) return { ok: false, error: "Unknown selling mark." };
-    const { data: currentSale, error: currentSaleError } = await supabase
-      .from("auction_sales")
-      .select("id, broker_id, sale_kind, status")
-      .eq("id", id)
-      .eq("factory_id", profile.factory_id)
-      .maybeSingle();
-    if (currentSaleError) return { ok: false, error: friendlyError(currentSaleError) };
-    if (!currentSale) return { ok: false, error: "Broker invoice not found." };
-    if (currentSale.sale_kind === "dispatch" && ["draft", "dispatched"].includes(currentSale.status as string)) {
+    if (currentSale.sale_kind === "dispatch" && isOpenDraft(currentSale.status as string | null)) {
       try {
         const existingDraft = await findOpenDraftInvoice(
           supabase,
           profile.factory_id,
           currentSale.broker_id as string,
           sellingMarkId,
+          (currentSale as { dispatch_date?: string | null }).dispatch_date ?? null,
           id,
         );
         if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
@@ -428,7 +489,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
       .eq("factory_id", profile.factory_id)
       .select("id")
       .maybeSingle();
-    if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice. Refresh the list and reuse or finish that draft before saving." };
+    if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice on this dispatch date. Refresh the list and reuse or finish that draft before saving." };
     if (error) return { ok: false, error: friendlyError(error) };
     if (!updatedSale) return { ok: false, error: "This broker invoice was not found or changed before it could be updated." };
     if (updates.target_sale_no) {

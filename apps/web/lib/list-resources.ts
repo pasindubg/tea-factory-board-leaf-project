@@ -182,6 +182,38 @@ export type AuctionDispatchLotListRow = {
   lot_invoices: { invoice_no: string }[] | null;
 };
 
+/**
+ * One lot invoice ("basic invoice") across every broker invoice in the
+ * factory, carrying the parent broker invoice's own attributes so the overview
+ * can be read and filtered without opening each broker invoice in turn.
+ * `biStatus` is the raw broker-invoice status — the page gates editing and
+ * deleting on it, so it must not be a display label.
+ */
+export type AuctionInvoiceOverviewListRow = {
+  id: string;
+  saleId: string;
+  invoiceNo: string;
+  lotNo: string | null;
+  grade: string | null;
+  bags: number | null;
+  kgPerBag: number | null;
+  sampleKg: number | null;
+  netWt: number | null;
+  state: string | null;
+  mark: string | null;
+  brokerInvoiceNo: string;
+  saleNo: string | null;
+  broker: string;
+  sellingMark: string;
+  /** Gross weight: the stored gross_wt when set, else bags x kg/bag. */
+  allWeight: number | null;
+  /** Sale the lot rolls into once re-printed, from its forward re-print link. */
+  nextSaleNo: string | null;
+  dispatchDate: string | null;
+  saleDate: string | null;
+  biStatus: string;
+};
+
 export type AuctionReprintOverviewListRow = {
   id: string;
   dispatchId: string;
@@ -357,6 +389,7 @@ export type ListSearchStateRow = {
   saved: Record<string, string> | null;
   savedAdvancedQuery: string | null;
   locked: Record<string, string>;
+  lockedAdvancedQuery: string | null;
   canManageLocks: boolean;
 };
 
@@ -373,6 +406,7 @@ export type ListResourceContracts = {
   "auction.dispatches": { params: undefined; row: AuctionDispatchListRow };
   "auction.dispatch-lots": { params: { saleId: string }; row: AuctionDispatchLotListRow };
   "auction.reprint-overview": { params: undefined; row: AuctionReprintOverviewListRow };
+  "auction.invoice-overview": { params: undefined; row: AuctionInvoiceOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
   "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
@@ -409,6 +443,7 @@ export const LIST_RESOURCE_KEYS = [
   "auction.dispatches",
   "auction.dispatch-lots",
   "auction.reprint-overview",
+  "auction.invoice-overview",
   "auction.physical-dispatches",
   "auction.sales-side-list",
   "auction.eligible-broker-invoices",
@@ -428,6 +463,18 @@ export const LIST_RESOURCE_KEYS = [
   "leaf.weighings",
   "framework.search-state",
 ] as const satisfies readonly (keyof ListResourceContracts)[];
+
+/**
+ * Exhaustiveness guard. The `satisfies` above only proves every key listed is
+ * real — not that every real key is listed. A resource added to
+ * ListResourceContracts but forgotten here typechecks cleanly and then fails
+ * at runtime with "Unknown list resource.", because LIST_RESOURCE_KEYS is the
+ * allowlist isListResourceKey enforces. This turns that omission into a type
+ * error naming the missing key.
+ */
+const _everyResourceKeyIsRegistered: never[] =
+  [] as Exclude<keyof ListResourceContracts, (typeof LIST_RESOURCE_KEYS)[number]>[];
+void _everyResourceKeyIsRegistered;
 
 export type ListResourceKey = keyof ListResourceContracts;
 export type ListResourceParams<Key extends ListResourceKey> = ListResourceContracts[Key]["params"];

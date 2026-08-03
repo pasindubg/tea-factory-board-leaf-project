@@ -6,6 +6,7 @@ import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import type { SentMessageListRow } from "@/lib/list-resources";
 import { sendMessage } from "./actions";
+import { formatDateTime } from "@/lib/dates";
 
 type SupplierOption = { id: string; name: string };
 
@@ -13,7 +14,7 @@ const COLUMNS: EntityListColumn<SentMessageListRow>[] = [
   { key: "title", label: "Title", accessor: (row) => row.title, sortable: true, filter: "text", render: (row) => <span className="font-medium text-stone-900 dark:text-stone-100">{row.title}</span> },
   { key: "recipient", label: "Recipient", accessor: (row) => row.recipient, sortable: true, filter: "select", render: (row) => <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">{row.recipient}</span> },
   { key: "body", label: "Message", accessor: (row) => row.body, sortable: true, filter: "text", lov: false, cellClassName: "max-w-xl whitespace-pre-wrap text-stone-600 dark:text-stone-300" },
-  { key: "sentAt", label: "Sent", accessor: (row) => row.sentAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => new Date(row.sentAt).toLocaleString() },
+  { key: "sentAt", label: "Sent", accessor: (row) => row.sentAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => formatDateTime(row.sentAt) },
 ];
 
 const LIST: ListDefinition<SentMessageListRow> = {

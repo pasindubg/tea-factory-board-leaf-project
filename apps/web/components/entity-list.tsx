@@ -753,7 +753,7 @@ function EntityListPanel<Row>({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="list-scroll-x">
           {inlineCreating && create ? (
             <form
               id={createFormId}

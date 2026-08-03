@@ -31,3 +31,15 @@ export const STATE_BUCKET: Record<string, StateBucket> = {
 export function stateBucket(state: string | null | undefined): StateBucket {
   return STATE_BUCKET[state ?? ""] ?? { label: state ?? "—", style: PENDING };
 }
+
+/**
+ * A Broker Invoice that has not been confirmed yet. Confirming it moves the
+ * status to "invoiced" and it never returns here, so this is exactly the
+ * window in which the invoice may still be edited or deleted by a non-owner.
+ * "dispatched" is the legacy name for an open draft and must stay included.
+ */
+const OPEN_DRAFT_STATUSES = ["draft", "dispatched"];
+
+export function isOpenDraft(status: string | null | undefined): boolean {
+  return OPEN_DRAFT_STATUSES.includes(status ?? "");
+}

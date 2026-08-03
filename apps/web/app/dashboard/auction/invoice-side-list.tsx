@@ -85,9 +85,15 @@ export function InvoiceSideList({
                 {active && <span className="text-stone-400">‹</span>}
               </div>
               <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
+              {dispatch.selling_mark && (
+                <p className="mt-0.5 truncate text-xs text-stone-400 dark:text-stone-500">{dispatch.selling_mark}</p>
+              )}
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
-                <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
+                <span className="truncate tabular-nums text-stone-500 dark:text-stone-400">
+                  Sale {formatSaleNo(dispatch.target_sale_no) || "—"}
+                  {dispatch.dispatch_date ? ` · ${dispatch.dispatch_date}` : ""}
+                </span>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
               </div>
             </>
           );

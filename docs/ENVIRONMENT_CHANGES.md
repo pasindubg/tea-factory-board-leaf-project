@@ -2,6 +2,14 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-08-02 - Broker Invoice Uniqueness Now Includes Dispatch Date
+
+- Added migration `0045_flippant_mojo.sql`: rebuilds the partial unique index `uq_auction_sales_open_broker_mark` on `auction_sales` to key on `(factory_id, broker_id, selling_mark_id, dispatch_date)` instead of `(factory_id, broker_id, selling_mark_id)`. The old key allowed only one open (`draft`/`dispatched`) Broker Invoice per broker + selling mark ever, which blocked creating the next dispatch day's invoice for the same broker and mark. Each dispatch day is separate work, so the date now belongs in the key; same-day duplicates are still rejected (and independently by `uq_auction_sales_bundle_broker_mark`, since the auto-created bundle is one per dispatch date). The matching app-layer pre-check `findOpenDraftInvoice` (`apps/web/app/dashboard/auction/_actions/sales.ts`) filters on the dispatch date too and short-circuits on a null date, mirroring Postgres treating nulls as distinct in a unique index. No RLS change. Apply migrations through `0045`.
+
+## 2026-08-01 - Locked Advanced Query On Search Locks
+
+- Added migration `0044_list_search_lock_advanced_query.sql`: a nullable `advanced_query` text column on `list_search_locks`, alongside the existing per-role `criteria` jsonb. A locked advanced query is a mandatory AND-ed prefix, not a full replacement — the locked role can still type further terms, which the framework ANDs onto the locked one (`mergeAdvancedQuery` in `apps/web/lib/list-search-state.ts`), enforced server-side for both registry-backed (`loadListResource`) and local (`applyServerListSearch`) lists. The "Lock this search for a role" control (`apps/web/components/list-controls.tsx`) also now lists the factory's custom access roles, not just base roles, via a new `listLockableRoles()` action gated to owner/manager (not the owner-only Roles module). Apply migrations through `0044`.
+
 ## 2026-07-31 - Broker Invoice Transporter Attribute
 
 - Added migration `0043_auction_sale_transporter.sql`: a nullable `transporter` text column on `auction_sales`, captured alongside the existing lorry no./driver fields on a Broker Invoice. No RLS change is needed (the table's `factory_isolation` policy already covers it). Apply migrations through `0043`.

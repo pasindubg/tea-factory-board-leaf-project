@@ -2,6 +2,7 @@
 
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
+import { formatDateTime } from "@/lib/dates";
 
 export type WorkflowAuditRow = {
   action: string;
@@ -20,7 +21,7 @@ const COLUMNS: EntityListColumn<AuditListRow>[] = [
   { key: "reason", label: "Reason", accessor: (row) => row.reason, sortable: true, filter: "text", lov: false, cellClassName: "min-w-48 text-stone-500 dark:text-stone-400", render: (row) => row.reason ?? "—" },
   { key: "confidence", label: "Confidence shown", accessor: (row) => row.confidenceShown == null ? null : Math.round(row.confidenceShown * 100), sortable: true, lov: false, searchInput: "number", cellClassName: "whitespace-nowrap tabular-nums", render: (row) => row.confidenceShown == null ? "—" : `${Math.round(row.confidenceShown * 100)}%` },
   { key: "actor", label: "Actor", accessor: (row) => row.actor, sortable: true, filter: "select", cellClassName: "whitespace-nowrap" },
-  { key: "createdAt", label: "Recorded", accessor: (row) => row.createdAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => new Date(row.createdAt).toLocaleString() },
+  { key: "createdAt", label: "Recorded", accessor: (row) => row.createdAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => formatDateTime(row.createdAt) },
 ];
 
 const LIST: ListDefinition<AuditListRow> = { columns: COLUMNS, selectionMode: "single" };

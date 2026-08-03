@@ -9,12 +9,13 @@ import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app
 import { stateBucket } from "@/app/dashboard/auction/state-buckets";
 import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
-import { mergeListCriteria, resolveListSearchState } from "@/lib/list-search-state";
+import { mergeAdvancedQuery, mergeListCriteria, resolveListSearchState } from "@/lib/list-search-state";
 import {
   applyAdvancedQuery,
   applyListFilters,
   applyListPage,
   DEFAULT_LIST_PAGE_SIZE,
+  filterRowsByAdvancedQuery,
   filterRowsByCriteria,
   splitPage,
   activeEmbeds,
@@ -29,6 +30,18 @@ type ResourceSearchArgs = {
   advancedQuery: string | null;
   page: { offset: number; limit: number };
   columns: ResourceSearchConfig;
+  /**
+   * The single framework-owned way to push this list's search down into SQL:
+   * column criteria plus the advanced query, both of which already carry the
+   * caller's role lock merged in by loadListResource. Pipe every query a
+   * loader builds through this, so a locked role's rows are excluded by the
+   * database itself rather than fetched and then dropped in JS.
+   *
+   * Only keys the resource's `search` config can safely map reach SQL —
+   * JS-computed and display-formatted keys are skipped here and left to the
+   * row-level filter loadListResource always runs afterwards.
+   */
+  apply: <Q>(query: Q) => Q;
 };
 type ResourceLoader = (
   context: AccessContext,
@@ -88,6 +101,33 @@ type RefreshLotRow = {
   reprint_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
   marks: { code: string; name: string | null } | null;
+};
+
+type RefreshInvoiceOverviewLot = {
+  id: string;
+  sale_id: string;
+  invoice_no: string | null;
+  lot_no: string | null;
+  grade: string | null;
+  bags: number | null;
+  kg_per_bag: number | string | null;
+  gross_wt: number | string | null;
+  sample_allowance: number | string | null;
+  net_wt: number | string | null;
+  state: string | null;
+  reprint_source_lot_id: string | null;
+  marks: { code: string; name: string | null } | null;
+  lot_invoices: { invoice_no: string }[] | null;
+  auction_sales: {
+    id: string;
+    sale_no: string | null;
+    target_sale_no: string | null;
+    dispatch_date: string | null;
+    sale_date: string | null;
+    status: string | null;
+    brokers: { name: string } | null;
+    marks: { code: string; name: string | null } | null;
+  } | null;
 };
 
 type RefreshDispatchLotRow = RefreshLotRow & {
@@ -174,7 +214,8 @@ type RefreshSaleLineRow = {
   buyers: { name: string; vat_no: string | null } | null;
 };
 
-const resources: Record<ListResourceKey, ResourceDefinition> = {
+/** Exported for tests only — `loadListResource` is the sole runtime entry point. */
+export const resources: Record<ListResourceKey, ResourceDefinition> = {
   // Generic, list-agnostic: restores one list instance's saved+locked search
   // state by its own `scope` string. Every list (live or local/side-panel)
   // calls this the same way — nothing here names a specific list.
@@ -185,7 +226,13 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       const state = await resolveListSearchState(supabase, profile, params.listScope as string);
       return {
         ok: true,
-        rows: [{ saved: state.saved, savedAdvancedQuery: state.savedAdvancedQuery, locked: state.locked, canManageLocks: state.canManageLocks }],
+        rows: [{
+          saved: state.saved,
+          savedAdvancedQuery: state.savedAdvancedQuery,
+          locked: state.locked,
+          lockedAdvancedQuery: state.lockedAdvancedQuery,
+          canManageLocks: state.canManageLocks,
+        }],
       };
     },
   },
@@ -213,8 +260,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       if (typeof params.to === "string") query = query.lt("collected_at", dayRange(params.to).end);
       if (typeof params.supplierId === "string") query = query.eq("supplier_id", params.supplierId);
       if (collectorId) query = query.eq("collector_id", collectorId);
-      query = applyListFilters(query, search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      query = search.apply(query);
       const { data, error } = await applyListPage(query.order("collected_at", { ascending: false }).order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -244,8 +290,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       let usersQuery = supabase
         .from("users")
         .select("id, name, email, username, role, access_role_id, active, created_at");
-      usersQuery = applyListFilters(usersQuery, search.criteria, search.columns);
-      usersQuery = applyAdvancedQuery(usersQuery, search.advancedQuery, search.columns);
+      usersQuery = search.apply(usersQuery);
       const [{ data, error }, { data: roles, error: rolesError }] = await Promise.all([
         applyListPage(usersQuery.order("created_at").order("id"), search.page),
         supabase.from("access_roles").select("id, name, base_role"),
@@ -274,12 +319,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: { columns: { baseRole: { column: "base_role", mode: "equals" } } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(
-        supabase.from("access_roles").select("id, key, name, base_role, system_role, active"),
-        search.criteria,
-        search.columns,
-      );
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("access_roles").select("id, key, name, base_role, system_role, active"));
       const { data, error } = await applyListPage(query.order("system_role", { ascending: false }).order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -378,8 +418,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       let query = supabase
         .from("supplier_adjustments")
         .select("id, kind, label, amount, percent, occurred_on, suppliers!inner(name)");
-      query = applyListFilters(query, search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      query = search.apply(query);
       const { data, error } = await applyListPage(query.order("occurred_on", { ascending: false }).order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -408,8 +447,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       // Suppliers is the paginated set; tier assignments are then fetched only
       // for the supplier ids on this page rather than for the whole factory.
       let supplierQuery = supabase.from("suppliers").select("id, name, area").eq("active", true);
-      supplierQuery = applyListFilters(supplierQuery, search.criteria, search.columns);
-      supplierQuery = applyAdvancedQuery(supplierQuery, search.advancedQuery, search.columns);
+      supplierQuery = search.apply(supplierQuery);
       const { data: supplierData, error } = await applyListPage(supplierQuery.order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: suppliers, hasMore } = splitPage(supplierData ?? [], search.page.limit);
@@ -445,12 +483,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: { columns: { active: { column: "active", mode: "equals" } } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(
-        supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order, active"),
-        search.criteria,
-        search.columns,
-      );
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("quality_tiers").select("id, name, bonus_kind, bonus_value, sort_order, active"));
       const { data, error } = await applyListPage(query.order("sort_order").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -473,12 +506,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: { columns: { effectiveFrom: { column: "effective_from", mode: "equals" } } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(
-        supabase.from("price_rates").select("id, price_per_kg, effective_from, effective_to").eq("grade", "GREEN_LEAF"),
-        search.criteria,
-        search.columns,
-      );
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("price_rates").select("id, price_per_kg, effective_from, effective_to").eq("grade", "GREEN_LEAF"));
       const { data, error } = await applyListPage(query.order("effective_from", { ascending: false }).order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -509,8 +537,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
         .select("id, total_kg, gross_amount, deduction_amount, total_amount, status, suppliers!inner(name)")
         .eq("period_year", year)
         .eq("period_month", month);
-      query = applyListFilters(query, search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      query = search.apply(query);
       const { data, error } = await applyListPage(query.order("created_at").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -544,8 +571,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       let query = supabase
         .from("supplier_messages")
         .select(embedSelect("id, title, body, supplier_id, sent_at, suppliers(name)", embeds));
-      query = applyListFilters(query, search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      query = search.apply(query);
       const { data, error } = await applyListPage(query.order("sent_at", { ascending: false }).order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage((data ?? []) as unknown as Record<string, unknown>[], search.page.limit);
@@ -568,11 +594,22 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
   "communications.supplier-requests": {
     moduleKey: "requests",
     parse: parseNoParams,
-    async load({ supabase }) {
+    search: {
+      columns: {
+        supplierName: { column: "suppliers.name", mode: "contains", embed: "suppliers" },
+        amount: { column: "amount", mode: "equals" },
+        requestedAt: { column: "requested_at", mode: "day" },
+        handedAt: { column: "handed_at", mode: "day" },
+      },
+      // Resolved from the request_types lookup after the rows load.
+      computed: ["typeLabel"],
+    },
+    async load({ supabase }, _params, search) {
+      const embeds = activeEmbeds(search.criteria, search.advancedQuery, search.columns);
       const [{ data: requests, error }, { data: types, error: typeError }] = await Promise.all([
-        supabase
+        search.apply(supabase
           .from("supplier_requests")
-          .select("id, supplier_id, type_key, amount, status, note, requested_at, handed_at, suppliers(name)")
+          .select(embedSelect("id, supplier_id, type_key, amount, status, note, requested_at, handed_at, suppliers(name)", embeds)))
           .order("requested_at", { ascending: false }),
         supabase.from("request_types").select("key, label"),
       ]);
@@ -580,12 +617,14 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       const labels = new Map((types ?? []).map((type) => [type.key as string, type.label as string]));
       return {
         ok: true,
-        rows: (requests ?? []).map((request) => ({
+        // embedSelect builds the select at runtime, so the row shape is no
+        // longer inferable from a literal.
+        rows: ((requests ?? []) as unknown as Record<string, unknown>[]).map((request) => ({
           id: request.id,
           supplierId: request.supplier_id,
           supplierName: (request.suppliers as unknown as { name: string } | null)?.name ?? "—",
           typeKey: request.type_key,
-          typeLabel: labels.get(request.type_key) ?? request.type_key,
+          typeLabel: labels.get(request.type_key as string) ?? request.type_key,
           amount: request.amount,
           status: request.status,
           note: request.note,
@@ -602,12 +641,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       active: { column: "active", mode: "equals" },
     } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(
-        supabase.from("suppliers").select("id, name, phone, nic_number, area, land_size_acres, collector_id, active, collectors(name)"),
-        search.criteria,
-        search.columns,
-      );
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("suppliers").select("id, name, phone, nic_number, area, land_size_acres, collector_id, active, collectors(name)"));
       const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -635,12 +669,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       active: { column: "active", mode: "equals" },
     } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(
-        supabase.from("collectors").select("id, name, phone, nic_number, area, active"),
-        search.criteria,
-        search.columns,
-      );
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("collectors").select("id, name, phone, nic_number, area, active"));
       const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -664,8 +693,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     search: { columns: {
     } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(supabase.from("brokers").select("id, name, vat_no, address"), search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("brokers").select("id, name, vat_no, address"));
       const { data, error } = await applyListPage(query.order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -675,13 +703,30 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
   "auction.dispatches": {
     moduleKey: "auction",
     parse: parseNoParams,
-    async load({ supabase }) {
+    search: {
+      columns: {
+        // The rail labels this column "broker" but the value lives on the
+        // embedded row, so it needs an explicit mapping (and !inner while a
+        // broker filter is active) rather than the snake_case convention.
+        broker: { column: "brokers.name", mode: "contains", embed: "brokers" },
+        // `date` columns — ilike would error on them.
+        dispatch_date: { column: "dispatch_date", mode: "equals" },
+        sale_date: { column: "sale_date", mode: "equals" },
+      },
+      // Both are re-formatted for display (formatFourDigitNo/formatSaleNo), so
+      // what the user searches never matches the stored composite value —
+      // these stay a row-level match against the formatted output.
+      computed: ["sale_no", "target_sale_no"],
+    },
+    async load({ supabase }, _params, search) {
+      const embeds = activeEmbeds(search.criteria, search.advancedQuery, search.columns);
       const [{ data: sales, error }, { data: marks, error: markError }, { data: bundles, error: bundleError }] = await Promise.all([
-        supabase
-          .from("auction_sales")
-          .select("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)")
-          .eq("sale_kind", "dispatch")
-          .order("created_at", { ascending: false }),
+        search.apply(
+          supabase
+            .from("auction_sales")
+            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)", embeds))
+            .eq("sale_kind", "dispatch"),
+        ).order("created_at", { ascending: false }),
         supabase.from("marks").select("id, code, name").order("code"),
         supabase.from("auction_bundled_dispatches").select("id, dispatch_no"),
       ]);
@@ -690,7 +735,10 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       const bundleNoById = new Map((bundles ?? []).map((bundle) => [bundle.id as string, formatFourDigitNo(bundle.dispatch_no as string)]));
       return {
         ok: true,
-        rows: (sales ?? []).map((sale) => ({
+        // embedSelect builds the select string at runtime, so PostgREST can no
+        // longer infer the row shape from a literal — same cast the other
+        // embed-aware loaders use.
+        rows: ((sales ?? []) as unknown as Record<string, unknown>[]).map((sale) => ({
           id: sale.id as string,
           sale_no: formatFourDigitNo(sale.sale_no as string),
           target_sale_no: formatSaleNo((sale as { target_sale_no?: string }).target_sale_no),
@@ -725,8 +773,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       let query = supabase
         .from("auction_bundled_dispatches")
         .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, auction_bundled_dispatch_invoices(id)");
-      query = applyListFilters(query, search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      query = search.apply(query);
       const { data, error } = await applyListPage(
         query.order("dispatch_date_from", { ascending: false }).order("dispatch_no", { ascending: false }).order("id"),
         search.page,
@@ -950,14 +997,82 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
       return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
     },
   },
+  // Every lot invoice in the factory, joined to its broker invoice so the
+  // overview can show and filter on broker-invoice attributes. The lot's own
+  // mark and the broker invoice's selling mark are separate embeds — the two
+  // reach `marks` through different foreign keys (auction_lots.mark_id and
+  // auction_sales.selling_mark_id) and are not interchangeable.
+  "auction.invoice-overview": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const { data, error } = await supabase
+        .from("auction_lots")
+        .select(
+          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, reprint_source_lot_id, created_at, " +
+            "marks(code, name), lot_invoices(invoice_no), " +
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name), marks(code, name))",
+        )
+        .order("created_at", { ascending: false });
+      if (error) return { ok: false, error: friendlyError(error) };
+      const markLabel = (mark: { code: string; name: string | null } | null) =>
+        mark ? `${mark.code}${mark.name ? ` — ${mark.name}` : ""}` : null;
+      const lots = (data ?? []) as unknown as RefreshInvoiceOverviewLot[];
+
+      // "Next sale" is the sale a re-printed lot rolls into. Nothing records it
+      // on the lot itself — the link is the child lot created in the next
+      // broker invoice, pointing back via reprint_source_lot_id. Every lot in
+      // the factory is already in this result, so the forward link is resolved
+      // here rather than with a second query.
+      const nextSaleByParent = new Map<string, string>();
+      for (const child of lots) {
+        if (!child.reprint_source_lot_id) continue;
+        const childSaleNo = formatSaleNo(child.auction_sales?.target_sale_no ?? null);
+        if (childSaleNo) nextSaleByParent.set(child.reprint_source_lot_id, childSaleNo);
+      }
+
+      return {
+        ok: true,
+        rows: lots.map((lot) => {
+          const invoice = lot.auction_sales;
+          // gross_wt is not populated on current data, so fall back to the
+          // bags x kg/bag product that net weight is already derived from.
+          const bagGross = Number(lot.bags ?? 0) * Number(lot.kg_per_bag ?? 0);
+          const gross = lot.gross_wt == null ? bagGross : Number(lot.gross_wt);
+          const invoiceNos = (lot.lot_invoices ?? []).map((row) => formatFourDigitNo(row.invoice_no)).filter(Boolean);
+          return {
+            id: lot.id,
+            saleId: lot.sale_id,
+            invoiceNo: invoiceNos.length > 0 ? invoiceNos.join(", ") : formatFourDigitNo(lot.invoice_no),
+            lotNo: formatFourDigitNo(lot.lot_no) || null,
+            grade: lot.grade,
+            bags: lot.bags,
+            kgPerBag: lot.kg_per_bag == null ? null : Number(lot.kg_per_bag),
+            sampleKg: lot.sample_allowance == null ? null : Number(lot.sample_allowance),
+            netWt: lot.net_wt == null ? null : Number(lot.net_wt),
+            state: lot.state,
+            mark: markLabel(lot.marks),
+            brokerInvoiceNo: formatFourDigitNo(invoice?.sale_no ?? null),
+            saleNo: formatSaleNo(invoice?.target_sale_no ?? null) || null,
+            allWeight: gross > 0 ? gross : null,
+            nextSaleNo: nextSaleByParent.get(lot.id) ?? null,
+            broker: invoice?.brokers?.name ?? "—",
+            sellingMark: markLabel(invoice?.marks ?? null) ?? "—",
+            dispatchDate: invoice?.dispatch_date ?? null,
+            saleDate: invoice?.sale_date ?? null,
+            biStatus: invoice?.status ?? "",
+          };
+        }),
+      };
+    },
+  },
   "auction.marks": {
     moduleKey: "auction",
     parse: parseNoParams,
     search: { columns: {
     } },
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(supabase.from("marks").select("id, code, name, address"), search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("marks").select("id, code, name, address"));
       const { data, error } = await applyListPage(query.order("code").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -1007,10 +1122,16 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
   "auction.invoice-prefixes": {
     moduleKey: "auction",
     parse: parseNoParams,
-    async load({ supabase }) {
-      const { data, error } = await supabase
+    search: {
+      columns: { createdAt: { column: "created_at", mode: "day" } },
+      // `active` is a boolean column but the list shows (and filters on)
+      // "Active"/"Inactive", so it can only be matched row-level.
+      computed: ["active"],
+    },
+    async load({ supabase }, _params, search) {
+      const { data, error } = await search.apply(supabase
         .from("invoice_number_prefixes")
-        .select("id, category, prefix, active, created_at")
+        .select("id, category, prefix, active, created_at"))
         .order("category")
         .order("prefix");
       if (error) return { ok: false, error: friendlyError(error) };
@@ -1074,8 +1195,7 @@ const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: {},
     async load({ supabase }, _params, search) {
-      let query = applyListFilters(supabase.from("auction_warehouses").select("id, name, active"), search.criteria, search.columns);
-      query = applyAdvancedQuery(query, search.advancedQuery, search.columns);
+      const query = search.apply(supabase.from("auction_warehouses").select("id, name, active"));
       const { data, error } = await applyListPage(query.order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -1262,24 +1382,32 @@ export async function loadListResource<Key extends ListResourceKey>(
       advancedQuery: null,
       page: { offset: 0, limit: DEFAULT_LIST_PAGE_SIZE },
       columns: {},
+      apply: (query) => query,
     }) as Promise<ListRefreshResult<ListResourceRow<Key>>>;
   }
 
   const listScope = candidate.key;
   const state = await resolveListSearchState(context.supabase, context.profile, listScope);
   const criteria = mergeListCriteria({ saved: state.saved, locked: state.locked, requested: search?.criteria });
-  const advancedQuery = search?.advancedQuery ?? state.savedAdvancedQuery ?? null;
+  const requestedAdvancedQuery = search?.advancedQuery ?? state.savedAdvancedQuery ?? null;
+  // The locked prefix is always ANDed in, never optional — a client that
+  // omits it (or a locked role trying to bypass it) still gets it enforced,
+  // both here (pushed into SQL where the resource supports it) and again in
+  // the row-level fallback filter below.
+  const advancedQuery = mergeAdvancedQuery({ lockedAdvancedQuery: state.lockedAdvancedQuery, requested: requestedAdvancedQuery });
   const limit = search?.limit ?? DEFAULT_LIST_PAGE_SIZE;
+  const columns = definition.search ?? {};
 
   const result = await definition.load(context, parsed.value, {
     criteria,
     advancedQuery,
     page: { offset: search?.offset ?? 0, limit },
-    columns: definition.search ?? {},
+    columns,
+    apply: (query) => applyAdvancedQuery(applyListFilters(query, criteria, columns), advancedQuery, columns),
   });
   if (!result.ok) return result as ListRefreshResult<ListResourceRow<Key>>;
 
-  const rows = filterRowsByCriteria(result.rows, criteria);
+  const rows = filterRowsByAdvancedQuery(filterRowsByCriteria(result.rows, criteria), advancedQuery);
   return {
     ok: true,
     rows: rows as ListResourceRow<Key>[],
@@ -1287,6 +1415,7 @@ export async function loadListResource<Key extends ListResourceKey>(
     savedCriteria: state.saved ?? undefined,
     savedAdvancedQuery: state.savedAdvancedQuery,
     locked: state.locked,
+    lockedAdvancedQuery: state.lockedAdvancedQuery,
     canManageLocks: state.canManageLocks,
   };
 }
