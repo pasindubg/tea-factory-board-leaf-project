@@ -12,7 +12,8 @@ import { showAppToast } from "@/components/action-feedback";
 import { startNavigationFeedback } from "@/components/navigation-progress";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
-import { createBundledDispatch, deleteBundledDispatch, updateBundledDispatch } from "../actions";
+import { completeDispatchGrn, createBundledDispatch, deleteBundledDispatch, markDispatchDispatched, updateBundledDispatch } from "../actions";
+import { brokerInvoiceRank, canMarkDispatched, canRecordDispatchGrn, type DispatchStatus } from "../dispatch-status";
 import { BundledDispatchForm, type EligibleBrokerInvoice, type WarehouseOption } from "./bundled-dispatch-form";
 import { DispatchDetailLists, type DispatchInvoiceRow, type DispatchLotRow } from "./dispatch-detail-lists";
 import type { PhysicalDispatchListRow } from "./dispatch-list";
@@ -28,7 +29,7 @@ type DispatchDetailHeader = {
   dateFrom: string;
   dateTo: string;
   warehouse: string;
-  status: string;
+  status: DispatchStatus;
   createdAt: string | null;
 };
 
@@ -66,9 +67,48 @@ export function DispatchDetailView({
 }) {
   const [creatingDispatch, setCreatingDispatch] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [markingDispatched, setMarkingDispatched] = useState(false);
+  const [recordingGrn, setRecordingGrn] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const status = dispatch.status === "dispatched" ? "dispatched" : "draft";
+  // The status is derived server-side; the page only renders it. "Dispatched"
+  // and "GRN" are the only two commands a person triggers — received (once
+  // recorded) and catalogued follow automatically from the broker invoices
+  // inside the dispatch.
+  const status = dispatch.status;
+  const canDispatch = canMarkDispatched(status);
+  const canRecordGrn = canRecordDispatchGrn(status);
+
+  async function markDispatched() {
+    setMarkingDispatched(true);
+    try {
+      const result = await markDispatchDispatched(dispatch.id);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return;
+      }
+      showAppToast(result.notice ?? "Dispatch marked as dispatched.");
+      router.refresh();
+    } finally {
+      setMarkingDispatched(false);
+    }
+  }
+
+  async function recordGrn() {
+    setRecordingGrn(true);
+    try {
+      const result = await completeDispatchGrn(dispatch.id);
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return;
+      }
+      showAppToast(result.notice ?? "GRN recorded.");
+      router.refresh();
+    } finally {
+      setRecordingGrn(false);
+    }
+  }
+
   // The dispatch stores its warehouse by name, so the LOV is preselected by
   // matching that name back to an id.
   const currentWarehouseId = warehouses.find((warehouse) => warehouse.name === dispatch.warehouse)?.id ?? "";
@@ -83,6 +123,9 @@ export function DispatchDetailView({
     setIsEditing(false);
     router.refresh();
   }
+
+  const grnCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("grn")).length;
+  const cataloguedCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("catalogued")).length;
 
   const hasEligibleInvoices = eligibleInvoices.length >= 2;
   const hasActiveWarehouse = warehouses.some((warehouse) => warehouse.active);
@@ -125,9 +168,32 @@ export function DispatchDetailView({
       state={{
         currentKey: status,
         testId: "physical-dispatch-state-indicator",
+        menuLabel: "State",
+        // All four stages are always shown so the dispatcher can see what is
+        // still ahead, even though only two of them are ever clicked.
         steps: [
           { key: "draft", label: "Draft", metric: `${invoices.length} broker invoices` },
           { key: "dispatched", label: "Dispatched", metric: `${lots.length} lots` },
+          { key: "received", label: "Received", metric: `${grnCount}/${invoices.length} at GRN` },
+          { key: "catalogued", label: "Catalogued", metric: `${cataloguedCount}/${invoices.length} acknowledged` },
+        ],
+        commands: [
+          {
+            id: "mark-dispatched",
+            label: markingDispatched ? "Marking…" : "Dispatched",
+            disabled: !canDispatch || markingDispatched || creatingDispatch,
+            busy: markingDispatched,
+            busyLabel: "Marking…",
+            onSelect: markDispatched,
+          },
+          {
+            id: "record-grn",
+            label: recordingGrn ? "Recording…" : "GRN",
+            disabled: !canRecordGrn || recordingGrn || creatingDispatch,
+            busy: recordingGrn,
+            busyLabel: "Recording…",
+            onSelect: recordGrn,
+          },
         ],
       }}
       deleteAction={isOwner && !creatingDispatch ? {

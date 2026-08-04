@@ -4,6 +4,7 @@
 // transport is needed; today App Router server actions call them directly.
 export * from "./payments/calculate";
 // Auction & settlement (A-track): pure document parsers + reconciliations.
+export * from "./auction/invoice-key";
 export * from "./auction/parse-acknowledgement";
 export * from "./auction/reconcile";
 export * from "./auction/parse-valuation";

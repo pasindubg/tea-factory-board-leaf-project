@@ -6,6 +6,7 @@ import { formatFourDigitNo } from "../../sale-number";
 import { DispatchDetailLists, type DispatchInvoiceRow, type DispatchLotRow } from "../dispatch-detail-lists";
 import { DispatchDetailView } from "../dispatch-detail-view";
 import { type PhysicalDispatchListRow } from "../dispatch-list";
+import { DISPATCH_STATUSES, type DispatchStatus } from "../../dispatch-status";
 
 type Invoice = { id: string; sale_no: string; dispatch_date: string | null; sale_date: string | null; status: string; brokers: { name: string } | null; marks: { code: string; name: string | null } | null; auction_lots: Lot[] | null };
 type Lot = {
@@ -84,7 +85,11 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
       dateFrom: dispatch.dispatch_date_from as string,
       dateTo: dispatch.dispatch_date_to as string,
       warehouse: dispatch.warehouse as string,
-      status: dispatch.status as string,
+      // Narrowed at the boundary: the column is plain text, so an unexpected
+      // value falls back to draft rather than rendering an unknown stage.
+      status: DISPATCH_STATUSES.includes(dispatch.status as DispatchStatus)
+        ? (dispatch.status as DispatchStatus)
+        : "draft",
       createdAt: (dispatch.created_at as string | null) ?? null,
     }}
     dispatches={dispatchRows}

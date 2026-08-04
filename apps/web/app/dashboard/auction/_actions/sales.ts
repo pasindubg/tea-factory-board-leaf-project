@@ -11,6 +11,7 @@ import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, write
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
 import { isOpenDraft } from "../state-buckets";
 import { resolveInvoicePrefix } from "../invoice-number";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
   const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
@@ -519,6 +520,8 @@ export async function confirmDispatchDraft(id: string): Promise<ListMutationResu
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
   if (!confirmed) return { ok: false, error: "This broker invoice was not found or is no longer a draft." };
+  // The dispatch holding this invoice may now qualify for a later stage.
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
   return { ok: true, notice: "Broker invoice confirmed." };
@@ -588,6 +591,8 @@ export async function completeGrn(id: string, formData: FormData) {
     .select("id")
     .maybeSingle();
   if (grnError || !grnInvoice) back(detail, grnError ? friendlyError(grnError) : "This broker invoice changed before GRN could be completed.");
+  // Every invoice reaching GRN is what moves its dispatch to "received".
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);
