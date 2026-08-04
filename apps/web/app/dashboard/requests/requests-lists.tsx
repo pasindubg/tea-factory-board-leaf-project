@@ -10,6 +10,7 @@ import type { ListDefinition } from "@/components/list-controls";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { SupplierRequestListRow } from "@/lib/list-resources";
 import { approveRequest, declineRequest, handToDriver } from "./actions";
+import { formatDateTime } from "@/lib/dates";
 
 type Lane = "pending" | "approved" | "handed" | "history";
 type RequestAction = (formData: FormData) => Promise<ListMutationResult>;
@@ -21,7 +22,7 @@ function formatAmount(amount: string | null) {
 }
 
 function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
+  return formatDateTime(value);
 }
 
 const COLUMNS: EntityListColumn<SupplierRequestListRow>[] = [

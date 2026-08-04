@@ -4,6 +4,7 @@ import { loadListResource } from "@/lib/list-resource-registry";
 import { DispatchDetailEditor } from "./dispatch-detail-editor";
 import { colomboToday, nextDispatchNo } from "../_actions/_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { resolveInvoicePrefix } from "../invoice-number";
 
 export default async function SaleDetailPage({
   params,
@@ -19,30 +20,31 @@ export default async function SaleDetailPage({
 
   const { data: sale } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, bundled_dispatch_id, created_date, brokers(name)")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)")
     .eq("id", saleId)
     .single();
 
   if (!sale) {
     return (
       <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Sale not found.{" "}
-        <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-          Back to Invoice Overview
+        Broker invoice not found.{" "}
+        <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
+          Back to Broker Invoice Details
         </Link>
       </div>
     );
   }
 
   const broker = (sale.brokers as unknown as { name: string } | null)?.name ?? "—";
-  const [{ data: marks }, { data: grades }, lotResult, { data: saleLines }, dispatchResult, { data: brokers }, nextInvoiceNo] = await Promise.all([
+  const [{ data: marks }, { data: grades }, lotResult, { data: saleLines }, dispatchResult, { data: brokers }, { data: dispatchPrefixRows }, { data: lotPrefixRows }] = await Promise.all([
     supabase.from("marks").select("id, code, name").order("code"),
-    supabase.from("auction_grades").select("id, code, name").eq("active", true).order("sort_order").order("code"),
+    supabase.from("auction_grades").select("id, code, name, sample_weight, default_kg_per_bag").eq("active", true).order("sort_order").order("code"),
     loadListResource({ key: "auction.dispatch-lots", params: { saleId } }),
     supabase.from("sale_lines").select("lot_id").eq("sale_id", saleId),
     loadListResource({ key: "auction.dispatches" }),
     supabase.from("brokers").select("id, name").order("name"),
-    nextDispatchNo(supabase),
+    supabase.from("invoice_number_prefixes").select("id, prefix, active").eq("category", "broker_invoice").order("prefix"),
+    supabase.from("invoice_number_prefixes").select("id, prefix, active").eq("category", "regular_invoice").order("prefix"),
   ]);
   if (!lotResult.ok) throw new Error(lotResult.error);
   if (!dispatchResult.ok) throw new Error(dispatchResult.error);
@@ -50,6 +52,15 @@ export default async function SaleDetailPage({
   const currentDispatch = dispatchResult.rows.find((dispatch) => dispatch.id === saleId);
 
   const soldLotIds = (saleLines ?? []).map((line) => line.lot_id as string).filter(Boolean);
+
+  const dispatchPrefixes = (dispatchPrefixRows ?? []) as { id: string; prefix: string; active: boolean }[];
+  const lotPrefixes = (lotPrefixRows ?? []) as { id: string; prefix: string; active: boolean }[];
+  const activeDispatchPrefixResult = await resolveInvoicePrefix({
+    supabase, factoryId: profile.factory_id, category: "broker_invoice", role: profile.role,
+  });
+  const nextInvoiceNo = activeDispatchPrefixResult.ok && !activeDispatchPrefixResult.needsApproval
+    ? await nextDispatchNo(supabase, profile.factory_id, activeDispatchPrefixResult.prefix.prefix)
+    : "";
 
   return (
     <div className="space-y-8">
@@ -69,6 +80,7 @@ export default async function SaleDetailPage({
           selling_mark: sellingMark ? `${sellingMark.code as string}${sellingMark.name ? ` — ${sellingMark.name as string}` : ""}` : null,
           broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
+          transporter: (sale as { transporter?: string | null }).transporter ?? null,
           bundle_dispatch_no: currentDispatch?.bundle_dispatch_no ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
         }}
@@ -77,13 +89,23 @@ export default async function SaleDetailPage({
         rows={lotResult.rows}
         isOwner={isOwner}
         marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string | null }))}
-        grades={(grades ?? []).map((grade) => ({ code: grade.code as string, name: grade.name as string }))}
+        grades={(grades ?? []).map((grade) => {
+          const g = grade as { sample_weight?: string | number | null; default_kg_per_bag?: string | number | null };
+          return {
+            code: grade.code as string,
+            name: grade.name as string,
+            sampleWeight: g.sample_weight == null ? null : Number(g.sample_weight),
+            defaultKgPerBag: g.default_kg_per_bag == null ? null : Number(g.default_kg_per_bag),
+          };
+        })}
         soldLotIds={soldLotIds}
+        lotPrefixes={lotPrefixes}
         creation={{
           brokers: (brokers ?? []).map((item) => ({ id: item.id as string, name: item.name as string })),
           marks: (marks ?? []).map((item) => ({ id: item.id as string, code: item.code as string, name: item.name as string | null })),
           invoiceDate: colomboToday(),
           nextDispatchNo: nextInvoiceNo,
+          prefixes: dispatchPrefixes,
           dispatchHistory: dispatchResult.rows.map((dispatch) => ({
               saleNo: dispatch.sale_no,
               targetSaleNo: dispatch.target_sale_no,

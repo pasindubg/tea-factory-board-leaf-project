@@ -1,10 +1,12 @@
 import { createBrowserClient } from "@supabase/ssr";
+import { getSupabasePublicEnv } from "@/lib/env";
 import { fetchWithTimeout } from "./fetch-timeout";
 
 export function createClient() {
+  const { url, publishableKey } = getSupabasePublicEnv();
   return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    url,
+    publishableKey,
     {
       global: {
         fetch: fetchWithTimeout,

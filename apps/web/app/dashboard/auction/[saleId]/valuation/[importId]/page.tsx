@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import { validateValuationProceeds, type ParsedValuation } from "@tea/api";
@@ -87,6 +88,8 @@ export default async function ValuationReviewPage({
     matched: known.has(formatFourDigitNo(l.invoiceNo)),
   }));
 
+  const visibleTableRows = await applyServerListSearch(supabase, profile, "valuation-lines", tableRows);
+
   return (
     <div className="space-y-6">
       <div>
@@ -131,7 +134,7 @@ export default async function ValuationReviewPage({
         </dl>
       </section>
 
-      <ValuationTable rows={tableRows} />
+      <ValuationTable rows={visibleTableRows} />
 
       {!confirmed && (
         <div className="flex gap-3">

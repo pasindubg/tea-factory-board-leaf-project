@@ -11,18 +11,6 @@ const tabs = [
     match: (p: string) => p.startsWith("/dashboard/auction/dashboard"),
   },
   {
-    href: "/dashboard/auction",
-    label: "Invoice Overview",
-    match: (p: string) =>
-      p === "/dashboard/auction" ||
-      (p.startsWith("/dashboard/auction/") &&
-        !p.startsWith("/dashboard/auction/dashboard") &&
-        !p.startsWith("/dashboard/auction/sales") &&
-        !p.startsWith("/dashboard/auction/reports") &&
-        !p.startsWith("/dashboard/auction/registry") &&
-        !p.startsWith("/dashboard/auction/settings")),
-  },
-  {
     href: "/dashboard/auction/sales",
     label: "Sales Handling",
     match: (p: string) => p.startsWith("/dashboard/auction/sales"),

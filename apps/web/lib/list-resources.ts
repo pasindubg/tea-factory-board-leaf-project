@@ -42,7 +42,32 @@ export type AuctionGradeListRow = {
   name: string;
   active: boolean;
   sortOrder: number;
+  sampleWeight: number | null;
+  defaultKgPerBag: number | null;
   aliases: string[];
+};
+
+export type AuctionInvoicePrefixListRow = {
+  id: string;
+  category: string;
+  prefix: string;
+  active: boolean;
+  createdAt: string | null;
+};
+
+export type AuctionPrefixExceptionListRow = {
+  id: string;
+  category: string;
+  requestedPrefix: string;
+  contextId: string | null;
+  status: string;
+  requestedByName: string | null;
+  requestedAt: string | null;
+  decidedByName: string | null;
+  decidedAt: string | null;
+  createdRecordId: string | null;
+  note: string | null;
+  payload: Record<string, unknown>;
 };
 
 export type AuctionWarehouseListRow = {
@@ -66,6 +91,8 @@ export type AuctionSaleLineListRow = {
   saleId: string;
   dispatchId: string | null;
   dispatchSaleNo: string | null;
+  broker: string | null;
+  mark: string | null;
   lotNo: string | null;
   invoiceNo: string;
   grade: string | null;
@@ -96,6 +123,7 @@ export type AuctionDispatchListRow = {
   selling_mark: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
+  transporter: string | null;
   bundle_dispatch_no: string | null;
   created_date: string | null;
   status: string;
@@ -111,6 +139,15 @@ export type AuctionPhysicalDispatchListRow = {
   warehouse: string;
   invoiceCount: number;
   status: string;
+};
+
+/** The Auction Sale side rail — a virtual grouping over auction_sales by target sale no. */
+export type AuctionSalesSideListRow = {
+  saleNo: string;
+  dispatchNos: string[];
+  brokers: string[];
+  saleDate: string | null;
+  statuses: string[];
 };
 
 /** Broker Invoices that may still be assigned to a physical dispatch. */
@@ -143,6 +180,38 @@ export type AuctionDispatchLotListRow = {
   threshold_applies: boolean;
   marks: { code: string; name: string } | null;
   lot_invoices: { invoice_no: string }[] | null;
+};
+
+/**
+ * One lot invoice ("basic invoice") across every broker invoice in the
+ * factory, carrying the parent broker invoice's own attributes so the overview
+ * can be read and filtered without opening each broker invoice in turn.
+ * `biStatus` is the raw broker-invoice status — the page gates editing and
+ * deleting on it, so it must not be a display label.
+ */
+export type AuctionInvoiceOverviewListRow = {
+  id: string;
+  saleId: string;
+  invoiceNo: string;
+  lotNo: string | null;
+  grade: string | null;
+  bags: number | null;
+  kgPerBag: number | null;
+  sampleKg: number | null;
+  netWt: number | null;
+  state: string | null;
+  mark: string | null;
+  brokerInvoiceNo: string;
+  saleNo: string | null;
+  broker: string;
+  sellingMark: string;
+  /** Gross weight: the stored gross_wt when set, else bags x kg/bag. */
+  allWeight: number | null;
+  /** Sale the lot rolls into once re-printed, from its forward re-print link. */
+  nextSaleNo: string | null;
+  dispatchDate: string | null;
+  saleDate: string | null;
+  biStatus: string;
 };
 
 export type AuctionReprintOverviewListRow = {
@@ -309,18 +378,37 @@ export type WeighingListRow = {
   notes: string | null;
 };
 
+/**
+ * One synthetic row carrying a list instance's restorable search state: the
+ * caller's own saved criteria plus any role lock that applies to them. Every
+ * list — live (registry-backed) or local (side panels with server-rendered
+ * initialRows) — fetches this by its own `scope` string to restore search on
+ * mount, with zero per-list declaration.
+ */
+export type ListSearchStateRow = {
+  saved: Record<string, string> | null;
+  savedAdvancedQuery: string | null;
+  locked: Record<string, string>;
+  lockedAdvancedQuery: string | null;
+  canManageLocks: boolean;
+};
+
 export type ListResourceContracts = {
   "auction.brokers": { params: undefined; row: AuctionBrokerListRow };
   "auction.marks": { params: undefined; row: AuctionMarkListRow };
   "auction.broker-rates": { params: undefined; row: AuctionBrokerRateListRow };
   "auction.grades": { params: undefined; row: AuctionGradeListRow };
+  "auction.invoice-prefixes": { params: undefined; row: AuctionInvoicePrefixListRow };
+  "auction.prefix-approvals": { params: undefined; row: AuctionPrefixExceptionListRow };
   "auction.warehouses": { params: undefined; row: AuctionWarehouseListRow };
   "auction.broker-grade-thresholds": { params: undefined; row: AuctionThresholdListRow };
   "auction.sale-lines": { params: { saleId: string }; row: AuctionSaleLineListRow };
   "auction.dispatches": { params: undefined; row: AuctionDispatchListRow };
   "auction.dispatch-lots": { params: { saleId: string }; row: AuctionDispatchLotListRow };
   "auction.reprint-overview": { params: undefined; row: AuctionReprintOverviewListRow };
+  "auction.invoice-overview": { params: undefined; row: AuctionInvoiceOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
+  "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
   "leaf.collectors": { params: undefined; row: CollectorListRow };
@@ -339,6 +427,7 @@ export type ListResourceContracts = {
     params: { from?: string; to?: string; supplierId?: string; collectorId?: string };
     row: WeighingListRow;
   };
+  "framework.search-state": { params: { listScope: string }; row: ListSearchStateRow };
 };
 
 export const LIST_RESOURCE_KEYS = [
@@ -346,13 +435,17 @@ export const LIST_RESOURCE_KEYS = [
   "auction.marks",
   "auction.broker-rates",
   "auction.grades",
+  "auction.invoice-prefixes",
+  "auction.prefix-approvals",
   "auction.warehouses",
   "auction.broker-grade-thresholds",
   "auction.sale-lines",
   "auction.dispatches",
   "auction.dispatch-lots",
   "auction.reprint-overview",
+  "auction.invoice-overview",
   "auction.physical-dispatches",
+  "auction.sales-side-list",
   "auction.eligible-broker-invoices",
   "leaf.suppliers",
   "leaf.collectors",
@@ -368,7 +461,20 @@ export const LIST_RESOURCE_KEYS = [
   "users.role-page-permissions",
   "users.staff-directory",
   "leaf.weighings",
+  "framework.search-state",
 ] as const satisfies readonly (keyof ListResourceContracts)[];
+
+/**
+ * Exhaustiveness guard. The `satisfies` above only proves every key listed is
+ * real — not that every real key is listed. A resource added to
+ * ListResourceContracts but forgotten here typechecks cleanly and then fails
+ * at runtime with "Unknown list resource.", because LIST_RESOURCE_KEYS is the
+ * allowlist isListResourceKey enforces. This turns that omission into a type
+ * error naming the missing key.
+ */
+const _everyResourceKeyIsRegistered: never[] =
+  [] as Exclude<keyof ListResourceContracts, (typeof LIST_RESOURCE_KEYS)[number]>[];
+void _everyResourceKeyIsRegistered;
 
 export type ListResourceKey = keyof ListResourceContracts;
 export type ListResourceParams<Key extends ListResourceKey> = ListResourceContracts[Key]["params"];
@@ -380,6 +486,19 @@ export type ListResourceRequest<Key extends ListResourceKey = ListResourceKey> =
       ? { key: Key; params?: never }
       : { key: Key; params: ListResourceParams<Key> }
     : never;
+
+/**
+ * Optional search/pagination state layered on top of a resource request. Omit
+ * entirely for the initial server-rendered load (which restores the caller's
+ * saved+locked criteria automatically); pass it on later refreshes triggered
+ * by "Search" or "Show more".
+ */
+export type ListResourceSearch = {
+  criteria?: Record<string, string>;
+  advancedQuery?: string | null;
+  offset?: number;
+  limit?: number;
+};
 
 export type ListInvalidation =
   | { kind: "exact"; resource: ListResourceRequest }

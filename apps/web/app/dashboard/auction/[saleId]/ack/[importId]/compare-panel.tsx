@@ -338,7 +338,7 @@ function CompareWorkflow({
                 id: "audit",
                 label: "Audit trail",
                 badge: audit.length,
-                content: <WorkflowAuditList rows={audit} title="Acknowledgement decision audit" description="Search links, rejected candidates, and recorded no-match outcomes." />,
+                content: <WorkflowAuditList rows={audit} scope="workflow-audit-ack" title="Acknowledgement decision audit" description="Search links, rejected candidates, and recorded no-match outcomes." />,
               },
             ]}
           />

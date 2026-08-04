@@ -1,0 +1,2 @@
+DROP INDEX "uq_auction_sales_open_broker_mark";--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_auction_sales_open_broker_mark" ON "auction_sales" USING btree ("factory_id","broker_id","selling_mark_id","dispatch_date") WHERE "sale_kind" = 'dispatch' AND "status" IN ('draft', 'dispatched') AND "selling_mark_id" IS NOT NULL;

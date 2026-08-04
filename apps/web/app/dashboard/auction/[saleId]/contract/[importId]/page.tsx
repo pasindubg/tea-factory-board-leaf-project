@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
@@ -127,6 +128,8 @@ export default async function ContractReviewPage({
     };
   });
 
+  const visibleContractLineRows = await applyServerListSearch(supabase, profile, "contract-lines", contractLineRows);
+
   return (
     <div className="space-y-6">
       <div>
@@ -193,7 +196,7 @@ export default async function ContractReviewPage({
         </div>
       )}
 
-      <ContractLinesTable rows={contractLineRows} />
+      <ContractLinesTable rows={visibleContractLineRows} />
 
       {!confirmed && (
         <div className="flex gap-3">

@@ -44,6 +44,18 @@ export function parsePaymentPeriodParams(input: unknown): ResourceParamResult {
   return { ok: true, value: { year: Number(params.year), month: Number(params.month) } };
 }
 
+export function parseListScopeParams(input: unknown): ResourceParamResult {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, error: "Invalid list parameters." };
+  }
+  const params = input as Record<string, unknown>;
+  const value = params.listScope;
+  if (Object.keys(params).length !== 1 || typeof value !== "string" || value.length === 0 || value.length > 200) {
+    return { ok: false, error: "Invalid list parameters." };
+  }
+  return { ok: true, value: { listScope: value } };
+}
+
 export function parseWeighingListParams(input: unknown): ResourceParamResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "Invalid list parameters." };

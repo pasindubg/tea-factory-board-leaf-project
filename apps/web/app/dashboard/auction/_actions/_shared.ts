@@ -9,6 +9,7 @@ import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
+import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 
 export const AUC = "/dashboard/auction";
 export const REP = "/dashboard/auction/reports";
@@ -225,13 +226,21 @@ export async function saleDetailPath(supabase: Supa, factoryId: string, saleId: 
   return `${AUC}/sales/${encodeURIComponent(key || saleId)}`;
 }
 
-export async function nextDispatchNo(supabase: Supa): Promise<string> {
-  const { data } = await supabase.from("auction_sales").select("sale_no").eq("sale_kind", "dispatch");
+// `prefix` is the resolved broker_invoice prefix string (e.g. "26B01"); the
+// sequence resets to 0001 under each new prefix since it's scanned only among
+// sale_no values already starting with that prefix, scoped to this factory.
+export async function nextDispatchNo(supabase: Supa, factoryId: string, prefix: string): Promise<string> {
+  const { data } = await supabase
+    .from("auction_sales")
+    .select("sale_no")
+    .eq("factory_id", factoryId)
+    .eq("sale_kind", "dispatch")
+    .like("sale_no", `${prefix}-%`);
   const maxNo = (data ?? []).reduce((max, row) => {
     const match = (row.sale_no as string | null)?.match(/\d+$/);
     return match ? Math.max(max, Number(match[0])) : max;
   }, 0);
-  return formatFourDigitNo(maxNo + 1);
+  return buildCompositeInvoiceNo(prefix, maxNo + 1);
 }
 
 // Resolve (or create) a dispatch by sale number for the report-analyser auto flow.
@@ -249,7 +258,9 @@ export async function resolveSale(
   if (existingId) return existingId;
   const { data: br } = await supabase.from("brokers").select("id").eq("factory_id", factoryId).limit(1).single();
   if (!br?.id) return null;
-  const dispatchNo = await nextDispatchNo(supabase);
+  const prefixResult = await resolveInvoicePrefix({ supabase, factoryId, category: "broker_invoice", role: "owner" });
+  if (!prefixResult.ok || prefixResult.needsApproval) return null;
+  const dispatchNo = await nextDispatchNo(supabase, factoryId, prefixResult.prefix.prefix);
   const { data: created } = await supabase
     .from("auction_sales")
     .insert({ factory_id: factoryId, broker_id: br.id, sale_no: dispatchNo, target_sale_no: sn, status: "draft" })

@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { showAppToast } from "@/components/action-feedback";
 import { setPaymentStatus } from "../actions";
+import { formatDateTime } from "@/lib/dates";
 
 type StatementStatusContextValue = {
   paid: boolean;
@@ -92,7 +93,7 @@ export function StatementGeneratedMeta({ generatedAt }: { generatedAt: string })
   const { paidAt } = useStatementStatus();
   return (
     <span suppressHydrationWarning>
-      Generated {new Date(generatedAt).toLocaleString()}{paidAt ? ` · Paid ${new Date(paidAt).toLocaleString()}` : ""}
+      Generated {formatDateTime(generatedAt)}{paidAt ? ` · Paid ${formatDateTime(paidAt)}` : ""}
     </span>
   );
 }

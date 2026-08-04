@@ -82,7 +82,7 @@ packages/
 - **Node.js 20+** (Node 20 needs `NODE_OPTIONS=--experimental-websocket` for some
   scripts; already baked into the package scripts)
 - **pnpm 9** — `npm install -g pnpm@9`
-- **Docker** (optional) — for a local Postgres instead of a cloud Supabase project
+- **Docker Desktop** — runs the local Supabase stack (Option B below)
 
 ### 1. Clone and install
 
@@ -93,10 +93,13 @@ pnpm install
 
 ### 2. Set up the database
 
-You need either a free [Supabase](https://supabase.com) project **or** local
-Postgres via Docker.
+**Day-to-day development uses Option B (local, isolated).** The hosted
+Supabase project is the live customer database — local dev must never point
+at it, and a single gate (`apps/web/lib/env.ts`) enforces that at runtime. See
+[docs/ENVIRONMENT_CHANGES.md](docs/ENVIRONMENT_CHANGES.md) for why.
 
-**Option A — cloud Supabase (full feature set, including auth):**
+**Option A — hosted Supabase (only for the release pipeline / one-off prod
+debugging, not local dev):**
 
 ```bash
 cp .env.example .env
@@ -106,12 +109,23 @@ cp .env.example .env
 #   DATABASE_URL — use the SESSION POOLER connection string         (Connect button)
 ```
 
-**Option B — local Postgres (no account needed; auth scripts won't run):**
+**Option B — local Supabase CLI stack (recommended):** runs Postgres + Auth
+(GoTrue) + Storage locally in Docker — a full separate project, so RLS
+(`auth.uid()`), OTP login, and the admin user APIs all behave exactly like
+production without touching it.
 
 ```bash
-docker run -d --name tea-factory-pg -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:16
-docker exec -i tea-factory-pg psql -U postgres < packages/db/scripts/local-pg-shim.sql
-# .env: DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/postgres
+pnpm supabase start          # first run pulls Docker images, can take a few minutes
+pnpm supabase status -o env  # prints the local API URL + anon/service_role keys
+cp .env.local.example .env   # already has the fixed local stack values
+```
+
+Optionally clone real data (schema + `public` + `auth`) from the hosted
+project into the local stack — a deliberate, manual step, never automatic:
+
+```bash
+set -a; . ./.env.hosted; set +a   # a SEPARATE .env pointed at the hosted DATABASE_URL
+packages/db/scripts/clone-remote-to-local.sh
 ```
 
 Then migrate and seed (from `packages/db/`):
@@ -120,9 +134,12 @@ Then migrate and seed (from `packages/db/`):
 pnpm db:migrate      # apply Drizzle migrations (schema + RLS policies)
 pnpm db:seed         # 2 demo factories with suppliers and weighings
 pnpm db:verify-rls   # prove tenant isolation holds (6 checks)
-pnpm db:link-auth    # cloud only: create real auth users for the seed emails
-pnpm db:verify-auth  # cloud only: end-to-end auth + RLS gate
+pnpm db:link-auth    # create real auth users for the seed emails
+pnpm db:verify-auth  # end-to-end auth + RLS gate
 ```
+
+`db:link-auth`/`db:verify-auth` work against the local stack too now (Option
+B has a real `auth` schema), not just hosted Supabase.
 
 ### 3. Run the web app
 

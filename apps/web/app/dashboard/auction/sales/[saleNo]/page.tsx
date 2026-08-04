@@ -1,7 +1,12 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  DetailField,
+  DetailRecordPanel,
+} from "@/components/detail-workspace";
+import { EntityListTabs } from "@/components/entity-list";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { stateBucket } from "../../state-buckets";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
@@ -9,7 +14,9 @@ import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-s
 import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
-import { EntityListTabs } from "@/components/entity-list";
+import { SaleDetailWorkspace } from "./sale-detail-workspace";
+
+const SEARCH_PANEL_ID = "auction-sale-detail-search";
 
 type DispatchRow = {
   id: string;
@@ -47,12 +54,6 @@ type LineRow = {
   on_guarantee: boolean | null;
 };
 
-type MachineStep = {
-  label: string;
-  count: number;
-  detail: string;
-};
-
 function plural(n: number, singular: string, pluralText = `${singular}s`) {
   return `${n} ${n === 1 ? singular : pluralText}`;
 }
@@ -69,16 +70,6 @@ function lotIsSold(lot: LotRow) {
 function dispatchCount(dispatches: DispatchRow[], statuses: readonly string[]) {
   const wanted = new Set(statuses);
   return dispatches.filter((dispatch) => wanted.has(dispatch.status ?? "")).length;
-}
-
-function stepClass(index: number, currentIndex: number) {
-  if (index < currentIndex) {
-    return "border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200";
-  }
-  if (index === currentIndex) {
-    return "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200";
-  }
-  return "border-stone-200 bg-white text-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400";
 }
 
 function statusBreakdown(lots: LotRow[]) {
@@ -173,37 +164,27 @@ export default async function SaleDetailPage({
   const soldCount = soldLotIds.size;
   const settledCount = dispatchCount(dispatches, ["settled"]);
   const invoiceEditingLocked = settledCount > 0;
-  const machineSteps: MachineStep[] = [
+  const currentStateKey =
+    settledCount > 0
+      ? "settled"
+      : soldCount > 0
+        ? "sold"
+        : valuedCount > 0
+          ? "valued"
+          : acknowledgedCount > 0
+            ? "acknowledged"
+            : "draft";
+  const lifecycleSteps = [
+    { key: "draft", label: "Draft", metric: plural(lotRows.length, "lot") },
+    { key: "acknowledged", label: "Acknowledged", metric: `${acknowledgedCount}/${lotRows.length} lots` },
+    { key: "valued", label: "Valued", metric: `${valuedCount}/${lotRows.length} lots` },
+    { key: "sold", label: "Sold", metric: plural(soldCount, "lot") },
     {
-      label: "Draft",
-      count: dispatches.length,
-      detail: plural(lotRows.length, "lot"),
-    },
-    {
-      label: "Acknowledged",
-      count: acknowledgedCount,
-      detail: `${acknowledgedCount}/${lotRows.length} lots`,
-    },
-    {
-      label: "Valued",
-      count: valuedCount,
-      detail: `${valuedCount}/${lotRows.length} lots`,
-    },
-    {
-      label: "Sold",
-      count: soldCount,
-      detail: plural(soldCount, "lot"),
-    },
-    {
+      key: "settled",
       label: "Settled",
-      count: settledCount,
-      detail: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
+      metric: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
     },
   ];
-  const currentStepIndex = Math.max(
-    0,
-    machineSteps.reduce((furthest, step, index) => (step.count > 0 ? index : furthest), -1),
-  );
   const issueSteps = [
     { label: "Pending", count: lotCount(lotRows, ["pending"]) },
     { label: "Not Valued", count: lotCount(lotRows, ["not-valued"]) },
@@ -212,57 +193,12 @@ export default async function SaleDetailPage({
     { label: "Re-print", count: lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length },
     { label: "Missing", count: lotCount(lotRows, ["missing"]) },
   ].filter((item) => item.count > 0);
-  const saleListSummaries = new Map<string, {
-    saleNo: string;
-    dispatchNos: Map<string, string>;
-    brokers: Set<string>;
-    saleDate: string | null;
-    statuses: Set<string>;
-  }>();
-  const allDispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
-  for (const dispatch of allDispatchRows) {
-    const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
-    if (!key) continue;
-    const current = saleListSummaries.get(key) ?? {
-      saleNo: key,
-      dispatchNos: new Map<string, string>(),
-      brokers: new Set<string>(),
-      saleDate: dispatch.sale_date,
-      statuses: new Set<string>(),
-    };
-    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
-    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
-    current.saleDate ??= dispatch.sale_date;
-    current.statuses.add(stateBucket(dispatch.status).label);
-    saleListSummaries.set(key, current);
-  }
-  for (const lot of allLotRows) {
-    const dispatch = allDispatchById.get(lot.sale_id);
-    if (!dispatch) continue;
-    const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
-    if (!key) continue;
-    const current = saleListSummaries.get(key) ?? {
-      saleNo: key,
-      dispatchNos: new Map<string, string>(),
-      brokers: new Set<string>(),
-      saleDate: dispatch.sale_date,
-      statuses: new Set<string>(),
-    };
-    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
-    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
-    current.saleDate ??= dispatch.sale_date;
-    current.statuses.add(stateBucket(dispatch.status).label);
-    saleListSummaries.set(key, current);
-  }
-  const saleListRows: SaleSideListRow[] = [...saleListSummaries.values()]
-    .sort((a, b) => b.saleNo.localeCompare(a.saleNo, undefined, { numeric: true }))
-    .map((sale) => ({
-      saleNo: sale.saleNo,
-      dispatchNos: [...sale.dispatchNos.values()],
-      brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
-      saleDate: sale.saleDate,
-      statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
-    }));
+  // Shared with the side rail's own client-side refetch on search — one
+  // source of truth for the sale-grouping aggregation instead of duplicating
+  // it here for the initial render.
+  const saleListResource = await loadListResource({ key: "auction.sales-side-list" });
+  if (!saleListResource.ok) throw new Error(saleListResource.error);
+  const saleListRows: SaleSideListRow[] = saleListResource.rows;
 
   const dispatchTableRows: DispatchInSaleRow[] = dispatches.map((dispatch) => {
     const state = stateBucket(dispatch.status);
@@ -300,63 +236,62 @@ export default async function SaleDetailPage({
 
   const saleLineTableRows = saleLines.rows;
 
+  const [visibleSaleListRows, visibleDispatchTableRows] = await Promise.all([
+    applyServerListSearch(supabase, profile, "auction-sales-side-list", saleListRows),
+    applyServerListSearch(supabase, profile, "dispatches-in-sale", dispatchTableRows),
+  ]);
+
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
-      <SalesSideList rows={saleListRows} currentSaleNo={displaySaleNo} />
-      <div className="min-w-0 space-y-6">
-      <div>
-        <Link href="/dashboard/auction/sales" className="text-sm text-green-700 hover:underline dark:text-green-400">
-          ← Sales Overview
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-5">
-          <div>
-            <h2 className="text-xl font-semibold">Sale {displaySaleNo}</h2>
-            <p className="text-sm text-stone-500 dark:text-stone-400">
-              {dispatches.length} broker invoice{dispatches.length === 1 ? "" : "s"} · {lotRows.length} lots · {soldCount} sold · {reprintCount} re-print
-            </p>
-          </div>
-          <div className="w-full max-w-xl lg:ml-auto lg:w-[34rem]">
-            <ol className="grid grid-cols-5 gap-1.5">
-              {machineSteps.map((step, index) => (
-                <li
-                  key={step.label}
-                  className={`min-h-12 rounded-lg border px-2 py-1.5 ${stepClass(index, currentStepIndex)}`}
+    <SaleDetailWorkspace
+      saleNo={displaySaleNo}
+      isOwner={profile.role === "owner"}
+      saleListRows={saleListRows}
+      rail={
+        <SalesSideList
+          rows={visibleSaleListRows}
+          currentSaleNo={displaySaleNo}
+          searchPanelId={SEARCH_PANEL_ID}
+        />
+      }
+      railAriaLabel="Auction sales"
+      searchPanelId={SEARCH_PANEL_ID}
+      state={{
+        currentKey: currentStateKey,
+        steps: lifecycleSteps,
+        testId: "sale-state-indicator",
+      }}
+      headerActions={
+        <SalesReconciliationAssistant
+          saleNo={displaySaleNo}
+          groups={reconciliationGroups}
+        />
+      }
+    >
+      <DetailRecordPanel
+        eyebrow="Sale details"
+        title={`Sale ${displaySaleNo}`}
+        description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${reprintCount} re-print`}
+        contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
+        footer={
+          issueSteps.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {issueSteps.map((item) => (
+                <span
+                  key={item.label}
+                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[10px] font-medium opacity-75">{step.detail}</span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${index <= currentStepIndex ? "bg-current" : "bg-stone-300 dark:bg-stone-600"}`} />
-                  </div>
-                  <p className="mt-1 truncate text-[11px] font-semibold">{step.label}</p>
-                </li>
+                  {item.label}: {item.count}
+                </span>
               ))}
-            </ol>
-            {issueSteps.length > 0 && (
-              <div className="mt-2 flex flex-wrap justify-end gap-2">
-                {issueSteps.map((item) => (
-                  <span
-                    key={item.label}
-                    className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                  >
-                    {item.label}: {item.count}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <Summary label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
-        <Summary label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
-        <Summary label="Total VAT" value={`LKR ${money(totalVat)}`} accent="blue" />
-        <Summary label="Guarantee lots" value={guaranteeLots.toString()} />
-      </div>
-
-      <section>
-        <SalesReconciliationAssistant saleNo={displaySaleNo} groups={reconciliationGroups} />
-      </section>
-
+            </div>
+          ) : undefined
+        }
+      >
+        <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
+        <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
+        <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
+        <DetailField label="Guarantee lots" value={guaranteeLots} />
+      </DetailRecordPanel>
       <EntityListTabs
         label="Sale lists"
         tabs={[
@@ -372,21 +307,9 @@ export default async function SaleDetailPage({
               />
             ),
           },
-          { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={dispatchTableRows} /> },
+          { id: "dispatches", label: "Broker invoices", count: `${visibleDispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
         ]}
       />
-      </div>
-    </div>
-  );
-}
-
-function Summary({ label, value, accent }: { label: string; value: string; accent?: "blue" }) {
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-      <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${accent === "blue" ? "text-blue-800 dark:text-blue-400" : "text-stone-800 dark:text-stone-200"}`}>
-        {value}
-      </p>
-    </div>
+    </SaleDetailWorkspace>
   );
 }

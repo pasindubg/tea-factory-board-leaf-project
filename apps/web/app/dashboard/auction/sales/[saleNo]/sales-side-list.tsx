@@ -1,16 +1,11 @@
 "use client";
 
-import { EntityList } from "@/components/entity-list";
-import type { ColumnDef, ListDefinition } from "@/components/list-controls";
+import { DetailSideList } from "@/components/detail-side-list";
+import type { ColumnDef } from "@/components/list-controls";
+import type { AuctionSalesSideListRow } from "@/lib/list-resources";
 import { saleNoKey, saleNoMatches } from "../../sale-number";
 
-export type SaleSideListRow = {
-  saleNo: string;
-  dispatchNos: string[];
-  brokers: string[];
-  saleDate: string | null;
-  statuses: string[];
-};
+export type SaleSideListRow = AuctionSalesSideListRow;
 
 const COLUMNS: ColumnDef<SaleSideListRow>[] = [
   { key: "saleNo", label: "Sale", accessor: (row) => row.saleNo, sortable: true, filter: "text" },
@@ -20,18 +15,17 @@ const COLUMNS: ColumnDef<SaleSideListRow>[] = [
   { key: "statuses", label: "Status", accessor: (row) => row.statuses.join(", ") || null, sortable: true, filter: "text" },
 ];
 
-const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<SaleSideListRow>;
-
-export function SalesSideList({ rows, currentSaleNo }: { rows: SaleSideListRow[]; currentSaleNo: string }) {
+export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
+  rows: SaleSideListRow[]; currentSaleNo: string; searchPanelId: string;
+}) {
   return (
-    <EntityList
-      scope="auction-sales-side-list"
+    <DetailSideList
+      resource={{ key: "auction.sales-side-list" }}
       initialRows={rows}
-      definition={LIST}
+      columns={COLUMNS}
       getId={(row) => saleNoKey(row.saleNo) || row.saleNo}
       rowLabel={(row) => `Sale ${row.saleNo}`}
-      title="Sales"
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      searchPanelId={searchPanelId}
       emptyMessage="No sales."
       filteredEmptyMessage="No sales match."
       sideList={{

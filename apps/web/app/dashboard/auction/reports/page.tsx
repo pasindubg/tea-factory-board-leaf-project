@@ -1,4 +1,5 @@
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { ingestAckAuto, ingestValAuto, ingestConAuto, ingestBankAuto } from "../actions";
 import { ReportsTabs } from "./reports-tabs";
 import { SettlementsTable, type SettlementRow } from "./settlements-table";
@@ -7,7 +8,7 @@ import { DocumentImportList } from "./document-import-list";
 import { EntityListTabs } from "@/components/entity-list";
 
 export default async function ReportsPage() {
-  const { supabase } = await requirePageAccess("auction-reports");
+  const { supabase, profile } = await requirePageAccess("auction-reports");
 
   const [
     { data: settlements },
@@ -77,6 +78,16 @@ export default async function ReportsPage() {
   const conImports = allImports.filter((i) => i.doc_type === "contract");
   const bankImports = allImports.filter((i) => i.doc_type === "bank_csv");
 
+  // DocumentImportList's scope is `document-import-${reviewType}`; each tab is
+  // a distinct list instance, so each resolves its own saved/locked search.
+  const [visibleSettlements, visibleAck, visibleVal, visibleCon, visibleBank] = await Promise.all([
+    applyServerListSearch(supabase, profile, "auction-settlements", settlementRows),
+    applyServerListSearch(supabase, profile, "document-import-ack", ackImports),
+    applyServerListSearch(supabase, profile, "document-import-valuation", valImports),
+    applyServerListSearch(supabase, profile, "document-import-contract", conImports),
+    applyServerListSearch(supabase, profile, "document-import-bank", bankImports),
+  ]);
+
   const overview = (
     <div className="space-y-8">
       {/* Settlement summary */}
@@ -101,7 +112,7 @@ export default async function ReportsPage() {
           </div>
         </div>
 
-        <SettlementsTable rows={settlementRows} />
+        <SettlementsTable rows={visibleSettlements} />
       </section>
     </div>
   );
@@ -120,26 +131,26 @@ export default async function ReportsPage() {
           {
             id: "acknowledgements",
             label: "Acknowledgements",
-            count: `${ackImports.length}`,
-            content: <DocumentImportList title="Acknowledgement" description="Catalogue lots and reconcile (①) against what you invoiced; shutouts are flagged. Auto-detects the sale." action={ingestAckAuto} rows={ackImports} reviewType="ack" />,
+            count: `${visibleAck.length}`,
+            content: <DocumentImportList title="Acknowledgement" description="Catalogue lots and reconcile (①) against what you invoiced; shutouts are flagged. Auto-detects the sale." action={ingestAckAuto} rows={visibleAck} reviewType="ack" />,
           },
           {
             id: "valuations",
             label: "Valuations",
-            count: `${valImports.length}`,
-            content: <DocumentImportList title="Valuation report" description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes." action={ingestValAuto} rows={valImports} reviewType="valuation" />,
+            count: `${visibleVal.length}`,
+            content: <DocumentImportList title="Valuation report" description="Record the broker's per-lot valuation — price range, projected proceeds and tasting notes." action={ingestValAuto} rows={visibleVal} reviewType="valuation" />,
           },
           {
             id: "contracts",
             label: "Contracts",
-            count: `${conImports.length}`,
-            content: <DocumentImportList title="Sellers contract" description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation." action={ingestConAuto} rows={conImports} reviewType="contract" />,
+            count: `${visibleCon.length}`,
+            content: <DocumentImportList title="Sellers contract" description="Record the actual sale (buyer, price, VAT, guarantee) and reconcile (②) against the valuation." action={ingestConAuto} rows={visibleCon} reviewType="contract" />,
           },
           {
             id: "bank",
             label: "Bank statements",
-            count: `${bankImports.length}`,
-            content: <DocumentImportList title="Bank statement (CSV)" description="Upload the bank statement to reconcile (④) settlements against the credits that actually arrived." action={ingestBankAuto} rows={bankImports} reviewType="bank" accept=".csv,text/csv" />,
+            count: `${visibleBank.length}`,
+            content: <DocumentImportList title="Bank statement (CSV)" description="Upload the bank statement to reconcile (④) settlements against the credits that actually arrived." action={ingestBankAuto} rows={visibleBank} reviewType="bank" accept=".csv,text/csv" />,
           },
         ]}
       />

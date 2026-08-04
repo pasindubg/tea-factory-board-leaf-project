@@ -253,7 +253,7 @@ function BankResolverWorkflow({
             id: "audit",
             label: "Audit trail",
             badge: audit.length,
-            content: <WorkflowAuditList rows={audit} title="Bank decision audit" description="Search the recorded bank matching decisions and the confidence shown to the operator." />,
+            content: <WorkflowAuditList rows={audit} scope="workflow-audit-bank" title="Bank decision audit" description="Search the recorded bank matching decisions and the confidence shown to the operator." />,
           },
         ]}
       />

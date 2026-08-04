@@ -4,8 +4,15 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Keyboard
 import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
 import { showAppToast } from "@/components/action-feedback";
 import { refreshListResource } from "@/lib/list-resource-action";
+import { listLockableRoles, removeListSearchLock, saveListSearchLock, saveListSearchState } from "@/lib/list-search-actions";
+import type { Role } from "@/lib/roles";
 import type { ListMutationResult, ListRefreshResult } from "@/lib/list-mutations";
-import { listResourceIdentity, type ListInvalidation, type ListResourceKey, type ListResourceRequest, type ListResourceRow } from "@/lib/list-resources";
+import { listResourceIdentity, type ListInvalidation, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
+
+// Deliberately excludes "manager" (and "owner"): both are always exempt from
+// locks (see resolveListSearchState), so offering them here would let an
+// owner/manager "lock" a role for which the lock silently never applies.
+const LOCKABLE_ROLES: readonly Role[] = ["supervisor", "accountant", "collector"];
 
 // Shared column-sort + column-filter primitives for the app's hand-rolled
 // tables. Deliberately headless: each table keeps its own <table> markup,
@@ -94,34 +101,76 @@ async function refreshInvalidatedListInstances(invalidation: ListInvalidation) {
   await Promise.all([...new Set(matchingListeners)].map((listener) => listener()));
 }
 
+export type FrameworkListSearchState = {
+  saved: Record<string, string> | null;
+  savedAdvancedQuery: string | null;
+  locked: Record<string, string>;
+  /** A locked role's mandatory advanced-query prefix, ANDed in server-side
+   * regardless of what the client sends — never merged into the editable
+   * advancedQuery input, only shown alongside it (see ListSearchPanel). */
+  lockedAdvancedQuery: string | null;
+  canManageLocks: boolean;
+};
+
 /**
  * Owns the live rows for one framework list. After a successful mutation it
  * asks the central server registry for this allowlisted resource and replaces
  * only subscribed list instances; it never reloads the browser or refreshes
  * the route tree.
+ *
+ * Also owns server-driven search/pagination: `applySearch` re-executes a real
+ * query with the given criteria (replacing rows, resetting to page one) and
+ * `loadMore` fetches the next page (appending rows) — both generic, driven
+ * entirely by `hasMore`/pagination metadata the registry already returns.
+ * Resources that don't declare a `search` config just always report
+ * `hasMore: false`, so "Show more" never appears for them — no special-casing
+ * needed here.
  */
 export function useFrameworkListData<Key extends ListResourceKey>(
   { initialRows, resource }: { initialRows: ListResourceRow<Key>[]; resource: ListResourceRequest<Key> },
 ) {
   const [rows, setRows] = useState(initialRows);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  // Starts undefined (not a placeholder object) so the seeding effect in
+  // useListControls waits for the real fetch below instead of "seeding" once
+  // from empty data and never applying the actual saved criteria that arrive
+  // moments later — that was silently dropping restored search filters on
+  // every fresh mount (refresh/re-login) even though the rows came back
+  // correctly filtered server-side.
+  const [searchState, setSearchState] = useState<FrameworkListSearchState | undefined>(undefined);
   const identity = listResourceIdentity(resource);
   const resourceRef = useRef(resource);
   const refreshGeneration = useRef(0);
+  const lastSearchRef = useRef<ListResourceSearch | undefined>(undefined);
   resourceRef.current = resource;
 
   useEffect(() => setRows(initialRows), [initialRows]);
 
-  const refresh = useCallback(async () => {
+  const applyResult = useCallback((result: Extract<ListRefreshResult<ListResourceRow<Key>>, { ok: true }>) => {
+    setRows(result.rows);
+    setHasMore(Boolean(result.hasMore));
+    setSearchState({
+      saved: result.savedCriteria ?? null,
+      savedAdvancedQuery: result.savedAdvancedQuery ?? null,
+      locked: result.locked ?? {},
+      lockedAdvancedQuery: result.lockedAdvancedQuery ?? null,
+      canManageLocks: Boolean(result.canManageLocks),
+    });
+  }, []);
+
+  const refresh = useCallback(async (search?: ListResourceSearch) => {
     const generation = ++refreshGeneration.current;
+    lastSearchRef.current = search;
     setRefreshing(true);
     try {
-      const result = await refreshListResource(resourceRef.current) as ListRefreshResult<ListResourceRow<Key>>;
+      const result = await refreshListResource(resourceRef.current, search) as ListRefreshResult<ListResourceRow<Key>>;
       if (!result.ok) {
         if (generation === refreshGeneration.current) showAppToast(result.error, "error");
         return false;
       }
-      if (generation === refreshGeneration.current) setRows(result.rows);
+      if (generation === refreshGeneration.current) applyResult(result);
       return true;
     } catch {
       if (generation === refreshGeneration.current) {
@@ -131,9 +180,38 @@ export function useFrameworkListData<Key extends ListResourceKey>(
     } finally {
       if (generation === refreshGeneration.current) setRefreshing(false);
     }
-  }, []);
+  }, [applyResult]);
 
-  useEffect(() => subscribeToListResource(identity, refresh), [identity, refresh]);
+  // The server-rendered initialRows already reflect saved+locked criteria (the
+  // page's own server component calls the same registry loader), but not the
+  // hasMore/locked/canManageLocks metadata — one client fetch on mount fills
+  // that in without changing what's on screen.
+  useEffect(() => { void refresh(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [identity]);
+
+  const refreshWithLastSearch = useCallback(() => refresh(lastSearchRef.current), [refresh]);
+
+  useEffect(() => subscribeToListResource(identity, refreshWithLastSearch), [identity, refreshWithLastSearch]);
+
+  const applySearch = useCallback(async (criteria: Record<string, string>, advancedQuery: string) => {
+    void saveListSearchState({ listScope: identity.split("?")[0]!, criteria, advancedQuery: advancedQuery || null });
+    return refresh({ criteria, advancedQuery: advancedQuery || null, offset: 0 });
+  }, [identity, refresh]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await refreshListResource(resourceRef.current, { ...lastSearchRef.current, offset: rows.length }) as ListRefreshResult<ListResourceRow<Key>>;
+      if (!result.ok) {
+        showAppToast(result.error, "error");
+        return;
+      }
+      setRows((current) => [...current, ...result.rows]);
+      setHasMore(Boolean(result.hasMore));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, loadingMore, rows.length]);
 
   const mutate = useCallback(async (
     action: () => Promise<ListMutationResult>,
@@ -147,8 +225,8 @@ export function useFrameworkListData<Key extends ListResourceKey>(
       }
       options.onSuccess?.();
       showAppToast(result.notice ?? options.notice ?? "List updated.");
-      const refreshed = await refresh();
-      await refreshOtherListInstances(resourceRef.current, refresh);
+      const refreshed = await refreshWithLastSearch();
+      await refreshOtherListInstances(resourceRef.current, refreshWithLastSearch);
       await Promise.all((result.invalidate ?? []).map((invalidation) => refreshInvalidatedListInstances(invalidation)));
       if (!refreshed) return true;
       return true;
@@ -156,7 +234,7 @@ export function useFrameworkListData<Key extends ListResourceKey>(
       showAppToast("The change could not be saved. Please try again.", "error");
       return false;
     }
-  }, [refresh]);
+  }, [refreshWithLastSearch]);
 
   const mutationAction = useCallback((
     action: (formData: FormData) => Promise<ListMutationResult>,
@@ -165,7 +243,7 @@ export function useFrameworkListData<Key extends ListResourceKey>(
     await mutate(() => action(formData), options);
   }, [mutate]);
 
-  return { rows, refreshing, refresh, mutate, mutationAction };
+  return { rows, refreshing, refresh, mutate, mutationAction, searchState, hasMore, loadingMore, loadMore, applySearch, serverDriven: true as const };
 }
 
 /** A reusable top-navigation tab bar for related list work surfaces. The
@@ -259,8 +337,9 @@ export function useListSelection<T>(rows: T[], { mode, getId }: { mode: ListSele
   };
 }
 
-export function ListSelectionSummary({ mode, count = 0 }: { mode: ListSelectionMode; count?: number }) {
-  return <p className="text-sm font-medium text-stone-500 dark:text-stone-400" aria-live="polite">{count > 0 ? `${count} selected` : mode === "multi" ? "Select rows to manage records" : "Select one row to manage the record"}</p>;
+export function ListSelectionSummary({ count = 0 }: { count?: number }) {
+  if (count === 0) return null;
+  return <p className="text-sm font-medium text-stone-500 dark:text-stone-400" aria-live="polite">{`${count} selected`}</p>;
 }
 
 type ListHeaderAction = {
@@ -275,18 +354,22 @@ type ListHeaderAction = {
 export function ListCommandToolbar({
   mode,
   count = 0,
+  enableCreate = false,
   enableEdit = false,
   enableDelete = false,
   showSelectionSummary = true,
+  onCreate,
   onEdit,
   onDelete,
   children,
 }: {
   mode: ListSelectionMode;
   count?: number;
+  enableCreate?: boolean;
   enableEdit?: boolean;
   enableDelete?: boolean;
   showSelectionSummary?: boolean;
+  onCreate?: ListHeaderAction;
   onEdit?: ListHeaderAction;
   onDelete?: ListHeaderAction;
   children?: React.ReactNode;
@@ -305,9 +388,21 @@ export function ListCommandToolbar({
   }
 
   return (
-    <div ref={toolbarRef} className="flex min-h-16 items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
-      {showSelectionSummary ? <ListSelectionSummary mode={mode} count={count} /> : <span />}
-      <div className="flex flex-wrap justify-end gap-2">
+    <div ref={toolbarRef} className="flex min-h-16 items-center gap-3 border-b border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-900/60">
+      {enableCreate && onCreate && (
+        <button
+          type="button"
+          onClick={onCreate.onClick}
+          disabled={onCreate.disabled || onCreate.busy}
+          aria-label={onCreate.busy ? "Creating record" : onCreate.label ?? "New record"}
+          title={onCreate.label ?? "New record"}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-700 text-lg font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-green-600 dark:hover:bg-green-500"
+        >
+          {onCreate.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <span aria-hidden="true">+</span>}
+        </button>
+      )}
+      {showSelectionSummary ? <ListSelectionSummary count={count} /> : null}
+      <div className="ml-auto flex flex-wrap justify-end gap-2">
         {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
         {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
         {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
@@ -322,20 +417,30 @@ function SearchGlyph() {
 }
 
 function ListHeaderButton({ kind, action }: { kind: "edit" | "delete"; action: ListHeaderAction }) {
-  const destructive = kind === "delete";
+  if (kind === "delete") {
+    const label = action.label ?? "Delete";
+    return (
+      <button
+        type="button"
+        onClick={action.onClick}
+        disabled={action.disabled || action.busy}
+        title={label}
+        aria-label={label}
+        className="inline-flex h-10 w-10 items-center justify-center rounded-full text-red-600 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400 dark:hover:bg-stone-800"
+      >
+        {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <DeleteGlyph />}
+      </button>
+    );
+  }
   return (
     <button
       type="button"
       onClick={action.onClick}
       disabled={action.disabled || action.busy}
-      className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-        destructive
-          ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
-          : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
-      }`}
+      className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
     >
-      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : kind === "edit" ? <EditGlyph /> : <DeleteGlyph />}
-      {action.busy ? "Working…" : action.label ?? (kind === "edit" ? "Edit" : "Delete")}
+      {action.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <EditGlyph />}
+      {action.busy ? "Working…" : action.label ?? "Edit"}
     </button>
   );
 }
@@ -474,7 +579,13 @@ function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: Colu
 export function useListControls<T>(
   rows: T[],
   columns: ColumnDef<T>[],
-  options: { initialFilters?: Record<string, string>; storageKey?: string } = {},
+  options: {
+    initialFilters?: Record<string, string>;
+    storageKey?: string;
+    /** From useFrameworkListData/useLocalEntityListData — enables persisted + role-locked search generically, with zero per-list wiring. */
+    searchState?: FrameworkListSearchState;
+    onApplySearch?: (criteria: Record<string, string>, advancedQuery: string) => void;
+  } = {},
 ) {
   const [sort, setSort] = useState<SortState>(null);
   const [filters, setFilters] = useState<Record<string, string>>(options.initialFilters ?? {});
@@ -483,6 +594,37 @@ export function useListControls<T>(
   const [advancedQuery, setAdvancedQuery] = useState("");
   const [appliedAdvancedQuery, setAppliedAdvancedQuery] = useState("");
   const [storageHydrated, setStorageHydrated] = useState(!options.storageKey);
+  const [locked, setLocked] = useState<Record<string, string>>({});
+  const [lockedAdvancedQuery, setLockedAdvancedQuery] = useState<string | null>(null);
+  const seededSearchState = useRef(false);
+
+  useEffect(() => {
+    if (!options.searchState) return;
+    const { saved, savedAdvancedQuery, locked: nextLocked, lockedAdvancedQuery: nextLockedAdvancedQuery } = options.searchState;
+    setLocked(nextLocked);
+    // Kept separate from the editable advancedQuery state below — this is
+    // display-only. The lock is enforced server-side (loadListResource ANDs
+    // it in unconditionally); the client never needs to splice it into what
+    // it sends.
+    setLockedAdvancedQuery(nextLockedAdvancedQuery ?? null);
+    if (!seededSearchState.current) {
+      seededSearchState.current = true;
+      const merged = { ...(saved ?? {}), ...nextLocked };
+      if (Object.keys(merged).length > 0) {
+        setColumnSearches(merged);
+        setAppliedColumnSearches(merged);
+      }
+      if (savedAdvancedQuery) {
+        setAdvancedQuery(savedAdvancedQuery);
+        setAppliedAdvancedQuery(savedAdvancedQuery);
+      }
+    } else if (Object.keys(nextLocked).length > 0) {
+      // A lock can be added/changed by an owner/manager without this list
+      // remounting — keep forcing it so it can't linger cleared client-side.
+      setColumnSearches((prev) => ({ ...prev, ...nextLocked }));
+      setAppliedColumnSearches((prev) => ({ ...prev, ...nextLocked }));
+    }
+  }, [options.searchState]);
 
   useEffect(() => {
     if (!options.storageKey) return;
@@ -526,26 +668,31 @@ export function useListControls<T>(
   }
 
   function setFilter(key: string, value: string) {
+    if (Object.hasOwn(locked, key)) return;
     setFilters((prev) => {
       return { ...prev, [key]: value };
     });
   }
 
   function setColumnSearch(key: string, value: string) {
+    if (Object.hasOwn(locked, key)) return; // locked by an owner/manager for this role — not user-editable
     setColumnSearches((prev) => ({ ...prev, [key]: value }));
   }
 
   function clearFilters() {
     setFilters({});
-    setColumnSearches({});
-    setAppliedColumnSearches({});
+    setColumnSearches({ ...locked });
+    setAppliedColumnSearches({ ...locked });
     setAdvancedQuery("");
     setAppliedAdvancedQuery("");
+    options.onApplySearch?.({ ...locked }, "");
   }
 
   function applySearch() {
-    setAppliedColumnSearches(columnSearches);
+    const merged = { ...columnSearches, ...locked };
+    setAppliedColumnSearches(merged);
     setAppliedAdvancedQuery(advancedQuery);
+    options.onApplySearch?.(merged, advancedQuery);
   }
 
   const filterCols = useMemo(() => columns.filter((c) => c.filter && c.accessor), [columns]);
@@ -628,6 +775,9 @@ export function useListControls<T>(
     hasSearchableColumns: searchCols.length > 0,
     activeFilterCount,
     optionsFor,
+    locked,
+    lockedAdvancedQuery,
+    canManageLocks: options.searchState?.canManageLocks ?? false,
   };
 }
 
@@ -667,13 +817,16 @@ function SortIcon({ dir }: { dir: "asc" | "desc" | null }) {
 // data-derived LOV) depending on the column's filter type.
 export function FilterCell<T>({ col, controls }: { col: ColumnDef<T>; controls: ListControls<T> }) {
   if (!col.filter || !col.accessor) return null;
-  const value = controls.filters[col.key] ?? "";
+  const locked = Object.hasOwn(controls.locked, col.key);
+  const value = locked ? controls.locked[col.key]! : controls.filters[col.key] ?? "";
   if (col.filter === "select") {
     return (
       <select
         value={value}
+        disabled={locked}
+        title={locked ? "Locked by your role" : undefined}
         onChange={(e) => controls.setFilter(col.key, e.target.value)}
-        className="w-full rounded border border-stone-200 bg-white px-1.5 py-1 text-xs dark:border-stone-700 dark:bg-stone-800"
+        className="w-full rounded border border-stone-200 bg-white px-1.5 py-1 text-xs disabled:opacity-60 dark:border-stone-700 dark:bg-stone-800"
       >
         <option value="">All</option>
         {controls.optionsFor(col).map((o) => (
@@ -684,6 +837,8 @@ export function FilterCell<T>({ col, controls }: { col: ColumnDef<T>; controls: 
   }
   return (
     <input
+      disabled={locked}
+      title={locked ? "Locked by your role" : undefined}
       value={value}
       onChange={(e) => controls.setFilter(col.key, e.target.value)}
       placeholder={`Search ${col.label.toLowerCase()}…`}
@@ -696,13 +851,20 @@ export function ListSearchPanel<T>({
   columns,
   controls,
   label = "Search",
+  id,
+  listScope,
 }: {
   columns: ColumnDef<T>[];
   controls: ListControls<T>;
   label?: string;
+  /** Stable id used when a list's search trigger lives in a surrounding workspace header. */
+  id?: string;
   variant?: "inline" | "popover";
+  /** This list instance's persistence/lock key. Owner/manager only: shows the inline "lock this search for a role" control when set. */
+  listScope?: string;
 }) {
-  const searchPanelId = `list-search-${useId().replace(/:/g, "")}`;
+  const generatedSearchPanelId = `list-search-${useId().replace(/:/g, "")}`;
+  const searchPanelId = id ?? generatedSearchPanelId;
   const searchCols = columns.filter((col) => col.accessor);
   if (searchCols.length === 0) return null;
 
@@ -721,17 +883,32 @@ export function ListSearchPanel<T>({
                   <ColumnSearchInput col={col} controls={controls} />
                 </label>
               ))}
-              <details className="group sm:col-span-2 lg:col-span-3">
+              <details className="group sm:col-span-2 lg:col-span-3" open={Boolean(controls.lockedAdvancedQuery) || undefined}>
                 <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-1 rounded-full border border-stone-300 px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800 [&::-webkit-details-marker]:hidden">
                   Advanced <span aria-hidden="true">⌄</span>
                 </summary>
                 <div className="mt-3 rounded-2xl bg-stone-50 p-4 dark:bg-stone-900">
+                  {controls.lockedAdvancedQuery && (
+                    <p className="mb-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      Always applied by your role: <span className="font-mono">{controls.lockedAdvancedQuery}</span>
+                    </p>
+                  )}
                   <label className="grid gap-2 text-xs font-semibold text-stone-500 dark:text-stone-400">
-                    Advanced query
+                    {controls.lockedAdvancedQuery ? "Add your own terms (combined with the query above)" : "Advanced query"}
                     <input value={controls.advancedQuery} onChange={(event) => controls.setAdvancedQuery(event.target.value)} placeholder='broker:BPML netKg>100 saleNo:019 "Galle"' className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100" />
                   </label>
                 </div>
               </details>
+              {listScope && controls.canManageLocks && (
+                <details className="group sm:col-span-2 lg:col-span-3">
+                  <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-1 rounded-full border border-amber-300 px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40 [&::-webkit-details-marker]:hidden">
+                    Lock this search for a role <span aria-hidden="true">⌄</span>
+                  </summary>
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                    <LockSearchControl listScope={listScope} controls={controls} />
+                  </div>
+                </details>
+              )}
             </div>
             <div className="mt-5 flex justify-end gap-2 border-t border-stone-100 pt-4 dark:border-stone-800">
               <button
@@ -759,8 +936,95 @@ export function ListSearchPanel<T>({
   );
 }
 
+// Owner/manager only, rendered inline in this same search panel — locking a
+// search is configured at the list it applies to, not a separate admin
+// screen. Invisible to every other role (gated by controls.canManageLocks).
+//
+// A selection is either a base role ("base:supervisor") or a specific
+// factory-defined custom role ("custom:<access_role_id>") — the lock itself
+// (list_search_locks) and its server-side enforcement already support both;
+// this control just needs to offer the custom-role list too.
+function LockSearchControl<T>({ listScope, controls }: { listScope: string; controls: ListControls<T> }) {
+  const [selection, setSelection] = useState<string>(`base:${LOCKABLE_ROLES[0]}`);
+  const [customRoles, setCustomRoles] = useState<{ id: string; name: string; baseRole: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listLockableRoles().then((result) => {
+      if (!cancelled && result.ok) setCustomRoles(result.roles);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function target(): { role: { baseRole: Role } | { accessRoleId: string }; label: string } {
+    if (selection.startsWith("custom:")) {
+      const id = selection.slice("custom:".length);
+      const found = customRoles.find((r) => r.id === id);
+      return { role: { accessRoleId: id }, label: found?.name ?? "this role" };
+    }
+    const baseRole = selection.slice("base:".length) as Role;
+    return { role: { baseRole }, label: baseRole };
+  }
+
+  async function lock() {
+    setBusy(true);
+    try {
+      const { role, label } = target();
+      const criteria = { ...controls.columnSearches, ...controls.locked };
+      const result = await saveListSearchLock({ listScope, role, criteria, advancedQuery: controls.advancedQuery });
+      showAppToast(result.ok ? `Search locked for ${label}.` : result.error, result.ok ? undefined : "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlock() {
+    setBusy(true);
+    try {
+      const { role, label } = target();
+      const result = await removeListSearchLock({ listScope, role });
+      showAppToast(result.ok ? `Lock removed for ${label}.` : result.error, result.ok ? undefined : "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-semibold text-amber-800 dark:text-amber-300">Lock this search for role:</span>
+      <select
+        value={selection}
+        onChange={(event) => setSelection(event.target.value)}
+        className="rounded border border-amber-300 bg-white px-2 py-1 dark:border-amber-800 dark:bg-stone-900"
+      >
+        <optgroup label="Base role">
+          {LOCKABLE_ROLES.map((r) => <option key={r} value={`base:${r}`}>{r}</option>)}
+        </optgroup>
+        {customRoles.length > 0 && (
+          <optgroup label="Custom role">
+            {customRoles.map((r) => <option key={r.id} value={`custom:${r.id}`}>{r.name} ({r.baseRole})</option>)}
+          </optgroup>
+        )}
+      </select>
+      <button type="button" disabled={busy} onClick={lock} className="min-h-8 rounded-full bg-amber-700 px-3 font-semibold text-white disabled:opacity-50 dark:bg-amber-600">
+        Lock current search
+      </button>
+      <button type="button" disabled={busy} onClick={unlock} className="min-h-8 rounded-full border border-amber-300 px-3 font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-800 dark:text-amber-300">
+        Remove lock
+      </button>
+      <span className="basis-full text-[0.7rem] font-normal text-amber-700/80 dark:text-amber-400/80">
+        Owner and manager see unrestricted data, unless a custom role narrows them. Every other role on this list will have these fields fixed and disabled.
+      </span>
+    </div>
+  );
+}
+
 function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: ListControls<T> }) {
-  const value = controls.columnSearches[col.key] ?? "";
+  const locked = Object.hasOwn(controls.locked, col.key);
+  const value = locked ? controls.locked[col.key]! : controls.columnSearches[col.key] ?? "";
   const lovId = useId().replace(/:/g, "");
   const inputType = col.searchInput ?? "text";
   // Dates are intentionally picker-only: a date's native picker is the LOV.
@@ -769,8 +1033,10 @@ function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: 
       <input
         type="date"
         value={value}
+        disabled={locked}
+        title={locked ? "Locked by your role — not editable" : undefined}
         onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
-        className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
+        className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 disabled:opacity-60 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
       />
     );
   }
@@ -778,18 +1044,22 @@ function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: 
   return (
     <>
       <input
-      list={listId}
+      list={locked ? undefined : listId}
       type={inputType}
       value={value}
+      disabled={locked}
+      title={locked ? "Locked by your role — not editable" : undefined}
       onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
       placeholder={`Search ${col.label.toLowerCase()}`}
-      className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
+      className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 disabled:opacity-60 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
       />
-      <datalist id={listId} data-list-lov>
-      {controls.optionsFor(col).map((option) => (
-        <option key={option.value} value={option.value}>{option.label}</option>
-      ))}
-      </datalist>
+      {!locked && (
+        <datalist id={listId} data-list-lov>
+        {controls.optionsFor(col).map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+        </datalist>
+      )}
     </>
   );
 }

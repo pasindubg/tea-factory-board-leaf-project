@@ -4,6 +4,7 @@ import Link from "next/link";
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
+import { formatDateTime } from "@/lib/dates";
 
 type ImportRow = {
   id: string;
@@ -16,7 +17,7 @@ type ImportRow = {
 const BASE_COLUMNS: EntityListColumn<ImportRow>[] = [
   { key: "source_filename", label: "File", accessor: (row) => row.source_filename ?? "document.pdf", sortable: true, filter: "text" },
   { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", render: (row) => <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-400">{row.status}</span> },
-  { key: "parsed_at", label: "Uploaded", accessor: (row) => row.parsed_at, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => row.parsed_at ? new Date(row.parsed_at).toLocaleString() : "—" },
+  { key: "parsed_at", label: "Uploaded", accessor: (row) => row.parsed_at, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => formatDateTime(row.parsed_at) },
 ];
 
 export function DocumentImportList({
