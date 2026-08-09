@@ -16,9 +16,9 @@ const tabs = [
     match: (p: string) => p.startsWith("/dashboard/auction/sales"),
   },
   {
-    href: "/dashboard/auction/reports",
-    label: "Report Reconciliations",
-    match: (p: string) => p.startsWith("/dashboard/auction/reports"),
+    href: "/dashboard/auction/documents",
+    label: "Document Details",
+    match: (p: string) => p.startsWith("/dashboard/auction/documents"),
   },
   {
     href: "/dashboard/auction/registry",

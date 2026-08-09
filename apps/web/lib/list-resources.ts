@@ -150,6 +150,20 @@ export type AuctionSalesSideListRow = {
   statuses: string[];
 };
 
+/** Every staged/confirmed auction document, factory-wide — the Document Details side rail. */
+export type AuctionDocumentSideListRow = {
+  id: string;
+  docType: "grn" | "acknowledgement" | "valuation" | "contract" | "bank_csv";
+  docTypeLabel: string;
+  filename: string;
+  broker: string;
+  saleNo: string;
+  status: "valid" | "warning" | "issue";
+  statusLabel: string;
+  active: boolean;
+  uploadedAt: string | null;
+};
+
 /** Broker Invoices that may still be assigned to a physical dispatch. */
 export type AuctionEligibleBrokerInvoiceListRow = {
   id: string;
@@ -409,6 +423,7 @@ export type ListResourceContracts = {
   "auction.invoice-overview": { params: undefined; row: AuctionInvoiceOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
   "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
+  "auction.documents-side-list": { params: undefined; row: AuctionDocumentSideListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
   "leaf.collectors": { params: undefined; row: CollectorListRow };
@@ -446,6 +461,7 @@ export const LIST_RESOURCE_KEYS = [
   "auction.invoice-overview",
   "auction.physical-dispatches",
   "auction.sales-side-list",
+  "auction.documents-side-list",
   "auction.eligible-broker-invoices",
   "leaf.suppliers",
   "leaf.collectors",

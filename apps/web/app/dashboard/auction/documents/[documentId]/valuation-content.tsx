@@ -1,41 +1,36 @@
-import Link from "next/link";
-import { requirePageAccess } from "@/lib/profile";
-import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
-import { validateValuationProceeds, type ParsedValuation } from "@tea/api";
-import { confirmValuation, rejectImport } from "../../../actions";
-import { canonicalGrade, gradeAliasMap } from "../../../_actions/_shared";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
+import { invoiceMatchKey, validateValuationProceeds, type ParsedValuation } from "@tea/api";
+import { confirmValuation, rejectImport } from "@/app/dashboard/auction/actions";
+import { canonicalGrade, gradeAliasMap } from "@/app/dashboard/auction/_actions/_shared";
+import { formatSaleNo, saleNoKey } from "@/app/dashboard/auction/sale-number";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import type { requirePageAccess } from "@/lib/profile";
 import { ValuationTable, type ValuationTableRow } from "./valuation-table";
 
-export default async function ValuationReviewPage({
-  params,
-}: {
-  params: Promise<{ saleId: string; importId: string }>;
-}) {
-  const { supabase, profile } = await requirePageAccess("auction-valuation");
-  const { saleId, importId } = await params;
-  const fallback = "/dashboard/auction/sales";
+type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
 
+export async function ValuationContent({
+  supabase,
+  profile,
+  saleId,
+  importId,
+}: {
+  supabase: Ctx["supabase"];
+  profile: Ctx["profile"];
+  saleId: string;
+  importId: string;
+}) {
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("parsed_json, status, source_filename, sale_id, doc_type")
+    .select("parsed_json, status, source_filename")
     .eq("id", importId)
     .single();
-  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "valuation" || !imp.parsed_json) {
-    return (
-      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Staged import not found.{" "}
-        <Link href={fallback} className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sale
-        </Link>
-      </div>
-    );
+  if (!imp?.parsed_json) {
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Staged import not found.</p>;
   }
 
   const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no, broker_id").eq("id", saleId).single();
-  const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
   // Match broker-wide: a Not Valued invoice may reappear in a later sale's
   // valuation while remaining attached to its original Broker Invoice.
   const { data: brokerInvoices } = await supabase
@@ -47,12 +42,15 @@ export default async function ValuationReviewPage({
   const { data: lotRows } = brokerInvoiceIds.length > 0
     ? await supabase.from("auction_lots").select("invoice_no, provisional_sale_no, final_sale_no, lot_invoices(invoice_no)").in("sale_id", brokerInvoiceIds)
     : { data: [] };
+  // A broker's valuation report only ever prints the bare invoice sequence
+  // ("0003"), never the factory's index-cycle prefix ("26I01-0003") — match on
+  // the normalized key, not the display string.
   const known = new Map<string, { provisionalSaleNo: string | null; finalSaleNo: string | null }>();
   for (const lot of (lotRows ?? []) as { invoice_no: string | null; provisional_sale_no: string | null; final_sale_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
     const assignment = { provisionalSaleNo: lot.provisional_sale_no, finalSaleNo: lot.final_sale_no };
-    if (lot.invoice_no) known.set(formatFourDigitNo(lot.invoice_no), assignment);
+    if (lot.invoice_no) known.set(invoiceMatchKey(lot.invoice_no), assignment);
     for (const invoice of lot.lot_invoices ?? []) {
-      if (invoice.invoice_no) known.set(formatFourDigitNo(invoice.invoice_no), assignment);
+      if (invoice.invoice_no) known.set(invoiceMatchKey(invoice.invoice_no), assignment);
     }
   }
 
@@ -66,10 +64,10 @@ export default async function ValuationReviewPage({
   const reportSaleNo = formatSaleNo(parsed.saleNo);
   const proceedsValidation = validateValuationProceeds(parsed.lots);
   const proceedsByInvoice = new Map(proceedsValidation.rows.map((row) => [`${row.invoiceNo}:${row.lotNo}`, row]));
-  const matched = parsed.lots.filter((l) => known.has(formatFourDigitNo(l.invoiceNo))).length;
+  const matched = parsed.lots.filter((l) => known.has(invoiceMatchKey(l.invoiceNo))).length;
   const tableRows: ValuationTableRow[] = parsed.lots.map((l) => ({
     ...(() => {
-      const assignment = known.get(formatFourDigitNo(l.invoiceNo));
+      const assignment = known.get(invoiceMatchKey(l.invoiceNo));
       const currentSaleNo = formatSaleNo(assignment?.finalSaleNo ?? assignment?.provisionalSaleNo);
       return { currentSaleNo, outcome: assignment ? (saleNoKey(currentSaleNo) === saleNoKey(reportSaleNo) ? "Confirm sale" : `Move to ${reportSaleNo}`) : "No invoice" };
     })(),
@@ -85,7 +83,7 @@ export default async function ValuationReviewPage({
     proceedsVariance: proceedsByInvoice.get(`${l.invoiceNo}:${l.lotNo}`)?.variance ?? 0,
     proceedsTallies: proceedsByInvoice.get(`${l.invoiceNo}:${l.lotNo}`)?.tallies ?? false,
     tastingNote: l.tastingNote,
-    matched: known.has(formatFourDigitNo(l.invoiceNo)),
+    matched: known.has(invoiceMatchKey(l.invoiceNo)),
   }));
 
   const visibleTableRows = await applyServerListSearch(supabase, profile, "valuation-lines", tableRows);
@@ -93,12 +91,9 @@ export default async function ValuationReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
-        </Link>
-        <h2 className="mt-1 text-xl font-semibold">Valuation review</h2>
+        <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Valuation review</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "valuation.pdf"} · {parsed.lots.length} lots · {matched} match an acknowledged lot
+          {parsed.lots.length} lots · {matched} match an acknowledged lot
         </p>
       </div>
 
@@ -141,7 +136,8 @@ export default async function ValuationReviewPage({
           <form action={confirmValuation.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="Saving…"
-              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+              variant="primary"
+              className="rounded-md px-4 py-2 text-sm"
             >
               Confirm — record {matched} valuation(s)
             </SubmitButton>

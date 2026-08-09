@@ -59,7 +59,6 @@ function invoiceKeys(row: { invoice_no?: string | null; lot_invoices?: { invoice
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
@@ -67,7 +66,7 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   const parsed = parseAcknowledgement(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/ack/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
@@ -376,7 +375,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 export async function ingestValuation(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
@@ -384,7 +382,7 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   const parsed = parseValuation(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/valuation/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
@@ -430,7 +428,6 @@ export async function confirmValuation(importId: string, saleId: string) {
 export async function ingestContract(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
@@ -438,7 +435,7 @@ export async function ingestContract(saleId: string, formData: FormData) {
   const parsed = parseContract(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/contract/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmContract(importId: string, saleId: string) {
@@ -461,7 +458,7 @@ export async function confirmContract(importId: string, saleId: string) {
   const validationIssues = contractValidationIssues(parsed.lines);
   if (validationIssues.length > 0) {
     return back(
-      `${AUC}/${saleId}/contract/${importId}`,
+      `${AUC}/documents/${importId}`,
       `Contract validation failed: ${validationIssues.join(" ")}`,
     );
   }
@@ -497,7 +494,7 @@ export async function confirmContract(importId: string, saleId: string) {
     .map((line) => line.invoiceNo);
   if (unmatchedInvoiceNos.length > 0) {
     return back(
-      `${AUC}/${saleId}/contract/${importId}`,
+      `${AUC}/documents/${importId}`,
       `Contract confirmation stopped: these invoices are not present in this broker sale: ${unmatchedInvoiceNos.join(", ")}.`,
     );
   }
@@ -740,7 +737,7 @@ export async function confirmContract(importId: string, saleId: string) {
 
 export async function rejectImport(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const sourceDetail = `${AUC}/${saleId}`;
+  const documentDetail = `${AUC}/documents/${importId}`;
   const { data: importRow, error: importError } = await supabase
     .from("doc_imports")
     .select("id, doc_type, status")
@@ -748,9 +745,9 @@ export async function rejectImport(importId: string, saleId: string) {
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
-  if (importError) return back(sourceDetail, friendlyError(importError));
-  if (!importRow) return back(sourceDetail, "The staged document was not found for this Broker Invoice.");
-  if (importRow.status === "confirmed") return back(sourceDetail, "A confirmed document cannot be rejected.");
+  if (importError) return back(documentDetail, friendlyError(importError));
+  if (!importRow) return back(documentDetail, "The staged document was not found for this Broker Invoice.");
+  if (importRow.status === "confirmed") return back(documentDetail, "A confirmed document cannot be rejected.");
 
   const { error: rejectError } = await supabase
     .from("doc_imports")
@@ -758,10 +755,11 @@ export async function rejectImport(importId: string, saleId: string) {
     .eq("id", importId)
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id);
-  if (rejectError) return back(sourceDetail, friendlyError(rejectError));
+  if (rejectError) return back(documentDetail, friendlyError(rejectError));
 
   const saleDetail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  revalidatePath(sourceDetail);
+  revalidatePath(`${AUC}/${saleId}`);
+  revalidatePath(documentDetail);
   revalidatePath(saleDetail);
   revalidatePath(`${AUC}/sales`);
   const documentLabel = {
@@ -770,6 +768,6 @@ export async function rejectImport(importId: string, saleId: string) {
     contract: "Sellers Contract",
   }[importRow.doc_type as string] ?? "Document";
   redirect(
-    `${sourceDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
+    `${documentDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
   );
 }

@@ -1,11 +1,12 @@
-import Link from "next/link";
-import { requirePageAccess } from "@/lib/profile";
-import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { reconcileBank } from "@tea/api";
-import { confirmBankMatches } from "../../../actions";
+import { confirmBankMatches } from "@/app/dashboard/auction/actions";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import type { requirePageAccess } from "@/lib/profile";
 import { BankResolver, type ResolverSettlement, type AuditRow } from "./bank-resolver";
 import { SettlementStatusTable, type SettlementStatus } from "./settlement-status-table";
+
+type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
 
 const LKR = (n: number) => "Rs " + n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const GRACE_DAYS = 7;
@@ -13,32 +14,26 @@ const GRACE_DAYS = 7;
 const daysAfter = (a: string, b: string) =>
   (new Date(`${a}T00:00:00`).getTime() - new Date(`${b}T00:00:00`).getTime()) / 86_400_000;
 
-export default async function BankReviewPage({
-  params,
-  searchParams,
+export async function BankContent({
+  supabase,
+  profile,
+  saleId,
+  importId,
+  notice,
 }: {
-  params: Promise<{ saleId: string; importId: string }>;
-  searchParams: Promise<{ notice?: string }>;
+  supabase: Ctx["supabase"];
+  profile: Ctx["profile"];
+  saleId: string;
+  importId: string;
+  notice?: string;
 }) {
-  const { supabase, profile } = await requirePageAccess("auction-bank");
-  const { saleId, importId } = await params;
-  const { notice } = await searchParams;
-  const detail = `/dashboard/auction/${saleId}`;
-
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("id, source_filename, sale_id, doc_type")
+    .select("id, source_filename")
     .eq("id", importId)
     .single();
-  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "bank_csv") {
-    return (
-      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Bank import not found.{" "}
-        <Link href={detail} className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sale
-        </Link>
-      </div>
-    );
+  if (!imp) {
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Bank import not found.</p>;
   }
 
   const { data: sale } = await supabase
@@ -170,13 +165,9 @@ export default async function BankReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Dispatch {sale?.sale_no ?? ""}
-        </Link>
-        <h2 className="mt-1 text-xl font-semibold">Reconciliation ④ — settlement ↔ bank</h2>
+        <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ④ — settlement ↔ bank</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "bank.csv"} · {credits.length} credit(s) · statement to {asOf ?? "—"} · prompt{" "}
-          {sale?.prompt_date ?? "—"}
+          {credits.length} credit(s) · statement to {asOf ?? "—"} · prompt {sale?.prompt_date ?? "—"}
         </p>
       </div>
 
@@ -208,7 +199,8 @@ export default async function BankReviewPage({
         <form action={confirmBankMatches.bind(null, saleId, importId)} className="flex items-center gap-3">
           <SubmitButton
             pendingText="Matching…"
-            className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+            variant="primary"
+            className="rounded-md px-4 py-2 text-sm"
           >
             Apply {suggested.matches.length} suggested match(es)
           </SubmitButton>

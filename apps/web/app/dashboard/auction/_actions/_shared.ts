@@ -12,7 +12,6 @@ import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 
 export const AUC = "/dashboard/auction";
-export const REP = "/dashboard/auction/reports";
 export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);

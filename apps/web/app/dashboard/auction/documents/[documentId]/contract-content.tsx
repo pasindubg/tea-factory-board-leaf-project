@@ -1,10 +1,8 @@
-import Link from "next/link";
-import { requirePageAccess } from "@/lib/profile";
-import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
   contractValidationIssues,
+  invoiceMatchKey,
   reconcileValuation,
   repairLegacyContractLines,
   validateContractLine,
@@ -12,38 +10,35 @@ import {
   type ValuationInput,
   type SaleInput,
 } from "@tea/api";
-import { confirmContract, rejectImport } from "../../../actions";
-import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../../../sale-number";
+import { confirmContract, rejectImport } from "@/app/dashboard/auction/actions";
+import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { formatFourDigitNo } from "@/app/dashboard/auction/sale-number";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import type { requirePageAccess } from "@/lib/profile";
 import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
 
-export default async function ContractReviewPage({
-  params,
-}: {
-  params: Promise<{ saleId: string; importId: string }>;
-}) {
-  const { supabase, profile } = await requirePageAccess("auction-contract");
-  const { saleId, importId } = await params;
-  const fallback = "/dashboard/auction/sales";
+type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
 
+export async function ContractContent({
+  supabase,
+  profile,
+  saleId,
+  importId,
+}: {
+  supabase: Ctx["supabase"];
+  profile: Ctx["profile"];
+  saleId: string;
+  importId: string;
+}) {
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("parsed_json, status, source_filename, sale_id, doc_type")
+    .select("parsed_json, status, source_filename")
     .eq("id", importId)
     .single();
-  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "contract" || !imp.parsed_json) {
-    return (
-      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Staged import not found.{" "}
-        <Link href={fallback} className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sale
-        </Link>
-      </div>
-    );
+  if (!imp?.parsed_json) {
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Staged import not found.</p>;
   }
 
-  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no").eq("id", saleId).single();
-  const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
   // The contract covers the broker's whole sale — match against lots on every
   // dispatch in this sale's group.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
@@ -68,11 +63,14 @@ export default async function ContractReviewPage({
   const confirmed = imp.status === "confirmed";
 
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
+  // A broker's sellers contract only ever prints the bare invoice sequence
+  // ("0003"), never the factory's index-cycle prefix ("26I01-0003") — match on
+  // the normalized key, not the display string.
   const invoiceToLotId = new Map<string, string>();
   for (const lot of (lotRows ?? []) as { id: string; invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
-    if (lot.invoice_no) invoiceToLotId.set(formatFourDigitNo(lot.invoice_no), lot.id);
+    if (lot.invoice_no) invoiceToLotId.set(invoiceMatchKey(lot.invoice_no), lot.id);
     for (const invoice of lot.lot_invoices ?? []) {
-      if (invoice.invoice_no) invoiceToLotId.set(formatFourDigitNo(invoice.invoice_no), lot.id);
+      if (invoice.invoice_no) invoiceToLotId.set(invoiceMatchKey(invoice.invoice_no), lot.id);
     }
   }
 
@@ -91,9 +89,9 @@ export default async function ContractReviewPage({
       };
     });
   const saleInputs: SaleInput[] = parsed.lines
-    .filter((l) => l.sold !== false && invoiceToLotId.has(formatFourDigitNo(l.invoiceNo)))
-    .map((l) => ({ lotId: invoiceToLotId.get(formatFourDigitNo(l.invoiceNo))!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
-  const unmatchedLines = parsed.lines.filter((line) => !invoiceToLotId.has(formatFourDigitNo(line.invoiceNo)));
+    .filter((l) => l.sold !== false && invoiceToLotId.has(invoiceMatchKey(l.invoiceNo)))
+    .map((l) => ({ lotId: invoiceToLotId.get(invoiceMatchKey(l.invoiceNo))!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
+  const unmatchedLines = parsed.lines.filter((line) => !invoiceToLotId.has(invoiceMatchKey(line.invoiceNo)));
   const parsedSoldCount = parsed.lines.filter((line) => line.sold !== false).length;
   const parsedNotSoldCount = parsed.lines.length - parsedSoldCount;
   const canConfirm = reviewIssues.length === 0 && unmatchedLines.length === 0;
@@ -104,7 +102,7 @@ export default async function ContractReviewPage({
   const hasValuations = valInputs.length > 0;
 
   const contractLineRows: ContractLineRow[] = parsed.lines.map((l) => {
-    const lotId = invoiceToLotId.get(formatFourDigitNo(l.invoiceNo));
+    const lotId = invoiceToLotId.get(invoiceMatchKey(l.invoiceNo));
     const r = lotId ? reconByLot.get(lotId) : undefined;
     const validation = validateContractLine(l);
     return {
@@ -133,12 +131,9 @@ export default async function ContractReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
-        </Link>
-        <h2 className="mt-1 text-xl font-semibold">Reconciliation ② — valuation ↔ sale price</h2>
+        <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ② — valuation ↔ sale price</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "contract.pdf"} · {parsed.lines.length} contract lines · {parsedSoldCount} sold · {parsedNotSoldCount} not sold · {parsed.lines.length - unmatchedLines.length} matched · prompt {parsed.promptDate ?? "—"}
+          {parsed.lines.length} contract lines · {parsedSoldCount} sold · {parsedNotSoldCount} not sold · {parsed.lines.length - unmatchedLines.length} matched · prompt {parsed.promptDate ?? "—"}
         </p>
       </div>
 
@@ -205,9 +200,10 @@ export default async function ContractReviewPage({
               pendingText="Saving…"
               disabled={!canConfirm}
               title={!canConfirm ? "Resolve the contract validation and invoice-matching warnings before confirming." : undefined}
-              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+              variant="primary"
+              className="rounded-md px-4 py-2 text-sm"
             >
-              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false && invoiceToLotId.has(formatFourDigitNo(line.invoiceNo))).length} re-print
+              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false && invoiceToLotId.has(invoiceMatchKey(line.invoiceNo))).length} re-print
             </SubmitButton>
           </form>
           <form action={rejectImport.bind(null, importId, saleId)}>

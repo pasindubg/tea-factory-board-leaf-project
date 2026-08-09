@@ -24,9 +24,9 @@ export async function ingestBankCsv(saleId: string, formData: FormData) {
 
 export async function confirmBankMatches(saleId: string, importId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = `${AUC}/${saleId}`;
+  const detail = `${AUC}/documents/${importId}`;
   const matched = await autoMatchBank(supabase, saleId, importId);
-  if (!matched.ok) return back(`${detail}/bank/${importId}`, matched.error);
+  if (!matched.ok) return back(detail, matched.error);
   if (matched.count > 0) {
     const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
       saleId,
@@ -34,9 +34,9 @@ export async function confirmBankMatches(saleId: string, importId: string) {
       detail: `${matched.count} credits matched`,
       actor: profile.name,
     });
-    if (auditError) return back(`${detail}/bank/${importId}`, friendlyError(auditError));
+    if (auditError) return back(detail, friendlyError(auditError));
   }
-  redirect(`${detail}/bank/${importId}?notice=${encodeURIComponent(`Applied ${matched.count} match(es).`)}`);
+  redirect(`${detail}?notice=${encodeURIComponent(`Applied ${matched.count} match(es).`)}`);
 }
 
 export async function linkBankCredit(input: {
@@ -113,6 +113,6 @@ export async function linkBankCredit(input: {
     }
     return { ok: false, error: friendlyError(auditError) };
   }
-  revalidatePath(`${AUC}/${input.saleId}/bank/${input.importId}`);
+  revalidatePath(`${AUC}/documents/${input.importId}`);
   return { ok: true, notice: "Bank credit linked." };
 }
