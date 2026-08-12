@@ -1,4 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "set -e; if [ \"$VERCEL_ENV\" = \"production\" ]; then echo \"Production build — applying pending Drizzle migrations against ${DATABASE_URL##*@}\"; pnpm --filter @tea/db db:migrate; fi; pnpm exec turbo run build --filter=web"
+  "buildCommand": "set -e; if [ \"$VERCEL_ENV\" = \"production\" ]; then echo \"Production build — applying pending Drizzle migrations against ${DATABASE_URL##*@}\"; pnpm --filter @tea/db db:migrate > /tmp/migrate.log 2>&1; RC=$?; grep -v 'applying migrations' /tmp/migrate.log | tail -60; if [ $RC -ne 0 ]; then echo \"Migration failed (exit $RC) — see the lines above.\"; exit $RC; fi; fi; pnpm exec turbo run build --filter=web"
 }
