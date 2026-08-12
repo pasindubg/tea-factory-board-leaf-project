@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { LovCombobox } from "@/components/lov-combobox";
+import { InvoicePrefixMenu, displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import { DEFAULT_COLUMN_MIN_WIDTH, ListViewModeMenu, useListViewMode } from "@/components/list-view-mode";
 import {
   ListCommandToolbar,
@@ -567,6 +568,8 @@ function EntityListPanel<Row>({
   const { mode: viewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth } = useListViewMode(scope);
   const tableViewportRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
+  const { visible: prefixVisible } = useInvoicePrefix();
+  const [prefixMenuAt, setPrefixMenuAt] = useState<{ x: number; y: number } | null>(null);
   const tableId = `entity-list-${useId().replace(/:/g, "")}`;
   const controls = useListControls(rows, definition.columns, { ...listControls, searchState, onApplySearch: applySearch });
   const visibleRows = controls.rows;
@@ -1007,6 +1010,11 @@ function EntityListPanel<Row>({
                 <th
                   key={column.key}
                   title={typeof column.label === "string" ? column.label : undefined}
+                  onContextMenu={column.prefixColumn ? (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPrefixMenuAt({ x: event.clientX, y: event.clientY });
+                  } : undefined}
                   className={["relative px-4 py-3", column.headerClassName].filter(Boolean).join(" ")}
                 >
                   {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
@@ -1060,6 +1068,12 @@ function EntityListPanel<Row>({
                       // so every cell carries it. Skipped while editing: the
                       // cell is an input the user is already reading.
                       title={editing ? undefined : cellTitle(column, row)}
+                      onContextMenu={column.prefixColumn ? (event) => {
+                        event.preventDefault();
+                        // The row selects on click; a right-click must not.
+                        event.stopPropagation();
+                        setPrefixMenuAt({ x: event.clientX, y: event.clientY });
+                      } : undefined}
                       className={["px-4 py-3", column.cellClassName].filter(Boolean).join(" ")}
                     >
                       {editing && edit && formId && index === 0 && (
@@ -1081,7 +1095,9 @@ function EntityListPanel<Row>({
                         ? editCellContent(column, row, formId)
                         : column.render
                           ? column.render(row, cellContext)
-                          : String(column.accessor?.(row) ?? "—")}
+                          : column.prefixColumn
+                            ? displayInvoiceNo(String(column.accessor?.(row) ?? ""), prefixVisible) || "—"
+                            : String(column.accessor?.(row) ?? "—")}
                     </td>
                   ))}
                 </tr>
@@ -1115,6 +1131,8 @@ function EntityListPanel<Row>({
           </button>
         </div>
       )}
+
+      <InvoicePrefixMenu anchor={prefixMenuAt} onClose={() => setPrefixMenuAt(null)} />
 
       {deleteAction && (
         <ConfirmationDialog

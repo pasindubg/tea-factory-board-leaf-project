@@ -156,7 +156,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
       const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
         factory_id: profile.factory_id,
         category: "broker_invoice",
-        requested_prefix_id: prefixResult.requestedPrefixId,
+        requested_prefix_id: prefixResult.prefix.id,
         context_id: null,
         payload,
         requested_by: profile.id,

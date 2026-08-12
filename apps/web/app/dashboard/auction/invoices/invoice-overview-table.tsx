@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { LovCombobox } from "@/components/lov-combobox";
+import { displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionInvoiceOverviewListRow } from "@/lib/list-resources";
 import { createInvoiceFromOverview, deleteLot, updateLot } from "../actions";
@@ -35,6 +36,12 @@ function OneLine({ value }: { value: string | null }) {
  * in lots.ts (dispatchEditError for updates, an inline check in deleteLot) —
  * this only decides what the table offers.
  */
+/** Invoice number as one line, with the prefix shown or hidden per preference. */
+function InvoiceNo({ value }: { value: string | null }) {
+  const { visible } = useInvoicePrefix();
+  return <OneLine value={displayInvoiceNo(value, visible) || null} />;
+}
+
 function isMutable(row: InvoiceOverviewRow, isOwner: boolean) {
   return isOwner || isOpenDraft(row.biStatus);
 }
@@ -103,9 +110,10 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       accessor: (row) => row.invoiceNo,
       sortable: true,
       filter: "text",
+      prefixColumn: true,
       headerClassName: "whitespace-nowrap",
       cellClassName: "font-medium min-w-32 max-w-40",
-      render: (row) => <OneLine value={row.invoiceNo} />,
+      render: (row) => <InvoiceNo value={row.invoiceNo} />,
       edit: (row, { formId }) => cell(row, <OneLine value={row.invoiceNo} />, () => (
         <input form={formId} name="invoice_no" defaultValue={row.invoiceNo} className={inputClass} />
       )),

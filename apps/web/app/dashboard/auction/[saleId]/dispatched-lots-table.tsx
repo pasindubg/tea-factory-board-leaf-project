@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { LovCombobox } from "@/components/lov-combobox";
+import { displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
@@ -25,6 +26,12 @@ function invoiceLabel(row: LotRow) {
     .map(formatFourDigitNo)
     .filter(Boolean)
     .join(", ");
+}
+
+/** Reads invoiceLabel through the show/hide-prefix preference. */
+function InvoiceNoText({ row }: { row: LotRow }) {
+  const { visible } = useInvoicePrefix();
+  return <>{displayInvoiceNo(invoiceLabel(row), visible) || "—"}</>;
 }
 
 function statusCell(row: LotRow, soldLotIds: Set<string>) {
@@ -63,11 +70,12 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       accessor: (row) => (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no).join(", ") || row.invoice_no || null,
       sortable: true,
       filter: "text",
+      prefixColumn: true,
       render: (row) => {
         const invoices = row.lot_invoices ?? [];
         return (
           <div className="font-medium">
-            {invoiceLabel(row) || "—"}
+            <InvoiceNoText row={row} />
             {invoices.length > 1 && (
               <span className="ml-1 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
                 {invoices.length} invoices

@@ -49,9 +49,14 @@ export function invoiceSeqOf(value: string | null | undefined): string {
   return parseCompositeInvoiceNo(value)?.seq ?? String(value ?? "").trim();
 }
 
+/**
+ * The prefix is returned even when approval is pending, because the record is
+ * now created immediately and shown while the request is outstanding — the
+ * caller needs the prefix to compose its number. `needsApproval` says only
+ * whether an exception must be raised alongside it.
+ */
 export type ResolveInvoicePrefixResult =
-  | { ok: true; needsApproval: false; prefix: { id: string; prefix: string } }
-  | { ok: true; needsApproval: true; requestedPrefixId: string }
+  | { ok: true; needsApproval: boolean; prefix: { id: string; prefix: string } }
   | { ok: false; error: string };
 
 /**
@@ -117,19 +122,29 @@ export async function resolveInvoicePrefix({
     ? lookup.eq("id", requestedPrefixId)
     : lookup.eq("prefix", typedPrefix)).maybeSingle();
   if (requestedError) return { ok: false, error: friendlyError(requestedError) };
-  if (!requested) {
-    // Naming the value matters here: the user typed it, so "unknown prefix"
-    // alone leaves them guessing which part of the number was wrong.
-    return {
-      ok: false,
-      error: requestedPrefixId
-        ? "Unknown invoice number prefix."
-        : `“${typedPrefix}” is not a registered ${CATEGORY_LABEL[category]} number prefix. Add it under Invoice number prefixes first.`,
-    };
+
+  let requested_ = requested as { id: string; prefix: string } | null;
+  if (!requested_) {
+    // A picker can only offer prefixes that exist, so a missing id is a stale
+    // form rather than a new series.
+    if (requestedPrefixId) return { ok: false, error: "Unknown invoice number prefix." };
+    // A TYPED prefix that does not exist yet is a request to open that series
+    // — a re-print or a roll-forward can legitimately need one nobody has
+    // registered. It is created INACTIVE, so it changes nothing until the
+    // approval below is granted, and the entry is not blocked by an error.
+    const { data: created, error: createError } = await supabase
+      .from("invoice_number_prefixes")
+      .insert({ factory_id: factoryId, category, prefix: typedPrefix, active: false })
+      .select("id, prefix")
+      .single();
+    if (createError) return { ok: false, error: friendlyError(createError) };
+    requested_ = created as { id: string; prefix: string };
   }
-  const requested_ = requested as { id: string; prefix: string };
-  if (role === "owner" || role === "manager" || role === "supervisor") {
-    return { ok: true, needsApproval: false, prefix: requested_ };
-  }
-  return { ok: true, needsApproval: true, requestedPrefixId: requested_.id };
+
+  // Every non-active prefix goes to approval, whoever asked for it. Roles that
+  // may DECIDE an exception previously bypassed the queue entirely, so an
+  // owner's abnormal number was written straight through with no record that
+  // it had ever been abnormal — which is the whole point of the queue.
+  void role;
+  return { ok: true, needsApproval: true, prefix: requested_ };
 }

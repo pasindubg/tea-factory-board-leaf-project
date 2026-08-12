@@ -62,6 +62,12 @@ export type ColumnDef<T> = {
    */
   lovEdit?: boolean;
   /**
+   * Marks a column as showing composite invoice numbers. The framework then
+   * offers "Show/Hide invoice prefix" on right-click and strips the prefix
+   * when hidden. Display only — the stored and submitted value never changes.
+   */
+  prefixColumn?: boolean;
+  /**
    * The STORED value behind the displayed label, for LOVs holding a record id
    * (the accessor shows "MF1530 — KUMUDU"; the field must submit its uuid).
    * Omit for code-valued LOVs, where the label is the value.

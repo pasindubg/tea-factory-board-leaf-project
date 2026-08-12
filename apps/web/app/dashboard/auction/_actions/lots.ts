@@ -532,6 +532,8 @@ export async function createDispatchedLotForList(
   }
 
   let prefixString: string;
+  let needsPrefixApproval = false;
+  let approvalPrefixId: string | null = null;
   if (options.bypassPrefixId) {
     const { data: prefixRow, error: prefixError } = await supabase
       .from("invoice_number_prefixes")
@@ -550,26 +552,12 @@ export async function createDispatchedLotForList(
       supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId, requestedPrefix,
     });
     if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
-    if (prefixResult.needsApproval) {
-      const payload = {
-        invoice_no: rawInvoiceList,
-        lot_no: str(formData.get("lot_no")),
-        grade,
-        bags: String(bags),
-        kg_per_bag: String(kgPerBag),
-        sample_allowance: String(sampleKg),
-      };
-      const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
-        factory_id: profile.factory_id,
-        category: "regular_invoice",
-        requested_prefix_id: prefixResult.requestedPrefixId,
-        context_id: saleId,
-        payload,
-        requested_by: profile.id,
-      });
-      if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
-      return { ok: true, pending: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
-    }
+    // The lot is created either way and is visible straight away; an
+    // abnormal prefix only adds an approval request against it, raised below
+    // once the lot exists so the reviewer can act on a real record. Declining
+    // removes it again (see declineInvoicePrefixException).
+    needsPrefixApproval = prefixResult.needsApproval;
+    approvalPrefixId = prefixResult.prefix.id;
     prefixString = prefixResult.prefix.prefix;
   }
   const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, invoiceSeqOf(n)));
@@ -624,11 +612,29 @@ export async function createDispatchedLotForList(
     }
     return { ok: false, error: friendlyError(invoiceInsertError) };
   }
+  // Raised only now: the reviewer decides about a record that already exists
+  // and is on screen, and `created_record_id` is what lets a decline delete
+  // exactly this lot rather than replaying a creation.
+  let notice = "Lot added.";
+  if (needsPrefixApproval && approvalPrefixId) {
+    const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
+      factory_id: profile.factory_id,
+      category: "regular_invoice",
+      requested_prefix_id: approvalPrefixId,
+      context_id: saleId,
+      payload: { invoice_no: invoiceList },
+      requested_by: profile.id,
+      created_record_id: createdLot.id as string,
+    });
+    if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
+    notice = "Lot added, and sent for approval — this prefix isn't the active one.";
+  }
+
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
   if (!synced.ok) return synced;
   return {
     ok: true,
-    notice: "Lot added.",
+    notice,
     row: {
       id: createdLot.id as string,
       invoice_no: formatFourDigitNo(createdLot.invoice_no as string | null) || null,

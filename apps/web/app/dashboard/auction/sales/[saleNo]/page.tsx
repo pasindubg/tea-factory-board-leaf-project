@@ -242,6 +242,17 @@ export default async function SaleDetailPage({
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
   const soldCount = soldLotIds.size;
+  // Weight offered in this sale, over the same lots the "Lots sold" ratio
+  // counts, so the two figures always describe one population.
+  const totalNetKg = lotRows.reduce((sum, lot) => sum + Number(lot.net_wt ?? 0), 0);
+  // One auction sale can span several broker invoices, and they need not share
+  // a sale date — show the span rather than silently picking the first.
+  const saleDates = [...new Set(dispatches.map((dispatch) => dispatch.sale_date).filter(Boolean))].sort();
+  const saleDateLabel = saleDates.length === 0
+    ? "—"
+    : saleDates.length === 1
+      ? saleDates[0]
+      : `${saleDates[0]} – ${saleDates[saleDates.length - 1]}`;
   const settledCount = dispatchCount(dispatches, ["settled"]);
   const invoiceEditingLocked = settledCount > 0;
   const currentStateKey =
@@ -391,6 +402,8 @@ export default async function SaleDetailPage({
           ) : undefined
         }
       >
+        <DetailField label="Sale date" value={saleDateLabel} />
+        <DetailField label="Total kg to sale" value={`${totalNetKg.toFixed(2)} kg`} />
         <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
         <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
         <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
