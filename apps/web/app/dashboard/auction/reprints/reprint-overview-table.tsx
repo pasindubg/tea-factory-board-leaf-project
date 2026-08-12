@@ -5,6 +5,8 @@ import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import type { AuctionReprintOverviewListRow } from "@/lib/list-resources";
 import { registerHistoricReprint } from "../actions";
+import { LOT_STATES } from "../lot-states";
+import { stateBucketOptions } from "../state-buckets";
 
 export type ReprintOverviewRow = AuctionReprintOverviewListRow;
 
@@ -32,7 +34,7 @@ const COLUMNS: EntityListColumn<ReprintOverviewRow>[] = [
   { key: "dispatchDate", label: "Invoice date", accessor: (row) => row.dispatchDate ?? null, sortable: true, searchInput: "date", cellClassName: "tabular-nums", render: (row) => row.dispatchDate ?? "—" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date", cellClassName: "tabular-nums", render: (row) => row.saleDate ?? "—" },
   { key: "source", label: "Source", accessor: (row) => row.source ?? null, sortable: true, filter: "select", render: (row) => row.source ?? "—" },
-  { key: "stateLabel", label: "State", accessor: (row) => row.stateLabel, sortable: true, filter: "select", render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${row.stateStyle}`}>{row.stateLabel}</span> },
+  { key: "stateLabel", label: "State", accessor: (row) => row.stateLabel, sortable: true, filter: "select", filterOptions: stateBucketOptions(LOT_STATES), render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${row.stateStyle}`}>{row.stateLabel}</span> },
   { key: "reprintCount", label: "Re-print count", accessor: (row) => row.reprintCount, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
 ];
 

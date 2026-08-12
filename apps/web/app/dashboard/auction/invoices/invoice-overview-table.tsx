@@ -4,11 +4,14 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
+import { LovCombobox } from "@/components/lov-combobox";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionInvoiceOverviewListRow } from "@/lib/list-resources";
 import { createInvoiceFromOverview, deleteLot, updateLot } from "../actions";
-import { isOpenDraft, stateBucket } from "../state-buckets";
-import { NewInvoiceRow, type BrokerOption, type GradeOption, type MarkOption, type NewInvoiceDefaults } from "./new-invoice-row";
+import { BROKER_INVOICE_STATUSES, isOpenDraft, stateBucket, stateBucketOptions } from "../state-buckets";
+import { LOT_STATES } from "../lot-states";
+import { formatSaleNo } from "../sale-number";
+import { NewInvoiceRow, type GradeOption, type NewInvoiceDefaults } from "./new-invoice-row";
 
 export type InvoiceOverviewRow = AuctionInvoiceOverviewListRow;
 
@@ -93,7 +96,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       cellClassName: "tabular-nums whitespace-nowrap min-w-36",
       render: (row) => row.saleDate ?? "—",
     },
-    { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+    { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select", lovSource: "auction.brokers" },
     {
       key: "invoiceNo",
       label: "Invoice No.",
@@ -127,9 +130,21 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       accessor: (row) => row.grade,
       sortable: true,
       filter: "select",
+      lovSource: "auction.grades",
       render: (row) => row.grade ?? "—",
+      // Keeps an explicit editor (unlike the broker-invoice lot list, which
+      // just declares lovSource) because `cell` gates editing per row: a
+      // confirmed broker invoice's lot is owner-only.
       edit: (row, { formId }) => cell(row, row.grade ?? "—", () => (
-        <input form={formId} name="grade" defaultValue={row.grade ?? ""} className={inputClass} />
+        <LovCombobox
+          source="auction.grades"
+          name="grade"
+          formId={formId}
+          defaultValue={row.grade ?? ""}
+          defaultLabel={row.grade ?? ""}
+          ariaLabel="Grade"
+          className={inputClass}
+        />
       )),
     },
     {
@@ -177,6 +192,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       accessor: (row) => row.sellingMark,
       sortable: true,
       filter: "select",
+      lovSource: "auction.marks",
       headerClassName: "whitespace-nowrap",
       cellClassName: "min-w-44 max-w-56",
       render: (row) => <OneLine value={row.sellingMark} />,
@@ -192,7 +208,28 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       cellClassName: "text-right tabular-nums",
       render: (row) => num(row.allWeight),
     },
-    { key: "saleNo", label: "Sale No.", accessor: (row) => row.saleNo, sortable: true, filter: "text", render: (row) => row.saleNo ?? "—" },
+    {
+      key: "saleNo",
+      label: "Sale No.",
+      accessor: (row) => row.saleNo,
+      sortable: true,
+      filter: "text",
+      render: (row) => row.saleNo ?? "—",
+      // This is the broker invoice's own target_sale_no, shared by every lot
+      // under it (see auction.invoice-overview in list-resource-registry.ts) —
+      // saving here renames the sale number for the whole broker invoice, not
+      // just this one lot row.
+      edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
+        <input
+          form={formId}
+          name="target_sale_no"
+          defaultValue={row.saleNo ?? ""}
+          title="Changes the sale number for the whole broker invoice this lot belongs to."
+          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
+          className={inputClass}
+        />
+      )),
+    },
     {
       key: "nextSaleNo",
       label: "Next Sale No.",
@@ -245,6 +282,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       accessor: (row) => stateBucket(row.state).label,
       sortable: true,
       filter: "select",
+      filterOptions: stateBucketOptions(LOT_STATES),
       render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(row.state).style}`}>{stateBucket(row.state).label}</span>,
     },
     {
@@ -253,6 +291,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       accessor: (row) => stateBucket(row.biStatus).label,
       sortable: true,
       filter: "select",
+      filterOptions: stateBucketOptions(BROKER_INVOICE_STATUSES),
       render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(row.biStatus).style}`}>{stateBucket(row.biStatus).label}</span>,
     },
   ];
@@ -286,8 +325,6 @@ export function InvoiceOverviewTable({
   isOwner,
   canEdit,
   canCreate,
-  brokers,
-  marks,
   grades,
   defaults,
 }: {
@@ -296,8 +333,6 @@ export function InvoiceOverviewTable({
   canEdit: boolean;
   canCreate: boolean;
   defaults: NewInvoiceDefaults;
-  brokers: BrokerOption[];
-  marks: MarkOption[];
   grades: GradeOption[];
 }) {
   const definition: ListDefinition<InvoiceOverviewRow> = {
@@ -328,7 +363,7 @@ export function InvoiceOverviewTable({
         action: createInvoiceFromOverview,
         label: "New invoice",
         renderRow: ({ formId }) => (
-          <NewInvoiceRow formId={formId} brokers={brokers} marks={marks} grades={grades} defaults={defaults} />
+          <NewInvoiceRow formId={formId} grades={grades} defaults={defaults} />
         ),
       } : undefined}
       createPlacement="toolbar"

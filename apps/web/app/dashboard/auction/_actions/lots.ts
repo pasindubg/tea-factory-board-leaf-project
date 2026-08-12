@@ -5,11 +5,11 @@ import { requireModuleAccess } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, writeAudit, type Supa } from "./_shared";
-import { formatFourDigitNo } from "../sale-number";
+import { AUC, str, num, writeAudit, gradeRulesByCode, notAnExisting, type Supa } from "./_shared";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
-import { buildCompositeInvoiceNo, invoiceSeqOf, resolveInvoicePrefix } from "../invoice-number";
+import { buildCompositeInvoiceNo, invoiceSeqOf, parseCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 import { resolveBrokerInvoiceForLot } from "./sales";
 
 async function dispatchEditError(
@@ -194,8 +194,11 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   let invoiceNo = "";
   if (rawInvoiceNo) {
     const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    // Honour the prefix the user typed into the number itself — this screen
+    // has no prefix picker, so it is the only way they can express one.
+    const requestedPrefix = parseCompositeInvoiceNo(rawInvoiceNo)?.prefix;
     const prefixResult = await resolveInvoicePrefix({
-      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId,
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId, requestedPrefix,
     });
     if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
     if (prefixResult.needsApproval) {
@@ -214,12 +217,28 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   const sampleKg = sampleAllowance(formData);
   const lotNo = formatFourDigitNo(str(formData.get("lot_no")));
   const newState = str(formData.get("state"));
+  // The Invoice Overview "Sale No." column shows the parent broker invoice's
+  // own target_sale_no (every lot under it shares the one value — see
+  // auction.invoice-overview in list-resource-registry.ts), so editing it here
+  // writes through to auction_sales rather than this lot row.
+  const targetSaleNoRaw = formData.has("target_sale_no") ? formatSaleNo(str(formData.get("target_sale_no"))) : null;
+  if (formData.has("target_sale_no") && !targetSaleNoRaw) return { ok: false, error: "Sale number is required." };
   if (invoiceNo) updates.invoice_no = invoiceNo;
   if (grade) updates.grade = grade;
   // Always update lot_no if present in the form (even if clearing it)
   if (formData.has("lot_no")) updates.lot_no = lotNo || null;
   if (bags > 0 && kgPerBag > 0 && sampleKg >= bags * kgPerBag) {
     return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+  }
+  if (grade) {
+    const rule = (await gradeRulesByCode(supabase, profile.factory_id, [grade])).get(grade);
+    // The foreign key would reject this too, but only the caller knows which
+    // value was typed — see gradeRulesByCode.
+    if (!rule) return { ok: false, error: notAnExisting(grade, "tea grade") };
+    const minKgPerBag = rule.minKgPerBag;
+    if (kgPerBag > 0 && minKgPerBag != null && minKgPerBag > 0 && kgPerBag < minKgPerBag) {
+      return { ok: false, error: `kg/bag for grade ${grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+    }
   }
   if (bags > 0) updates.bags = bags;
   if (kgPerBag > 0) updates.kg_per_bag = kgPerBag;
@@ -247,21 +266,54 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     }
   }
 
-  if (Object.keys(updates).length === 0) return { ok: false, error: "No lot changes were supplied." };
+  if (Object.keys(updates).length === 0 && targetSaleNoRaw == null) {
+    return { ok: false, error: "No lot changes were supplied." };
+  }
   if (invoiceNo) {
     const invoiceConflict = await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], id);
     if (invoiceConflict) return { ok: false, error: invoiceConflict };
   }
-  const { data: updatedLot, error: updateError } = await supabase
-    .from("auction_lots")
-    .update(updates)
-    .eq("id", id)
-    .eq("sale_id", saleId)
-    .eq("factory_id", profile.factory_id)
-    .select("invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state")
-    .single();
+  const lotSelect = "invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state";
+  const { data: updatedLot, error: updateError } = Object.keys(updates).length > 0
+    ? await supabase
+      .from("auction_lots")
+      .update(updates)
+      .eq("id", id)
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .select(lotSelect)
+      .single()
+    : await supabase
+      .from("auction_lots")
+      .select(lotSelect)
+      .eq("id", id)
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .single();
   if (updateError || !updatedLot) {
     return { ok: false, error: `Could not update lot: ${updateError ? friendlyError(updateError) : "lot not found"}.` };
+  }
+  if (targetSaleNoRaw) {
+    const { data: updatedSale, error: saleUpdateError } = await supabase
+      .from("auction_sales")
+      .update({ target_sale_no: targetSaleNoRaw })
+      .eq("id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .select("id")
+      .maybeSingle();
+    if (saleUpdateError) return { ok: false, error: friendlyError(saleUpdateError) };
+    if (!updatedSale) return { ok: false, error: "Broker invoice not found." };
+    // Lots that already have a final_sale_no carry an authoritative reconciled
+    // assignment — this edit must not silently overwrite it, matching
+    // updateSale's identical rule in _actions/sales.ts.
+    const { error: lotCascadeError } = await supabase
+      .from("auction_lots")
+      .update({ provisional_sale_no: targetSaleNoRaw })
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .is("final_sale_no", null);
+    if (lotCascadeError) return { ok: false, error: friendlyError(lotCascadeError) };
+    revalidatePath(`${AUC}/${saleId}`);
   }
   if (invoiceNo) {
     const { data: existingInvoice, error: invoiceReadError } = await supabase
@@ -470,6 +522,14 @@ export async function createDispatchedLotForList(
   if (!grade) return { ok: false, error: "Grade is required." };
   if (!(bags > 0) || !(kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
   if (sampleKg >= bags * kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+  const gradeRule = (await gradeRulesByCode(supabase, profile.factory_id, [grade])).get(grade);
+  // The foreign key would reject this too, but only the caller knows which
+  // value was typed — see gradeRulesByCode.
+  if (!gradeRule) return { ok: false, error: notAnExisting(grade, "tea grade") };
+  const minKgPerBag = gradeRule.minKgPerBag;
+  if (minKgPerBag != null && minKgPerBag > 0 && kgPerBag < minKgPerBag) {
+    return { ok: false, error: `kg/bag for grade ${grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+  }
 
   let prefixString: string;
   if (options.bypassPrefixId) {
@@ -484,8 +544,10 @@ export async function createDispatchedLotForList(
     prefixString = prefixRow.prefix as string;
   } else {
     const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    // As in updateLot: a prefix typed into the number is a real request.
+    const requestedPrefix = parseCompositeInvoiceNo(rawInvoiceNo)?.prefix;
     const prefixResult = await resolveInvoicePrefix({
-      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId,
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId, requestedPrefix,
     });
     if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
     if (prefixResult.needsApproval) {
@@ -592,6 +654,29 @@ export async function createDispatchedLotForList(
 }
 
 /**
+ * Removes a broker invoice that was opened for a lot entry which then failed,
+ * so a rejected entry leaves nothing behind. Returns false if it could not be
+ * removed, so the caller can say so rather than silently orphaning it.
+ *
+ * Re-checks emptiness against the database instead of trusting the caller:
+ * auction_sales cascades to auction_lots, so deleting one that concurrently
+ * gained a lot would destroy real work. An invoice that is no longer empty is
+ * left alone and reported as success — it is no longer an orphan.
+ */
+async function discardEmptyBrokerInvoice(saleId: string): Promise<boolean> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const { count, error: countError } = await supabase
+    .from("auction_lots")
+    .select("id", { count: "exact", head: true })
+    .eq("sale_id", saleId)
+    .eq("factory_id", profile.factory_id);
+  if (countError) return false;
+  if ((count ?? 0) > 0) return true;
+  const { error } = await deleteTenantRow(supabase, "auction_sales", saleId);
+  return !error;
+}
+
+/**
  * Invoice Overview create: adds a lot invoice straight from the overview,
  * attaching it to the broker invoice for its broker + selling mark + dispatch
  * date and opening that broker invoice first if none is open yet. Both steps
@@ -610,7 +695,23 @@ export async function createInvoiceFromOverview(formData: FormData): Promise<Lis
   }
 
   const created = await createDispatchedLotForList(resolved.saleId, formData);
-  if (!created.ok) return { ok: false, error: created.error };
+  if (!created.ok) {
+    // A lot cannot be validated before its parent exists — it is created with
+    // the parent's id — so the broker invoice is already open by the time the
+    // lot is rejected (below-minimum kg/bag, unknown grade, duplicate invoice
+    // number...). Undo it, or every failed attempt leaves an empty draft
+    // behind. Only when THIS call opened it, and only while it is still empty.
+    if (resolved.created) {
+      const discarded = await discardEmptyBrokerInvoice(resolved.saleId);
+      if (!discarded) {
+        return {
+          ok: false,
+          error: `${created.error} An empty broker invoice was left open — remove it from the broker invoice list.`,
+        };
+      }
+    }
+    return { ok: false, error: created.error };
+  }
   const notice = "pending" in created
     ? created.notice
     : resolved.created

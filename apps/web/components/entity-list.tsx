@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { LovCombobox } from "@/components/lov-combobox";
+import { DEFAULT_COLUMN_MIN_WIDTH, ListViewModeMenu, useListViewMode } from "@/components/list-view-mode";
 import {
   ListCommandToolbar,
   ListCreatePanel,
@@ -26,6 +28,23 @@ import { saveListSearchState } from "@/lib/list-search-actions";
 import { ENTITY_LIST_METADATA } from "@/lib/entity-list-metadata";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { ListResourceKey, ListResourceRequest, ListResourceRow } from "@/lib/list-resources";
+
+/**
+ * Submit handler for the framework's own inline create/edit `<form>` tags
+ * (their fields live outside the element, associated via `form={id}`). Using
+ * a plain `onSubmit` instead of the `action` prop avoids React's built-in
+ * behavior of resetting the form's fields as soon as submission starts —
+ * which fires regardless of whether the mutation ends up succeeding or
+ * failing, and would otherwise blank out every uncontrolled field (anything
+ * using `defaultValue`) the instant an inline create/edit is submitted, error
+ * or not.
+ */
+function handleInlineFormSubmit(action: (formData: FormData) => Promise<void>) {
+  return (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void action(new FormData(event.currentTarget));
+  };
+}
 
 export type EntityListMutationOptions = {
   notice?: string;
@@ -66,6 +85,126 @@ export type EntityListColumn<Row> = ColumnDef<Row> & {
   render?: (row: Row, context: EntityListCellContext) => ReactNode;
   edit?: (row: Row, context: { formId: string }) => ReactNode;
 };
+
+const LOV_EDIT_INPUT_CLASS = "w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-600 dark:bg-stone-900";
+/** Fixed width of the leading checkbox column, matching ListSelectionCell. */
+const SELECTION_COLUMN_WIDTH = 48;
+/**
+ * Floor for a dragged column. Deliberately NOT `ColumnDef.minWidth`: that
+ * expresses "narrowest width this column is still READABLE at", which decides
+ * what fits in list mode. A user dragging a column narrower has decided they
+ * do not need to read it, and must not be blocked by that hint.
+ */
+const MIN_RESIZE_WIDTH = 56;
+
+/**
+ * Full text for a truncated cell's tooltip. Uses the column's accessor — the
+ * sortable/searchable value — because `render` may return arbitrary markup
+ * that has no single string form.
+ */
+function cellTitle<Row>(column: EntityListColumn<Row>, row: Row): string | undefined {
+  const value = column.accessor?.(row);
+  if (value == null) return undefined;
+  const text = String(value).trim();
+  return text === "" ? undefined : text;
+}
+
+/**
+ * Drag target that widens or narrows one column in table mode.
+ *
+ * Tracks the pointer on the window rather than on itself so the drag survives
+ * the cursor leaving the 9px handle, which at speed it always does.
+ */
+function ColumnResizeHandle({
+  label,
+  width,
+  minWidth,
+  onResize,
+}: {
+  label: string;
+  width: number;
+  minWidth: number;
+  onResize: (width: number) => void;
+}) {
+  const [resizing, setResizing] = useState(false);
+
+  function start(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = width;
+    setResizing(true);
+    document.body.dataset.listResizing = "true";
+
+    const move = (moveEvent: PointerEvent) => {
+      onResize(Math.max(minWidth, startWidth + (moveEvent.clientX - startX)));
+    };
+    const end = () => {
+      setResizing(false);
+      delete document.body.dataset.listResizing;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={`Resize ${label} column`}
+      data-resizing={resizing ? "true" : undefined}
+      onPointerDown={start}
+      // Sorting lives on the header label; a click on the grip must not sort.
+      onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        onResize(Math.max(minWidth, width + (event.key === "ArrowRight" ? 16 : -16)));
+      }}
+      className="list-col-resize"
+    />
+  );
+}
+
+/**
+ * The inline editor for one cell.
+ *
+ * A column that declares `lovSource` AND `lovEdit` gets the shared LOV
+ * combobox for free — no per-list `edit` renderer, which is what lets every
+ * list inherit the picker (typeahead, server-side search, descriptions,
+ * DB-enforced values) instead of hand-rolling a `<select>` or a free-text
+ * input. An explicit `edit` still wins, for bespoke controls.
+ *
+ * `lovEdit` is required because `lovSource` is also (and often only) a SEARCH
+ * declaration. Rendering an editor for a column the list's save action does
+ * not read produces a field name nobody consumes: the value is dropped and
+ * the cell snaps back, looking like the edit was rejected.
+ */
+function editCellContent<Row>(
+  column: EntityListColumn<Row>,
+  row: Row,
+  formId: string,
+): ReactNode {
+  if (column.edit) return column.edit(row, { formId });
+  // `lovEdit` is the opt-in; `lovSource` alone only feeds the search field.
+  if (!column.lovSource || !column.lovEdit) return null;
+  const label = column.accessor?.(row);
+  const stored = column.lovValue ? column.lovValue(row) : label;
+  return (
+    <LovCombobox
+      source={column.lovSource}
+      name={column.lovName ?? column.key}
+      formId={formId}
+      defaultValue={stored == null ? "" : String(stored)}
+      defaultLabel={label == null ? "" : String(label)}
+      ariaLabel={column.label}
+      className={LOV_EDIT_INPUT_CLASS}
+    />
+  );
+}
 
 export type EntityListCreate<Row> = {
   action: (formData: FormData) => Promise<ListMutationResult>;
@@ -425,6 +564,10 @@ function EntityListPanel<Row>({
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
   const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const [panelCommand, setPanelCommand] = useState<string | null>(null);
+  const { mode: viewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth } = useListViewMode(scope);
+  const tableViewportRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const tableId = `entity-list-${useId().replace(/:/g, "")}`;
   const controls = useListControls(rows, definition.columns, { ...listControls, searchState, onApplySearch: applySearch });
   const visibleRows = controls.rows;
   const selectionMode = definition.selectionMode ?? "single";
@@ -436,6 +579,63 @@ function EntityListPanel<Row>({
   );
   const createFormId = `entity-create-${useId().replace(/:/g, "")}`;
   const inlineCreating = Boolean(adding && create?.renderRow);
+
+  // `sideList` is an object prop with a fresh identity every render, so the
+  // observer effect below may only depend on whether one is present.
+  const hasSideList = Boolean(sideList);
+
+  // List mode fits the viewport, so it has to know how wide the viewport is.
+  useEffect(() => {
+    const element = tableViewportRef.current;
+    if (!element) return;
+    setViewportWidth(element.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number") setViewportWidth(width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [viewMode, hasSideList]);
+
+  const columnWidth = (column: EntityListColumn<Row>) =>
+    columnWidths[column.key] ?? column.minWidth ?? DEFAULT_COLUMN_MIN_WIDTH;
+
+  // Table mode is as wide as its columns; the viewport scrolls to reach them.
+  const tableWidth = (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0)
+    + definition.columns.reduce((total, column) => total + columnWidth(column), 0);
+
+  /**
+   * How many leading columns fit the viewport in list mode. Null whenever
+   * nothing needs dropping — table mode, an unmeasured viewport, or a table
+   * that already fits. At least one column always survives.
+   *
+   * Measured against each column's CURRENT width, so a width dragged in table
+   * mode carries over: narrowing columns there fits more of them here.
+   */
+  const fittedColumnCount = (() => {
+    if (viewMode !== "list" || viewportWidth <= 0) return null;
+    let remaining = viewportWidth - (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0);
+    let fitted = 0;
+    for (const column of definition.columns) {
+      remaining -= columnWidth(column);
+      if (remaining < 0) break;
+      fitted += 1;
+    }
+    fitted = Math.max(1, fitted);
+    return fitted >= definition.columns.length ? null : fitted;
+  })();
+
+  /** 1-based cell position the generated rule starts hiding from. */
+  const hiddenFromNthChild = fittedColumnCount == null
+    ? null
+    : (selectionMode === "multi" ? 1 : 0) + fittedColumnCount + 1;
+
+  // A <col> for a hidden column would still reserve width under
+  // `table-layout: fixed`, so dropped columns get no <col> at all and the
+  // surviving ones share the width evenly.
+  const layoutColumns = fittedColumnCount == null
+    ? definition.columns
+    : definition.columns.slice(0, fittedColumnCount);
   const changing = adding || Boolean(editingId) || deleting || Boolean(busyCommand) || Boolean(panelCommand);
   const createEnabled = Boolean(supportsCreate && canCreate && !changing);
   const editEnabled = Boolean(
@@ -657,6 +857,9 @@ function EntityListPanel<Row>({
               </button>
             );
           })}
+          {/* Last, so it sits at the far right of the list's toolbar. A
+              display preference, kept apart from the record commands. */}
+          {!sideList && <ListViewModeMenu mode={viewMode} onChange={setViewMode} />}
         </ListCommandToolbar>
       )}
 
@@ -753,19 +956,44 @@ function EntityListPanel<Row>({
           )}
         </div>
       ) : (
-        <div className="list-scroll-x">
+        <div ref={tableViewportRef} className={viewMode === "table" ? "list-scroll-x" : "list-scroll-none"}>
           {inlineCreating && create ? (
             <form
               id={createFormId}
-              action={mutationAction(create.action, {
+              onSubmit={handleInlineFormSubmit(mutationAction(create.action, {
                 onSuccess: () => {
                   create.onSuccess?.();
                   setAdding(false);
                 },
-              })}
+              }))}
             />
           ) : null}
-          <table className="w-full text-sm">
+          {/*
+            List mode hides the columns that do not fit with a generated rule
+            rather than by rendering fewer cells. A create row's cells come
+            from the page's own renderRow, so dropping cells here would leave
+            the draft row wider than its header; one rule over every cell of
+            this table keeps header, body, draft row and footer aligned.
+          */}
+          {hiddenFromNthChild != null && (
+            <style>{`#${tableId} > thead > tr > *:nth-child(n+${hiddenFromNthChild}),#${tableId} > tbody > tr > *:nth-child(n+${hiddenFromNthChild}),#${tableId} > tfoot > tr > *:nth-child(n+${hiddenFromNthChild}){display:none}`}</style>
+          )}
+          <table
+            id={tableId}
+            className="list-fixed-layout list-single-line text-sm"
+            // Table mode is exactly as wide as its columns — no `minWidth:100%`,
+            // which would stretch a narrow table back over the viewport and
+            // silently undo every attempt to drag a column narrower.
+            // List mode fills the viewport, distributing any slack across the
+            // columns that fit while keeping their relative widths.
+            style={viewMode === "table" ? { width: `${tableWidth}px` } : { width: "100%" }}
+          >
+          <colgroup>
+            {selectionMode === "multi" ? <col style={{ width: SELECTION_COLUMN_WIDTH }} /> : null}
+            {layoutColumns.map((column) => (
+              <col key={column.key} style={{ width: columnWidth(column) }} />
+            ))}
+          </colgroup>
           <thead>
             <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
               <ListSelectionHeader
@@ -776,8 +1004,20 @@ function EntityListPanel<Row>({
                 disabled={changing || refreshing}
               />
               {definition.columns.map((column) => (
-                <th key={column.key} className={["px-4 py-3", column.headerClassName].filter(Boolean).join(" ")}>
+                <th
+                  key={column.key}
+                  title={typeof column.label === "string" ? column.label : undefined}
+                  className={["relative px-4 py-3", column.headerClassName].filter(Boolean).join(" ")}
+                >
                   {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
+                  {viewMode === "table" && (
+                    <ColumnResizeHandle
+                      label={typeof column.label === "string" ? column.label : column.key}
+                      width={columnWidth(column)}
+                      minWidth={MIN_RESIZE_WIDTH}
+                      onResize={(next) => setColumnWidth(column.key, next)}
+                    />
+                  )}
                 </th>
               ))}
             </tr>
@@ -814,11 +1054,18 @@ function EntityListPanel<Row>({
                     disabled={changing || refreshing}
                   />
                   {definition.columns.map((column, index) => (
-                    <td key={column.key} className={["px-4 py-3", column.cellClassName].filter(Boolean).join(" ")}>
+                    <td
+                      key={column.key}
+                      // Truncated text is unreadable without the whole value,
+                      // so every cell carries it. Skipped while editing: the
+                      // cell is an input the user is already reading.
+                      title={editing ? undefined : cellTitle(column, row)}
+                      className={["px-4 py-3", column.cellClassName].filter(Boolean).join(" ")}
+                    >
                       {editing && edit && formId && index === 0 && (
                         <form
                           id={formId}
-                          action={mutationAction(
+                          onSubmit={handleInlineFormSubmit(mutationAction(
                             (formData) => edit.action(row, formData),
                             {
                               onSuccess: () => {
@@ -827,11 +1074,11 @@ function EntityListPanel<Row>({
                                 setEditingId(null);
                               },
                             },
-                          )}
+                          ))}
                         />
                       )}
-                      {editing && column.edit && formId
-                        ? column.edit(row, { formId })
+                      {editing && formId && (column.edit || (column.lovSource && column.lovEdit))
+                        ? editCellContent(column, row, formId)
                         : column.render
                           ? column.render(row, cellContext)
                           : String(column.accessor?.(row) ?? "—")}

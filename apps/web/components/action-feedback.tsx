@@ -16,12 +16,35 @@ export function showAppToast(message: string, tone: "success" | "error" = "succe
  * settles — that dim is the only per-click feedback; this component only
  * surfaces explicit success/error notices via showAppToast.
  */
+const TOAST_DURATION_MS = 4000;
+
 export function ActionFeedback() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const clearTimer = useRef<number | null>(null);
+  const remainingMs = useRef(TOAST_DURATION_MS);
+  const timerStartedAt = useRef(0);
   const pendingControlTimers = useRef(new Map<HTMLElement, number>());
   const [feedback, setFeedback] = useState<Feedback>(null);
+
+  const startClearTimer = useCallback((duration: number) => {
+    if (clearTimer.current) window.clearTimeout(clearTimer.current);
+    timerStartedAt.current = Date.now();
+    remainingMs.current = duration;
+    clearTimer.current = window.setTimeout(() => setFeedback(null), duration);
+  }, []);
+
+  const pauseClearTimer = useCallback(() => {
+    if (clearTimer.current == null) return;
+    window.clearTimeout(clearTimer.current);
+    clearTimer.current = null;
+    remainingMs.current = Math.max(0, remainingMs.current - (Date.now() - timerStartedAt.current));
+  }, []);
+
+  const resumeClearTimer = useCallback(() => {
+    if (clearTimer.current != null || remainingMs.current <= 0) return;
+    startClearTimer(remainingMs.current);
+  }, [startClearTimer]);
 
   const clearPendingControls = useCallback(() => {
     for (const [control, timer] of pendingControlTimers.current) {
@@ -65,9 +88,8 @@ export function ActionFeedback() {
     const onToast = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string; tone?: "success" | "error" }>).detail;
       if (!detail?.message) return;
-      if (clearTimer.current) window.clearTimeout(clearTimer.current);
       setFeedback({ message: detail.message, tone: detail.tone ?? "success" });
-      clearTimer.current = window.setTimeout(() => setFeedback(null), 4200);
+      startClearTimer(TOAST_DURATION_MS);
     };
 
     document.addEventListener("click", onClick, true);
@@ -78,21 +100,23 @@ export function ActionFeedback() {
       window.removeEventListener("dashboard:navigation-start", onNavigationStart);
       window.removeEventListener("dashboard:toast", onToast);
     };
-  }, [markControlPending]);
+  }, [markControlPending, startClearTimer]);
 
   if (!feedback) return null;
   return (
     <div
       role={feedback.tone === "error" ? "alert" : "status"}
       aria-live="polite"
-      className={`fixed right-5 bottom-5 z-[120] inline-flex min-w-[18rem] items-center justify-center gap-3 rounded-2xl border px-5 py-3.5 text-sm font-semibold shadow-2xl backdrop-blur-xl ${
+      onMouseEnter={pauseClearTimer}
+      onMouseLeave={resumeClearTimer}
+      className={`fixed right-5 bottom-5 z-[120] flex w-[10cm] items-start gap-3 rounded-2xl border px-5 py-3.5 text-sm font-semibold shadow-2xl backdrop-blur-xl ${
         feedback.tone === "error"
           ? "border-red-300 bg-red-50/95 text-red-800 dark:border-red-800 dark:bg-red-950/95 dark:text-red-200"
           : "border-green-300 bg-green-50/95 text-green-800 dark:border-green-800 dark:bg-green-950/95 dark:text-green-200"
       }`}
     >
-      <span aria-hidden="true" className={`h-3 w-3 rounded-full ${feedback.tone === "error" ? "bg-red-600 dark:bg-red-400" : "bg-green-600 dark:bg-green-400"}`} />
-      {feedback.message}
+      <span aria-hidden="true" className={`mt-1 h-3 w-3 shrink-0 rounded-full ${feedback.tone === "error" ? "bg-red-600 dark:bg-red-400" : "bg-green-600 dark:bg-green-400"}`} />
+      <span className="break-words">{feedback.message}</span>
     </div>
   );
 }

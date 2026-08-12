@@ -177,3 +177,37 @@ Use this file to track changes that matter when hosting or rebuilding the projec
   - apply all committed Drizzle migrations in order;
   - run `db:verify-rls` and `db:verify-auth`;
   - run `tsc --noEmit` or the repo typecheck command.
+
+## 2026-08-11 - Framework LOV Pickers And DB-Level Reference Validation
+
+- New migration `0048_salty_spencer_smythe.sql` adds `fk_auction_lots_grade`:
+  `auction_lots(factory_id, grade)` -> `auction_grades(factory_id, code)`,
+  `ON UPDATE CASCADE`, `ON DELETE NO ACTION`. It references the existing
+  `uq_auction_grades_factory_code` unique index, so no new index is required.
+- Behaviour change: a lot may no longer carry a grade code its factory has not
+  defined. This applies to broker-document ingestion too — an acknowledgement,
+  valuation, or sellers contract naming an unknown grade is now REJECTED at
+  write time instead of silently stored. Add the grade, or an
+  `auction_grade_aliases` row for the broker's spelling, before re-importing.
+- Before applying to an environment with existing data, check for rows the
+  constraint would reject:
+
+  ```sql
+  SELECT DISTINCT l.factory_id, l.grade
+  FROM auction_lots l
+  WHERE l.grade IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM auction_grades g
+      WHERE g.factory_id = l.factory_id AND g.code = l.grade
+    );
+  ```
+
+  Any row returned must be corrected (or its grade registered) first, or the
+  migration will fail. The local stack returned zero rows.
+- No package dependency was added or intentionally changed.
+- Verification checklist for this change:
+  - apply migrations through `0048_salty_spencer_smythe.sql`;
+  - confirm saving a lot with an unknown grade is refused and reports the value;
+  - confirm saving a lot with a known grade still succeeds;
+  - run `db:verify-rls` and `db:verify-auth`;
+  - run the repo lint and typecheck commands.

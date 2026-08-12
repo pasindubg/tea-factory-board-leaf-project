@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { DetailLovField } from "@/components/detail-workspace";
 import { EntityList } from "@/components/entity-list";
 import {
+  enumFilterOptions,
   ListCommandToolbar,
   ListSearchPanel,
   ListSelectionCell,
@@ -18,6 +20,7 @@ import type {
   AuctionEligibleBrokerInvoiceListRow,
   AuctionWarehouseListRow,
 } from "@/lib/list-resources";
+import { BROKER_INVOICE_STATUSES } from "../state-buckets";
 
 export type EligibleBrokerInvoice = AuctionEligibleBrokerInvoiceListRow;
 export type WarehouseOption = AuctionWarehouseListRow;
@@ -27,7 +30,7 @@ const INVOICE_COLUMNS: ColumnDef<EligibleBrokerInvoice>[] = [
   { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
   { key: "invoiceDate", label: "Invoice date", accessor: (row) => row.invoiceDate, sortable: true, lov: false, searchInput: "date" },
   { key: "lotCount", label: "Lots", accessor: (row) => row.lotCount, sortable: true, lov: false, searchInput: "number" },
-  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(BROKER_INVOICE_STATUSES) },
 ];
 
 const INVOICE_LIST = {
@@ -128,18 +131,16 @@ export function BundledDispatchForm({
                 )}
               </div>
 
-              <label className="block text-sm font-medium text-stone-700 dark:text-stone-300">
-                Warehouse <span aria-hidden="true" className="text-red-600">*</span>
-                <select name="warehouse_id" required defaultValue="" disabled={rows.length === 0} className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}>
-                  <option value="" disabled>Select a warehouse…</option>
-                  {warehouses.map((warehouse) => (
-                    <option key={warehouse.id} value={warehouse.id} disabled={!warehouse.active}>
-                      {warehouse.name}{warehouse.active ? "" : " (Inactive)"}
-                    </option>
-                  ))}
-                </select>
+              <div>
+                <DetailLovField
+                  label="Warehouse"
+                  source="auction.warehouses"
+                  name="warehouse_id"
+                  required
+                  disabled={rows.length === 0}
+                />
                 {rows.length === 0 && <span className="mt-1 block text-xs font-normal text-stone-500 dark:text-stone-400">Choose a date range containing eligible invoices first.</span>}
-              </label>
+              </div>
             </div>
 
             <ListSurface

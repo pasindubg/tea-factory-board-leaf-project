@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Pencil } from "lucide-react";
 import {
   DetailField,
+  DetailLovField,
   DetailRecordPanel,
   DetailWorkspace,
 } from "@/components/detail-workspace";
@@ -33,6 +34,19 @@ type DispatchDetailHeader = {
   createdAt: string | null;
 };
 
+/**
+ * Totals across everything in the dispatch. Supplied by the route rather than
+ * derived from the `invoices`/`lots` props, because those are already narrowed
+ * by the reader's saved or role-locked search — a record's own summary must
+ * not change with who is looking at it.
+ */
+export type DispatchDetailSummary = {
+  invoices: number;
+  brokerInvoices: number;
+  totalBags: number;
+  totalNetKg: number;
+};
+
 function dateRange(from: string, to: string) {
   return from === to ? from : `${from} – ${to}`;
 }
@@ -49,6 +63,7 @@ function createdDate(value: string | null) {
 export function DispatchDetailView({
   dispatch,
   dispatches,
+  summary,
   invoices,
   lots,
   eligibleInvoices,
@@ -58,6 +73,7 @@ export function DispatchDetailView({
 }: {
   dispatch: DispatchDetailHeader;
   dispatches: PhysicalDispatchListRow[];
+  summary: DispatchDetailSummary;
   invoices: DispatchInvoiceRow[];
   lots: DispatchLotRow[];
   eligibleInvoices: EligibleBrokerInvoice[];
@@ -281,22 +297,17 @@ export function DispatchDetailView({
                       className={editInputClass}
                     />
                   </label>
-                  <label className="grid min-w-0 gap-1.5 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                    Warehouse
-                    <select
-                      name="warehouse_id"
-                      defaultValue={currentWarehouseId}
-                      required
-                      className={editInputClass}
-                    >
-                      <option value="" disabled>Select a warehouse…</option>
-                      {warehouses.map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id} disabled={!warehouse.active}>
-                          {warehouse.name}{warehouse.active ? "" : " (Inactive)"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <DetailLovField
+                    label="Warehouse"
+                    source="auction.warehouses"
+                    name="warehouse_id"
+                    required
+                    defaultValue={currentWarehouseId}
+                    // Keeps the dispatch's current warehouse readable even if
+                    // it has since been deactivated — the source only offers
+                    // active ones, so it would otherwise look unset.
+                    defaultLabel={dispatch.warehouse === "—" ? "" : dispatch.warehouse}
+                  />
                   {/* System-assigned, so it stays read-only while editing. */}
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                 </>
@@ -305,8 +316,10 @@ export function DispatchDetailView({
                   <DetailField label="Dispatch date(s)" value={dateRange(dispatch.dateFrom, dispatch.dateTo)} />
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                   <DetailField label="Warehouse" value={dispatch.warehouse} />
-                  <DetailField label="Broker invoices" value={invoices.length} />
-                  <DetailField label="Lots" value={lots.length} />
+                  <DetailField label="Invoices" value={summary.invoices} />
+                  <DetailField label="Broker invoices" value={summary.brokerInvoices} />
+                  <DetailField label="Total bags" value={summary.totalBags} />
+                  <DetailField label="Total net kg" value={`${summary.totalNetKg.toFixed(2)} kg`} />
                 </>
               )}
             </DetailRecordPanel>

@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
+import { LovCombobox } from "@/components/lov-combobox";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
@@ -139,9 +140,10 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       accessor: (row) => row.grade ?? null,
       sortable: true,
       filter: "select",
-      edit: (row, { formId }) => (
-        <input form={formId} name="grade" defaultValue={row.grade ?? ""} className={inputClass} />
-      ),
+      // updateLot reads `grade`, so this column opts into the framework's
+      // inline LOV editor instead of writing its own renderer.
+      lovSource: "auction.grades",
+      lovEdit: true,
     },
     {
       key: "bags",
@@ -216,7 +218,6 @@ function InlineCreateCells({
   lotPrefixes: InvoicePrefixOption[];
 }) {
   const sampleInputRef = useRef<HTMLInputElement>(null);
-  const kgPerBagInputRef = useRef<HTMLInputElement>(null);
   const [useDifferentPrefix, setUseDifferentPrefix] = useState(false);
 
   return (
@@ -267,35 +268,27 @@ function InlineCreateCells({
         />
       </td>
       <td className="px-4 py-3">
-        <select
-          form={formId}
+        <LovCombobox
+          source="auction.grades"
           name="grade"
+          formId={formId}
           required
-          defaultValue=""
-          aria-label="Grade"
+          placeholder="Grade…"
+          ariaLabel="Grade"
           className={createInputClass}
-          onChange={(event) => {
-            const grade = grades.find((option) => option.code === event.currentTarget.value);
+          onSelect={(option) => {
+            const grade = grades.find((item) => item.code === option?.value);
             if (sampleInputRef.current && grade?.sampleWeight != null) {
               sampleInputRef.current.value = grade.sampleWeight.toFixed(2);
             }
-            if (kgPerBagInputRef.current && grade?.defaultKgPerBag != null) {
-              kgPerBagInputRef.current.value = grade.defaultKgPerBag.toFixed(2);
-            }
           }}
-        >
-          <option value="" disabled>Select</option>
-          {grades.map((grade) => (
-            <option key={grade.code} value={grade.code}>{grade.code}</option>
-          ))}
-        </select>
+        />
       </td>
       <td className="px-4 py-3">
         <input form={formId} name="bags" type="number" min="1" step="1" required defaultValue={10} aria-label="Bags" className={`${createInputClass} text-right`} />
       </td>
       <td className="px-4 py-3">
         <input
-          ref={kgPerBagInputRef}
           form={formId}
           name="kg_per_bag"
           type="number"

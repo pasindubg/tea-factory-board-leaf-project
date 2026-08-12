@@ -73,6 +73,16 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
     state: lot.state ?? "—",
   })));
 
+  // Deliberately built from the FULL sets, before the search below narrows
+  // them: this summarises the dispatch record itself, so it must not shrink
+  // because the reader has a saved filter or a role-locked one.
+  const summary = {
+    invoices: lots.length,
+    brokerInvoices: invoices.length,
+    totalBags: lots.reduce((sum, lot) => sum + (lot.bags ?? 0), 0),
+    totalNetKg: lots.reduce((sum, lot) => sum + Number(lot.netWt ?? 0), 0),
+  };
+
   const [visibleInvoices, visibleLots] = await Promise.all([
     applyServerListSearch(supabase, profile, "dispatch-detail-invoices", invoices),
     applyServerListSearch(supabase, profile, "dispatch-detail-lots", lots),
@@ -93,6 +103,7 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
       createdAt: (dispatch.created_at as string | null) ?? null,
     }}
     dispatches={dispatchRows}
+    summary={summary}
     invoices={visibleInvoices}
     lots={visibleLots}
     eligibleInvoices={eligibleInvoicesResource.rows}

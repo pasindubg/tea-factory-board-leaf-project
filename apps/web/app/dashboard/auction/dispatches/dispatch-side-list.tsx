@@ -1,16 +1,17 @@
 "use client";
 
 import { DetailSideList } from "@/components/detail-side-list";
-import type { ColumnDef } from "@/components/list-controls";
+import { enumFilterOptions, type ColumnDef } from "@/components/list-controls";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { PhysicalDispatchListRow } from "./dispatch-list";
+import { DISPATCH_STATUSES } from "../dispatch-status";
 
 const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "dispatchNo", label: "Dispatch no.", accessor: (row) => row.dispatchNo, sortable: true, filter: "text", lov: false },
   { key: "dispatchDateFrom", label: "Dispatch from", accessor: (row) => row.dispatchDateFrom, sortable: true, lov: false, searchInput: "date" },
   { key: "dispatchDateTo", label: "Dispatch to", accessor: (row) => row.dispatchDateTo, sortable: true, lov: false, searchInput: "date" },
   { key: "warehouse", label: "Warehouse", accessor: (row) => row.warehouse, sortable: true, filter: "select" },
-  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(DISPATCH_STATUSES) },
 ];
 
 export function DispatchSideList({

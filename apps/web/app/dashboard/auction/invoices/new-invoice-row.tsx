@@ -1,13 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { formatFourDigitNo } from "../sale-number";
+import { LovCombobox } from "@/components/lov-combobox";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
-export type BrokerOption = { id: string; name: string };
-export type MarkOption = { id: string; code: string; name: string | null };
+/**
+ * Broker and mark are no longer passed in as fixed option lists — those
+ * pickers are `LovCombobox`es querying the server as the user types, so they
+ * keep working once a factory has more of them than a dropdown can show.
+ * Grades stay a passed-in list: it is small and bounded per factory, and the
+ * row needs each grade's configured sample weight locally to auto-fill it.
+ */
 export type GradeOption = { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null };
 
-/** Pre-filled from the most recent broker invoice; every one stays editable. */
+/**
+ * Dispatch date, sale date, and sale no. are all pre-filled from the most
+ * recent broker invoice, and every one stays editable.
+ */
 export type NewInvoiceDefaults = {
   dispatchDate: string | null;
   saleDate: string | null;
@@ -31,14 +40,10 @@ const muted = "text-xs text-stone-400 dark:text-stone-500";
  */
 export function NewInvoiceRow({
   formId,
-  brokers,
-  marks,
   grades,
   defaults,
 }: {
   formId: string;
-  brokers: BrokerOption[];
-  marks: MarkOption[];
   grades: GradeOption[];
   defaults: NewInvoiceDefaults;
 }) {
@@ -46,11 +51,11 @@ export function NewInvoiceRow({
   const [kgPerBag, setKgPerBag] = useState("");
   const [sampleKg, setSampleKg] = useState("");
 
-  // Picking a grade fills in that grade's configured kg/bag and sample weight,
-  // matching the lot entry row on the broker invoice detail page.
+  // Picking a grade fills in that grade's configured sample weight. kg/bag is
+  // never auto-filled — the grade's default_kg_per_bag is only a minimum the
+  // entered kg/bag is validated against on save.
   function pickGrade(code: string) {
     const match = grades.find((option) => option.code === code);
-    if (match?.defaultKgPerBag != null) setKgPerBag(String(match.defaultKgPerBag));
     if (match?.sampleWeight != null) setSampleKg(String(match.sampleWeight));
   }
 
@@ -82,12 +87,15 @@ export function NewInvoiceRow({
         />
       </td>
       <td className="px-4 py-3">
-        <select form={formId} name="broker_id" required defaultValue="" aria-label="Broker" className={cellInput}>
-          <option value="" disabled>Broker…</option>
-          {brokers.map((broker) => (
-            <option key={broker.id} value={broker.id}>{broker.name}</option>
-          ))}
-        </select>
+        <LovCombobox
+          source="auction.brokers"
+          name="broker_id"
+          formId={formId}
+          required
+          placeholder="Broker…"
+          ariaLabel="Broker"
+          className={cellInput}
+        />
       </td>
       <td className="px-4 py-3">
         <input
@@ -114,20 +122,16 @@ export function NewInvoiceRow({
         />
       </td>
       <td className="px-4 py-3">
-        <select
-          form={formId}
+        <LovCombobox
+          source="auction.grades"
           name="grade"
+          formId={formId}
           required
-          defaultValue=""
-          aria-label="Grade"
-          onChange={(event) => pickGrade(event.target.value)}
+          placeholder="Grade…"
+          ariaLabel="Grade"
+          onSelect={(option) => pickGrade(option?.value ?? "")}
           className={cellInput}
-        >
-          <option value="" disabled>Grade…</option>
-          {grades.map((option) => (
-            <option key={option.code} value={option.code}>{option.code}</option>
-          ))}
-        </select>
+        />
       </td>
       <td className="px-4 py-3">
         <input
@@ -158,12 +162,15 @@ export function NewInvoiceRow({
       </td>
       <td className="px-4 py-3 text-right tabular-nums font-medium">{net.toFixed(2)}</td>
       <td className="px-4 py-3">
-        <select form={formId} name="selling_mark_id" required defaultValue="" aria-label="Mark" className={cellInput}>
-          <option value="" disabled>Mark…</option>
-          {marks.map((mark) => (
-            <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>
-          ))}
-        </select>
+        <LovCombobox
+          source="auction.marks"
+          name="selling_mark_id"
+          formId={formId}
+          required
+          placeholder="Mark…"
+          ariaLabel="Mark"
+          className={cellInput}
+        />
       </td>
       <td className="px-4 py-3 text-right tabular-nums">{gross.toFixed(2)}</td>
       <td className="px-4 py-3">
@@ -174,6 +181,7 @@ export function NewInvoiceRow({
           defaultValue={defaults.saleNo ?? ""}
           placeholder="e.g. 0019"
           aria-label="Sale number"
+          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
           className={cellInput}
         />
       </td>

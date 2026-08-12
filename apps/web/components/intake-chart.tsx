@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTheme } from "next-themes";
+import { useAppTheme } from "@/app/providers";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export function IntakeChart({ data }: { data: { day: string; kg: number }[] }) {
-  const { resolvedTheme } = useTheme();
+  // Not next-themes' resolvedTheme: it ignores the forced (cookie) theme,
+  // so the chart could paint dark colours on a light page. See useAppTheme.
+  const { resolved } = useAppTheme();
   const [mounted, setMounted] = useState(false);
   const hasIntake = data.some((point) => point.kg > 0);
 
@@ -15,7 +17,7 @@ export function IntakeChart({ data }: { data: { day: string; kg: number }[] }) {
     return <StaticIntakeChart data={data} hasIntake={hasIntake} />;
   }
 
-  const isDark = resolvedTheme === "dark";
+  const isDark = resolved === "dark";
   const grid = isDark ? "#42493f" : "#dfe4da";
   const muted = isDark ? "#aeb7aa" : "#667062";
   const primary = isDark ? "#9dd67d" : "#386a20";

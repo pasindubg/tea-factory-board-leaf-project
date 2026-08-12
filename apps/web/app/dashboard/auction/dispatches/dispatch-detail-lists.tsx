@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { EntityList, EntityListTabs, type EntityListColumn } from "@/components/entity-list";
-import type { ListDefinition } from "@/components/list-controls";
+import { enumFilterOptions, type ListDefinition } from "@/components/list-controls";
+import { LOT_STATES } from "../lot-states";
+import { BROKER_INVOICE_STATUSES } from "../state-buckets";
 
 export type DispatchLotRow = {
   id: string;
@@ -38,7 +40,7 @@ const LOT_COLUMNS: EntityListColumn<DispatchLotRow>[] = [
   { key: "grade", label: "Grade", accessor: (row) => row.grade, sortable: true, filter: "select" },
   { key: "bags", label: "Bags", accessor: (row) => row.bags, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.bags ?? "—" },
   { key: "netWt", label: "Net kg", accessor: (row) => row.netWt, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.netWt == null ? "—" : Number(row.netWt).toFixed(2) },
-  { key: "state", label: "State", accessor: (row) => row.state, sortable: true, filter: "select" },
+  { key: "state", label: "State", accessor: (row) => row.state, sortable: true, filter: "select", filterOptions: enumFilterOptions(LOT_STATES) },
 ];
 
 const INVOICE_COLUMNS: EntityListColumn<DispatchInvoiceRow>[] = [
@@ -58,7 +60,7 @@ const INVOICE_COLUMNS: EntityListColumn<DispatchInvoiceRow>[] = [
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate, sortable: true, lov: false, searchInput: "date", cellClassName: "tabular-nums", render: (row) => row.saleDate ?? "—" },
   { key: "lotsCount", label: "Lots", accessor: (row) => row.lotsCount, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
   { key: "netWt", label: "Net kg", accessor: (row) => row.netWt, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.netWt ? Number(row.netWt).toFixed(2) : "—" },
-  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(BROKER_INVOICE_STATUSES) },
 ];
 
 const LOT_LIST = { columns: LOT_COLUMNS, selectionMode: "single", add: false, edit: false, delete: false } satisfies ListDefinition<DispatchLotRow>;
