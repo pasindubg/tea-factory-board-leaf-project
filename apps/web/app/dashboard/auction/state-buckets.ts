@@ -31,3 +31,38 @@ export const STATE_BUCKET: Record<string, StateBucket> = {
 export function stateBucket(state: string | null | undefined): StateBucket {
   return STATE_BUCKET[state ?? ""] ?? { label: state ?? "—", style: PENDING };
 }
+
+/**
+ * Search options for a column whose accessor returns a bucket LABEL.
+ *
+ * Derived from the same map the column renders through, so the search offers
+ * exactly the labels a row can actually show and cannot drift from them. Pass
+ * the raw states the list can hold; duplicates collapse (several raw states
+ * share one label) and order is preserved.
+ *
+ * Declaring these matters: without them a select column can only offer values
+ * found in the rows already loaded, so a state nobody happens to be in right
+ * now becomes unsearchable.
+ */
+export function stateBucketOptions(states: readonly (string | null)[]): { value: string; label: string }[] {
+  const labels = states.map((state) => stateBucket(state).label);
+  return [...new Set(labels)].map((label) => ({ value: label, label }));
+}
+
+/**
+ * A Broker Invoice that has not been confirmed yet. Confirming it moves the
+ * status to "invoiced" and it never returns here, so this is exactly the
+ * window in which the invoice may still be edited or deleted by a non-owner.
+ * "dispatched" is the legacy name for an open draft and must stay included.
+ */
+const OPEN_DRAFT_STATUSES = ["draft", "dispatched"];
+
+/**
+ * Every status a Broker Invoice can hold. Lives here beside the bucket map so
+ * a list can declare its full search options without re-deriving them.
+ */
+export const BROKER_INVOICE_STATUSES = ["draft", "dispatched", "invoiced", "grn", "catalogued"] as const;
+
+export function isOpenDraft(status: string | null | undefined): boolean {
+  return OPEN_DRAFT_STATUSES.includes(status ?? "");
+}

@@ -11,6 +11,8 @@ export type GradeTableRow = {
   name: string;
   active: boolean;
   sortOrder: number;
+  sampleWeight: number | null;
+  defaultKgPerBag: number | null;
   aliases: string[];
 };
 
@@ -41,6 +43,48 @@ const COLUMNS: EntityListColumn<GradeTableRow>[] = [
     filter: "text",
     render: (row) => <Aliases aliases={row.aliases} />,
     edit: (row, { formId }) => <input form={formId} name="aliases" defaultValue={row.aliases.join(", ")} placeholder="PEK, PEKOE" className={input} />,
+  },
+  {
+    key: "sampleWeight",
+    label: "Sample kg",
+    accessor: (row) => row.sampleWeight ?? null,
+    sortable: true,
+    headerClassName: "text-right",
+    cellClassName: "text-right tabular-nums",
+    render: (row) => row.sampleWeight == null ? "—" : row.sampleWeight.toFixed(2),
+    edit: (row, { formId }) => (
+      <input
+        form={formId}
+        name="sample_weight"
+        type="number"
+        min="0"
+        step="0.01"
+        defaultValue={row.sampleWeight ?? ""}
+        placeholder="0.00"
+        className={`${input} text-right`}
+      />
+    ),
+  },
+  {
+    key: "defaultKgPerBag",
+    label: "Min kg/bag",
+    accessor: (row) => row.defaultKgPerBag ?? null,
+    sortable: true,
+    headerClassName: "text-right",
+    cellClassName: "text-right tabular-nums",
+    render: (row) => row.defaultKgPerBag == null ? "—" : row.defaultKgPerBag.toFixed(2),
+    edit: (row, { formId }) => (
+      <input
+        form={formId}
+        name="default_kg_per_bag"
+        type="number"
+        min="0"
+        step="0.01"
+        defaultValue={row.defaultKgPerBag ?? ""}
+        placeholder="0.00"
+        className={`${input} text-right`}
+      />
+    ),
   },
   {
     key: "sortOrder",
@@ -94,10 +138,12 @@ export function GradesTable({ rows, isOwner }: { rows: GradeTableRow[]; isOwner:
         panelTitle: "Add tea grade",
         disabledReason: isOwner ? "Finish the current grade change first." : "Only the factory owner can add grades.",
         render: ({ action, close }) => (
-          <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <input name="code" required placeholder="Code, e.g. OPA" className={input} />
             <input name="name" placeholder="Display name" className={input} />
             <input name="sort_order" type="number" step="1" min="0" placeholder="Sort order" className={input} />
+            <input name="sample_weight" type="number" step="0.01" min="0" placeholder="Sample kg" className={input} />
+            <input name="default_kg_per_bag" type="number" step="0.01" min="0" placeholder="Min kg/bag" className={input} />
             <div className="flex gap-2">
               <input name="aliases" placeholder="PEK, PEKOE" className={input} />
               <button type="button" onClick={close} className="shrink-0 rounded-md border border-stone-300 px-3 py-2 text-sm font-medium dark:border-stone-600">Cancel</button>

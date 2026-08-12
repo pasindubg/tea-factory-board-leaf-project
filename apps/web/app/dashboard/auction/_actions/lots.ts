@@ -5,10 +5,12 @@ import { requireModuleAccess } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, writeAudit, type Supa } from "./_shared";
-import { formatFourDigitNo } from "../sale-number";
+import { AUC, str, num, writeAudit, gradeRulesByCode, notAnExisting, type Supa } from "./_shared";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
+import { buildCompositeInvoiceNo, invoiceSeqOf, parseCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
+import { resolveBrokerInvoiceForLot } from "./sales";
 
 async function dispatchEditError(
   supabase: Supa,
@@ -179,7 +181,7 @@ async function appliedThresholdForLot(
 type SavedLotPatch = Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">;
 
 export type UpdateLotResult =
-  | { ok: true; row: SavedLotPatch; notice: string }
+  | { ok: true; row: SavedLotPatch; notice: string; invalidate?: Extract<ListMutationResult, { ok: true }>["invalidate"] }
   | { ok: false; error: string };
 
 export async function updateLot(id: string, saleId: string, formData: FormData): Promise<UpdateLotResult> {
@@ -187,20 +189,56 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   const editError = await dispatchEditError(supabase, saleId, profile.factory_id, profile.role);
   if (editError) return { ok: false, error: editError };
   const updates: Record<string, string | number | null> = {};
-  const invoiceList = invoiceNumbers(formData);
-  const invoiceNo = invoiceList[0] ?? "";
+  const rawInvoiceList = invoiceNumbers(formData);
+  const rawInvoiceNo = rawInvoiceList[0] ?? "";
+  let invoiceNo = "";
+  if (rawInvoiceNo) {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    // Honour the prefix the user typed into the number itself — this screen
+    // has no prefix picker, so it is the only way they can express one.
+    const requestedPrefix = parseCompositeInvoiceNo(rawInvoiceNo)?.prefix;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId, requestedPrefix,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    if (prefixResult.needsApproval) {
+      return {
+        ok: false,
+        error: "That prefix isn't the active one for regular invoices. Only owner, manager, or supervisor can assign an abnormal prefix directly — use the New lot flow for a supervisor-approved entry instead.",
+      };
+    }
+    // invoiceSeqOf strips any prefix the edit form pre-filled, so re-saving a
+    // lot cannot compose "26I01-26I01-0003".
+    invoiceNo = buildCompositeInvoiceNo(prefixResult.prefix.prefix, invoiceSeqOf(rawInvoiceNo));
+  }
   const grade = str(formData.get("grade"));
   const bags = num(formData.get("bags"));
   const kgPerBag = num(formData.get("kg_per_bag"));
   const sampleKg = sampleAllowance(formData);
   const lotNo = formatFourDigitNo(str(formData.get("lot_no")));
   const newState = str(formData.get("state"));
+  // The Invoice Overview "Sale No." column shows the parent broker invoice's
+  // own target_sale_no (every lot under it shares the one value — see
+  // auction.invoice-overview in list-resource-registry.ts), so editing it here
+  // writes through to auction_sales rather than this lot row.
+  const targetSaleNoRaw = formData.has("target_sale_no") ? formatSaleNo(str(formData.get("target_sale_no"))) : null;
+  if (formData.has("target_sale_no") && !targetSaleNoRaw) return { ok: false, error: "Sale number is required." };
   if (invoiceNo) updates.invoice_no = invoiceNo;
   if (grade) updates.grade = grade;
   // Always update lot_no if present in the form (even if clearing it)
   if (formData.has("lot_no")) updates.lot_no = lotNo || null;
   if (bags > 0 && kgPerBag > 0 && sampleKg >= bags * kgPerBag) {
     return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+  }
+  if (grade) {
+    const rule = (await gradeRulesByCode(supabase, profile.factory_id, [grade])).get(grade);
+    // The foreign key would reject this too, but only the caller knows which
+    // value was typed — see gradeRulesByCode.
+    if (!rule) return { ok: false, error: notAnExisting(grade, "tea grade") };
+    const minKgPerBag = rule.minKgPerBag;
+    if (kgPerBag > 0 && minKgPerBag != null && minKgPerBag > 0 && kgPerBag < minKgPerBag) {
+      return { ok: false, error: `kg/bag for grade ${grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+    }
   }
   if (bags > 0) updates.bags = bags;
   if (kgPerBag > 0) updates.kg_per_bag = kgPerBag;
@@ -228,21 +266,54 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     }
   }
 
-  if (Object.keys(updates).length === 0) return { ok: false, error: "No lot changes were supplied." };
+  if (Object.keys(updates).length === 0 && targetSaleNoRaw == null) {
+    return { ok: false, error: "No lot changes were supplied." };
+  }
   if (invoiceNo) {
     const invoiceConflict = await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], id);
     if (invoiceConflict) return { ok: false, error: invoiceConflict };
   }
-  const { data: updatedLot, error: updateError } = await supabase
-    .from("auction_lots")
-    .update(updates)
-    .eq("id", id)
-    .eq("sale_id", saleId)
-    .eq("factory_id", profile.factory_id)
-    .select("invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state")
-    .single();
+  const lotSelect = "invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state";
+  const { data: updatedLot, error: updateError } = Object.keys(updates).length > 0
+    ? await supabase
+      .from("auction_lots")
+      .update(updates)
+      .eq("id", id)
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .select(lotSelect)
+      .single()
+    : await supabase
+      .from("auction_lots")
+      .select(lotSelect)
+      .eq("id", id)
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .single();
   if (updateError || !updatedLot) {
     return { ok: false, error: `Could not update lot: ${updateError ? friendlyError(updateError) : "lot not found"}.` };
+  }
+  if (targetSaleNoRaw) {
+    const { data: updatedSale, error: saleUpdateError } = await supabase
+      .from("auction_sales")
+      .update({ target_sale_no: targetSaleNoRaw })
+      .eq("id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .select("id")
+      .maybeSingle();
+    if (saleUpdateError) return { ok: false, error: friendlyError(saleUpdateError) };
+    if (!updatedSale) return { ok: false, error: "Broker invoice not found." };
+    // Lots that already have a final_sale_no carry an authoritative reconciled
+    // assignment — this edit must not silently overwrite it, matching
+    // updateSale's identical rule in _actions/sales.ts.
+    const { error: lotCascadeError } = await supabase
+      .from("auction_lots")
+      .update({ provisional_sale_no: targetSaleNoRaw })
+      .eq("sale_id", saleId)
+      .eq("factory_id", profile.factory_id)
+      .is("final_sale_no", null);
+    if (lotCascadeError) return { ok: false, error: friendlyError(lotCascadeError) };
+    revalidatePath(`${AUC}/${saleId}`);
   }
   if (invoiceNo) {
     const { data: existingInvoice, error: invoiceReadError } = await supabase
@@ -269,6 +340,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   return {
     ok: true,
     notice: "Lot updated.",
+    invalidate: OVERVIEW_INVALIDATION(saleId),
     row: {
       invoice_no: updatedLot.invoice_no as string | null,
       lot_no: updatedLot.lot_no as string | null,
@@ -429,22 +501,67 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
 
 export type CreateDispatchedLotResult =
   | { ok: true; row: LotRow; notice: string }
+  | { ok: true; pending: true; notice: string }
   | { ok: false; error: string };
 
 /** List-local create command. It returns the canonical saved row so the lot
  * list can update itself without an optimistic placeholder or route refresh. */
-export async function createDispatchedLotForList(saleId: string, formData: FormData): Promise<CreateDispatchedLotResult> {
+export async function createDispatchedLotForList(
+  saleId: string,
+  formData: FormData,
+  options: { bypassPrefixId?: string } = {},
+): Promise<CreateDispatchedLotResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const invoiceList = invoiceNumbers(formData);
-  const invoiceNo = invoiceList[0] ?? "";
+  const rawInvoiceList = invoiceNumbers(formData);
+  const rawInvoiceNo = rawInvoiceList[0] ?? "";
   const grade = str(formData.get("grade"));
   const bags = num(formData.get("bags"));
   const kgPerBag = num(formData.get("kg_per_bag"));
   const sampleKg = sampleAllowance(formData);
-  if (!invoiceNo) return { ok: false, error: "Invoice number is required." };
+  if (!rawInvoiceNo) return { ok: false, error: "Invoice number is required." };
   if (!grade) return { ok: false, error: "Grade is required." };
   if (!(bags > 0) || !(kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
   if (sampleKg >= bags * kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+  const gradeRule = (await gradeRulesByCode(supabase, profile.factory_id, [grade])).get(grade);
+  // The foreign key would reject this too, but only the caller knows which
+  // value was typed — see gradeRulesByCode.
+  if (!gradeRule) return { ok: false, error: notAnExisting(grade, "tea grade") };
+  const minKgPerBag = gradeRule.minKgPerBag;
+  if (minKgPerBag != null && minKgPerBag > 0 && kgPerBag < minKgPerBag) {
+    return { ok: false, error: `kg/bag for grade ${grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+  }
+
+  let prefixString: string;
+  let needsPrefixApproval = false;
+  let approvalPrefixId: string | null = null;
+  if (options.bypassPrefixId) {
+    const { data: prefixRow, error: prefixError } = await supabase
+      .from("invoice_number_prefixes")
+      .select("prefix")
+      .eq("id", options.bypassPrefixId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (prefixError) return { ok: false, error: friendlyError(prefixError) };
+    if (!prefixRow) return { ok: false, error: "Unknown invoice number prefix." };
+    prefixString = prefixRow.prefix as string;
+  } else {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    // As in updateLot: a prefix typed into the number is a real request.
+    const requestedPrefix = parseCompositeInvoiceNo(rawInvoiceNo)?.prefix;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "regular_invoice", role: profile.role, requestedPrefixId, requestedPrefix,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    // The lot is created either way and is visible straight away; an
+    // abnormal prefix only adds an approval request against it, raised below
+    // once the lot exists so the reviewer can act on a real record. Declining
+    // removes it again (see declineInvoicePrefixException).
+    needsPrefixApproval = prefixResult.needsApproval;
+    approvalPrefixId = prefixResult.prefix.id;
+    prefixString = prefixResult.prefix.prefix;
+  }
+  const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, invoiceSeqOf(n)));
+  const invoiceNo = invoiceList[0] ?? "";
   const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList);
   if (!reprintSource.ok) return reprintSource;
   const netWt = netWeight(bags, kgPerBag, sampleKg);
@@ -495,11 +612,29 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
     }
     return { ok: false, error: friendlyError(invoiceInsertError) };
   }
+  // Raised only now: the reviewer decides about a record that already exists
+  // and is on screen, and `created_record_id` is what lets a decline delete
+  // exactly this lot rather than replaying a creation.
+  let notice = "Lot added.";
+  if (needsPrefixApproval && approvalPrefixId) {
+    const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
+      factory_id: profile.factory_id,
+      category: "regular_invoice",
+      requested_prefix_id: approvalPrefixId,
+      context_id: saleId,
+      payload: { invoice_no: invoiceList },
+      requested_by: profile.id,
+      created_record_id: createdLot.id as string,
+    });
+    if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
+    notice = "Lot added, and sent for approval — this prefix isn't the active one.";
+  }
+
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
   if (!synced.ok) return synced;
   return {
     ok: true,
-    notice: "Lot added.",
+    notice,
     row: {
       id: createdLot.id as string,
       invoice_no: formatFourDigitNo(createdLot.invoice_no as string | null) || null,
@@ -522,6 +657,99 @@ export async function createDispatchedLotForList(saleId: string, formData: FormD
       lot_invoices: invoiceList.map((invoice) => ({ invoice_no: invoice })),
     },
   };
+}
+
+/**
+ * Removes a broker invoice that was opened for a lot entry which then failed,
+ * so a rejected entry leaves nothing behind. Returns false if it could not be
+ * removed, so the caller can say so rather than silently orphaning it.
+ *
+ * Re-checks emptiness against the database instead of trusting the caller:
+ * auction_sales cascades to auction_lots, so deleting one that concurrently
+ * gained a lot would destroy real work. An invoice that is no longer empty is
+ * left alone and reported as success — it is no longer an orphan.
+ */
+async function discardEmptyBrokerInvoice(saleId: string): Promise<boolean> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const { count, error: countError } = await supabase
+    .from("auction_lots")
+    .select("id", { count: "exact", head: true })
+    .eq("sale_id", saleId)
+    .eq("factory_id", profile.factory_id);
+  if (countError) return false;
+  if ((count ?? 0) > 0) return true;
+  const { error } = await deleteTenantRow(supabase, "auction_sales", saleId);
+  return !error;
+}
+
+/**
+ * Invoice Overview create: adds a lot invoice straight from the overview,
+ * attaching it to the broker invoice for its broker + selling mark + dispatch
+ * date and opening that broker invoice first if none is open yet. Both steps
+ * are the existing ones — this only sequences them, so the overview cannot
+ * drift from what the broker invoice pages do.
+ *
+ * It returns no row: the overview's row shape is a join of lot and broker
+ * invoice fields, so the list refetches through `invalidate` rather than
+ * splicing in a locally-built row that could disagree with the server.
+ */
+export async function createInvoiceFromOverview(formData: FormData): Promise<ListMutationResult> {
+  const resolved = await resolveBrokerInvoiceForLot(formData);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  if ("pending" in resolved) {
+    return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
+  }
+
+  const created = await createDispatchedLotForList(resolved.saleId, formData);
+  if (!created.ok) {
+    // A lot cannot be validated before its parent exists — it is created with
+    // the parent's id — so the broker invoice is already open by the time the
+    // lot is rejected (below-minimum kg/bag, unknown grade, duplicate invoice
+    // number...). Undo it, or every failed attempt leaves an empty draft
+    // behind. Only when THIS call opened it, and only while it is still empty.
+    if (resolved.created) {
+      const discarded = await discardEmptyBrokerInvoice(resolved.saleId);
+      if (!discarded) {
+        return {
+          ok: false,
+          error: `${created.error} An empty broker invoice was left open — remove it from the broker invoice list.`,
+        };
+      }
+    }
+    return { ok: false, error: created.error };
+  }
+  const notice = "pending" in created
+    ? created.notice
+    : resolved.created
+      ? "Invoice created, and a new broker invoice was opened for it."
+      : created.notice;
+  return { ok: true, notice, invalidate: OVERVIEW_INVALIDATION(resolved.saleId) };
+}
+
+const OVERVIEW_INVALIDATION = (saleId: string): NonNullable<Extract<ListMutationResult, { ok: true }>["invalidate"]> => [
+  { kind: "all", key: "auction.invoice-overview" },
+  { kind: "all", key: "auction.dispatches" },
+  { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId } } },
+];
+
+/** Replays a lot creation from an approved invoice_prefix_exceptions row. */
+export async function createLotFromApprovedException(
+  saleId: string,
+  payload: Record<string, unknown>,
+  requestedPrefixId: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const formData = new FormData();
+  const invoiceNos = Array.isArray(payload.invoice_no) ? (payload.invoice_no as unknown[]).map(String) : [String(payload.invoice_no ?? "")];
+  for (const value of invoiceNos) formData.append("invoice_no", value);
+  if (payload.lot_no != null) formData.set("lot_no", String(payload.lot_no));
+  if (payload.grade != null) formData.set("grade", String(payload.grade));
+  if (payload.bags != null) formData.set("bags", String(payload.bags));
+  if (payload.kg_per_bag != null) formData.set("kg_per_bag", String(payload.kg_per_bag));
+  if (payload.sample_allowance != null) formData.set("sample_allowance", String(payload.sample_allowance));
+  const result = await createDispatchedLotForList(saleId, formData, { bypassPrefixId: requestedPrefixId });
+  if (!result.ok) return result;
+  if ("pending" in result) return { ok: false, error: "Unexpected pending state while replaying an approved lot." };
+  return { ok: true, id: result.row.id };
 }
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).
@@ -554,5 +782,5 @@ export async function deleteLot(id: string, saleId: string): Promise<ListMutatio
   if (deleteError) return { ok: false, error: deleteError };
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
   if (!synced.ok) return synced;
-  return { ok: true, notice: "Lot deleted." };
+  return { ok: true, notice: "Lot deleted.", invalidate: OVERVIEW_INVALIDATION(saleId) };
 }

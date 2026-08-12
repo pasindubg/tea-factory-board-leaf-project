@@ -4,6 +4,7 @@ import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { createWeighing } from "./actions";
 import { WeighingForm } from "./weighing-form";
+import { formatDateTime } from "@/lib/dates";
 
 export type WeighingRow = {
   id: string;
@@ -28,7 +29,7 @@ type CreateOptions = {
 };
 
 const COLUMNS: EntityListColumn<WeighingRow>[] = [
-  { key: "collectedAt", label: "Time", accessor: (row) => row.collectedAt, sortable: true, render: (row) => new Date(row.collectedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) },
+  { key: "collectedAt", label: "Time", accessor: (row) => row.collectedAt, sortable: true, render: (row) => formatDateTime(row.collectedAt) },
   { key: "supplierName", label: "Supplier", accessor: (row) => row.supplierName, sortable: true, filter: "select", render: (row) => <span className="font-medium">{row.supplierName}</span> },
   { key: "collectorName", label: "Collector", accessor: (row) => row.collectorName, sortable: true, filter: "select" },
   { key: "weightKg", label: "Weight (kg)", accessor: (row) => row.weightKg, sortable: true, searchInput: "number", cellClassName: "text-right tabular-nums", render: (row) => row.weightKg.toFixed(2) },

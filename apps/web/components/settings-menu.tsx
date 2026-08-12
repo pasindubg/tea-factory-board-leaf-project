@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useTheme } from "next-themes";
 import Link from "next/link";
+import { useAppTheme } from "@/app/providers";
 
 const THEMES = [
   { value: "system", label: "System", icon: "◐" },
@@ -11,10 +10,12 @@ const THEMES = [
 ] as const;
 
 export function SettingsMenu() {
-  const { theme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  // The cookie decides the theme, so the tick has to follow the cookie. Reading
+  // next-themes' `theme` instead showed whatever was last written to
+  // localStorage, which this app never updates — so the highlight sat on one
+  // option no matter which was actually applied. No mounted gate is needed:
+  // this value comes from the server with the page, unlike localStorage.
+  const { preference } = useAppTheme();
 
   return (
     <details className="group relative">
@@ -34,7 +35,7 @@ export function SettingsMenu() {
             <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">Appearance</p>
             <div className="grid grid-cols-3 gap-1">
               {THEMES.map((option) => {
-                const selected = mounted && theme === option.value;
+                const selected = preference === option.value;
                 return (
                   <form key={option.value} action={`/theme/${option.value}`} method="post">
                     <button

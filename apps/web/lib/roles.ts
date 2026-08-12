@@ -19,8 +19,8 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
 
-export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "User Handling";
-export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "User Handling"];
+export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "Index Cycle Management" | "User Handling";
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "Index Cycle Management", "User Handling"];
 
 export type ModuleDef = {
   key: string;
@@ -30,6 +30,7 @@ export type ModuleDef = {
   entitlement: Entitlement;
   group?: ModuleGroup;
   subGroup?: string;
+  visibleInNavigation?: boolean;
 };
 
 // These are the sidebar destinations. Detailed routes are registered below in
@@ -45,15 +46,16 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "auction-dashboard", href: "/dashboard/auction/dashboard", label: "Dashboard", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-sales", href: "/dashboard/auction/sales", label: "Sales Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-sale-detail", href: "/dashboard/auction/sales", label: "Sales Detail", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
-  { key: "auction-reports", href: "/dashboard/auction/reports", label: "Report Reconciliations", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
+  { key: "auction-documents", href: "/dashboard/auction/documents", label: "Document Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-registry", href: "/dashboard/auction/registry", label: "Brokers & marks", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-settings", href: "/dashboard/auction/settings", label: "Auction setup", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
-  { key: "auction", href: "/dashboard/auction", label: "Invoice Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
-  { key: "auction-dispatch-detail", href: "/dashboard/auction", label: "Invoice Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
-  { key: "auction-dispatch-overview", href: "/dashboard/auction/dispatches", label: "Dispatch Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
+  { key: "auction-reprints", href: "/dashboard/auction/reprints", label: "Re-print Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
+  { key: "auction-invoice-prefixes", href: "/dashboard/auction/invoice-prefixes", label: "Invoice number prefixes", roles: ["owner", "manager", "supervisor"], entitlement: "auction", group: "Index Cycle Management" },
+  { key: "auction-prefix-approvals", href: "/dashboard/auction/prefix-approvals", label: "Prefix approvals", roles: ["owner", "manager", "supervisor"], entitlement: "auction", group: "Index Cycle Management" },
+  { key: "auction-invoice-overview", href: "/dashboard/auction/invoices", label: "Invoice Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
+  { key: "auction-dispatch-detail", href: "/dashboard/auction/new", label: "Broker Invoice Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-bundled-dispatch-details", href: "/dashboard/auction/dispatches/details", label: "Dispatch Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-warehouses", href: "/dashboard/auction/warehouses", label: "Warehouse Basic Data", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
-  { key: "auction-reprints", href: "/dashboard/auction/reprints", label: "Re-print Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "users", href: "/dashboard/user-handling/users", label: "Users", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
   { key: "roles", href: "/dashboard/user-handling/roles", label: "Roles & permissions", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
 ];
@@ -96,22 +98,18 @@ export const PAGE_DEFINITIONS: readonly PageDef[] = [
   page("auction-dashboard", "Auction dashboard", "/dashboard/auction/dashboard", "Sales Handling", "auction-dashboard", ["owner", "manager", "accountant"]),
   page("auction-sales", "Sales overview", "/dashboard/auction/sales", "Sales Handling", "auction-sales", ["owner", "manager", "accountant"]),
   page("auction-sale-detail", "Sales detail", "/dashboard/auction/sales/[saleNo]", "Sales Handling", "auction-sale-detail", ["owner", "manager", "accountant"]),
-  page("auction-reports", "Report reconciliations", "/dashboard/auction/reports", "Sales Handling", "auction-reports", ["owner", "manager", "accountant"]),
+  page("auction-documents", "Document details", "/dashboard/auction/documents/[documentId]", "Sales Handling", "auction-documents", ["owner", "manager", "accountant"]),
   page("auction-registry", "Brokers & marks", "/dashboard/auction/registry", "Sales Handling", "auction-registry", ["owner", "manager", "accountant"]),
   page("auction-settings", "Auction setup", "/dashboard/auction/settings", "Sales Handling", "auction-settings", ["owner", "manager", "accountant"]),
-  page("auction-invoices", "Invoice overview", "/dashboard/auction", "Dispatch Handling", "auction", ["owner", "manager", "accountant"]),
+  page("auction-reprints", "Re-print overview", "/dashboard/auction/reprints", "Sales Handling", "auction-reprints", ["owner", "manager", "accountant"]),
+  page("auction-invoice-prefixes", "Invoice number prefixes", "/dashboard/auction/invoice-prefixes", "Index Cycle Management", "auction-invoice-prefixes", ["owner", "manager", "supervisor"]),
+  page("auction-prefix-approvals", "Prefix approvals", "/dashboard/auction/prefix-approvals", "Index Cycle Management", "auction-prefix-approvals", ["owner", "manager", "supervisor"]),
   page("auction-invoice-new", "New broker invoice", "/dashboard/auction/new", "Dispatch Handling", "auction", ["owner", "manager", "accountant"]),
-  page("auction-invoice-detail", "Invoice details", "/dashboard/auction/[saleId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
-  page("auction-acknowledgement", "Invoice acknowledgement", "/dashboard/auction/[saleId]/ack/[importId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
-  page("auction-valuation", "Invoice valuation", "/dashboard/auction/[saleId]/valuation/[importId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
-  page("auction-contract", "Seller contract", "/dashboard/auction/[saleId]/contract/[importId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
-  page("auction-bank", "Bank reconciliation", "/dashboard/auction/[saleId]/bank/[importId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
-  page("auction-dispatches", "Dispatch overview", "/dashboard/auction/dispatches", "Dispatch Handling", "auction-dispatch-overview", ["owner", "manager", "accountant"]),
-  page("auction-dispatch-new", "New physical dispatch", "/dashboard/auction/dispatches/new", "Dispatch Handling", "auction-dispatch-overview", ["owner", "manager", "accountant"]),
+  page("auction-invoice-overview", "Invoice overview", "/dashboard/auction/invoices", "Dispatch Handling", "auction-invoice-overview", ["owner", "manager", "accountant"]),
+  page("auction-invoice-detail", "Broker invoice details", "/dashboard/auction/[saleId]", "Dispatch Handling", "auction-dispatch-detail", ["owner", "manager", "accountant"]),
   page("auction-dispatch-details", "Dispatch details", "/dashboard/auction/dispatches/details", "Dispatch Handling", "auction-bundled-dispatch-details", ["owner", "manager", "accountant"]),
   page("auction-dispatch-detail-view", "Physical dispatch detail", "/dashboard/auction/dispatches/[dispatchId]", "Dispatch Handling", "auction-bundled-dispatch-details", ["owner", "manager", "accountant"]),
   page("auction-warehouses", "Warehouse basic data", "/dashboard/auction/warehouses", "Dispatch Handling", "auction-warehouses", ["owner", "manager", "accountant"]),
-  page("auction-reprints", "Re-print overview", "/dashboard/auction/reprints", "Dispatch Handling", "auction-reprints", ["owner", "manager", "accountant"]),
   page("user-handling-users", "Users", "/dashboard/user-handling/users", "User Handling", "users", ["owner"]),
   page("user-handling-roles", "Roles & permissions", "/dashboard/user-handling/roles", "User Handling", "roles", ["owner"]),
 ];
@@ -135,7 +133,7 @@ export function roleMayPerformPageAction(role: Role, pageDef: PageDef, action: R
   if (action === "view") return true;
   if (role === "manager") return true;
 
-  const operational = new Set(["weighings", "suppliers", "collectors", "requests", "messages"]);
+  const operational = new Set(["weighings", "suppliers", "collectors", "requests", "messages", "auction-invoice-prefixes", "auction-prefix-approvals"]);
   if (role === "supervisor") return action !== "delete" && operational.has(pageDef.moduleKey);
   if (role === "accountant") return action !== "delete" && (pageDef.moduleKey === "payments" || pageDef.moduleKey.startsWith("auction"));
   if (role === "collector") return action !== "delete" && pageDef.moduleKey === "weighings";

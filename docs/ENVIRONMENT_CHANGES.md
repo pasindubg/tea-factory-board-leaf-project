@@ -2,6 +2,73 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-08-03 - Physical Dispatch Status Lifecycle
+
+- Added migration `0046_blue_rocket_raccoon.sql`: a nullable `dispatched_at` timestamp on `auction_bundled_dispatches`, a widened `auction_bundled_dispatches_status_check` accepting `received` and `catalogued` alongside `draft`/`dispatched`, and a backfill setting `dispatched_at` for any row already sitting in `dispatched`. The CHECK was hand-written in an earlier migration, so drizzle-kit does not widen it when the TypeScript enum gains values — the two new statuses would otherwise be rejected at write time. A dispatch now runs draft -> dispatched -> received -> catalogued, where only `dispatched` is a user action (`markDispatchDispatched`); `received` and `catalogued` are derived from the broker invoices inside the dispatch reaching GRN and acknowledgement respectively. The derivation lives in `apps/web/app/dashboard/auction/dispatch-status.ts` and is re-applied by `syncDispatchForBrokerInvoice` after each broker-invoice transition (confirm, GRN, ingest acknowledgement). `dispatched_at` is stored separately from `status` so a dispatch that gains a new draft invoice falls back to `dispatched` rather than `draft`. No RLS change. Apply migrations through `0046`.
+
+## 2026-08-02 - Broker Invoice Uniqueness Now Includes Dispatch Date
+
+- Added migration `0045_flippant_mojo.sql`: rebuilds the partial unique index `uq_auction_sales_open_broker_mark` on `auction_sales` to key on `(factory_id, broker_id, selling_mark_id, dispatch_date)` instead of `(factory_id, broker_id, selling_mark_id)`. The old key allowed only one open (`draft`/`dispatched`) Broker Invoice per broker + selling mark ever, which blocked creating the next dispatch day's invoice for the same broker and mark. Each dispatch day is separate work, so the date now belongs in the key; same-day duplicates are still rejected (and independently by `uq_auction_sales_bundle_broker_mark`, since the auto-created bundle is one per dispatch date). The matching app-layer pre-check `findOpenDraftInvoice` (`apps/web/app/dashboard/auction/_actions/sales.ts`) filters on the dispatch date too and short-circuits on a null date, mirroring Postgres treating nulls as distinct in a unique index. No RLS change. Apply migrations through `0045`.
+
+## 2026-08-01 - Locked Advanced Query On Search Locks
+
+- Added migration `0044_list_search_lock_advanced_query.sql`: a nullable `advanced_query` text column on `list_search_locks`, alongside the existing per-role `criteria` jsonb. A locked advanced query is a mandatory AND-ed prefix, not a full replacement — the locked role can still type further terms, which the framework ANDs onto the locked one (`mergeAdvancedQuery` in `apps/web/lib/list-search-state.ts`), enforced server-side for both registry-backed (`loadListResource`) and local (`applyServerListSearch`) lists. The "Lock this search for a role" control (`apps/web/components/list-controls.tsx`) also now lists the factory's custom access roles, not just base roles, via a new `listLockableRoles()` action gated to owner/manager (not the owner-only Roles module). Apply migrations through `0044`.
+
+## 2026-07-31 - Broker Invoice Transporter Attribute
+
+- Added migration `0043_auction_sale_transporter.sql`: a nullable `transporter` text column on `auction_sales`, captured alongside the existing lorry no./driver fields on a Broker Invoice. No RLS change is needed (the table's `factory_isolation` policy already covers it). Apply migrations through `0043`.
+
+## 2026-07-26 - Production Migrations Moved Into the Vercel Build
+
+- **Migrations now run inside Vercel's own production build**, not a separate GitHub Actions job. `apps/web/vercel.json`'s `buildCommand` runs `pnpm --filter @tea/db db:migrate` only when `VERCEL_ENV=production`, before `pnpm run build`. This fixes a real ordering problem: GitHub Actions and Vercel used to trigger independently off the same push with no guarantee migrations finished before the new code went live. Now a failed or slow migration fails the build outright, so Vercel never activates a deployment whose migration didn't succeed — the old version keeps serving traffic.
+- **Fixed a pre-existing bug found while wiring this up**: `apps/web/vercel.json` already had an `ignoreCommand` that only continued builds when the branch was `main` and skipped every other branch, including `blm-cloud-release`. With Production Branch now set to `blm-cloud-release` in the Vercel dashboard, that command would have silently skipped every production build — no error, just nothing deploying. Removed.
+- `.github/workflows/release.yml` no longer runs migrations. It's the pre-merge safety gate now (lint/typecheck/test), triggered on PRs into `blm-cloud-release` as well as pushes to it. Pair it with a GitHub branch-protection rule requiring this check before merge — merging the PR becomes the actual "ship to production" approval, since Vercel deploys automatically and unattended once code lands on that branch.
+- **New manual step**: Vercel needs its own `DATABASE_URL` (the hosted session-pooler string), set in Vercel Project Settings → Environment Variables, scoped to Production. The `PROD_DATABASE_URL` GitHub secret added earlier is no longer read by anything — Vercel builds never see GitHub secrets — so this is a separate value that must be entered directly in Vercel.
+
+## 2026-07-25 - Persisted + Role-Locked List Search
+
+- Added migration `0040_lame_raza.sql` with two tables. `list_search_states` stores each user's own saved search criteria per list instance (RLS: own row only). `list_search_locks` stores owner/manager-managed permanent criteria locks per list, keyed by base role or custom access role (RLS: factory-wide read, owner/manager-only write). Apply migrations through `0040` before using search persistence. Both tables are registered in `FACTORY_SCOPED_TABLES` in `apps/web/lib/tenant-data.ts`.
+- **Search now persists per user across reloads and logins**, and **owner/manager can permanently lock criteria for a role**, configured inline from that list's own search panel (no separate admin screen; the control is invisible to other roles). Owner and manager are always exempt from locks. Lockable roles are `supervisor`/`accountant`/`collector` only — locking `owner`/`manager` would silently never apply.
+- **Locks are enforced server-side, not just in the UI.** Two paths, one shared implementation (`resolveListSearchState` + `filterRowsByCriteria` in `apps/web/lib/list-search-state.ts` / `list-search-query.ts`): registry-backed lists go through `loadListResource`, and detail-page side panels call `applyServerListSearch(...)` in their own server component before rows are serialized. A locked-away row is never sent to the browser on either path. A locked key naming a field the rows lack fails closed (drops every row) — covered by `apps/web/lib/list-search-query.test.ts`.
+- **Server-driven pagination** (first 100 rows, "Show more" fetches the next page via a real query) is live for the 14 registry resources that declare a `search` config: `auction.brokers`, `auction.marks`, `auction.warehouses`, `leaf.suppliers`, `leaf.collectors`, `leaf.weighings`, `payments.quality-tiers`, `payments.base-rates`, `payments.adjustments`, `payments.tier-assignments`, `payments.statements`, `communications.sent-messages`, `users.accounts`, `users.roles`. Other resources keep loading their full row set (still search/lock-filtered server-side) and never show "Show more".
+- All of this is generic at the framework level, keyed off `EntityList`'s existing `scope`/`resource.key`. No page or list definition declares a field name, table, or persistence wiring. `WorkflowAuditList` now requires an explicit `scope` prop because it is reused on unrelated pages that must not share saved searches.
+- `vitest.config.ts` aliases the `server-only` package to a test stub so server modules stay unit-testable. No package dependency was added.
+- **Search keys are mapped by convention, not declaration.** A UI search key is auto-mapped to its snake_case column on the base table (`weightKg` -> `weight_kg`), so most need no entry. A resource declares only two kinds of exception: keys whose value lives on a joined table, and JS-computed keys (`computed`) that have no SQL column and must fall through to the row-level filter.
+- **`SearchColumnMode` is driven by the column's Postgres type, not preference** — verified by probing the live database:
+  - `contains` (`ilike`) works on **text only**; on any other type Postgres raises `operator does not exist: <type> ~~* unknown` and the list 400s. This is why the convention's text assumption must be overridden for non-text columns.
+  - `equals` (`eq`) is safe on text, numeric, boolean and `date`.
+  - `day` (`gte`/`lt` over one calendar day) is **required for `timestamp` columns**: `eq` with a bare `YYYY-MM-DD` matches midnight exactly and returns zero rows with no error — a silent wrong answer. `weighings.collected_at` and `supplier_messages.sent_at` use this.
+- **Every paginated query must end its `ORDER BY` with a unique column.** Without a tiebreaker Postgres gives no stable order for ties, so paging can return the same row on two pages and skip another (caught on `users.roles` by a runtime probe). All paginated queries end with `.order("id")`.
+- **Known gaps (deliberate, not silently dropped):** 4 resources still load their full row set — `auction.reprint-overview`, `auction.sale-lines` and `auction.broker-grade-thresholds` need real SQL (recursive CTE for re-print chains, sale-number normalisation, a cross join) plus a migration; `users.staff-directory` needs limit/offset added to the `list_visible_staff_profiles` RPC. `users.role-page-permissions` is not a pagination candidate at all — its rows come from the `PAGE_DEFINITIONS` code constant, not a table. All of them still filter and enforce locks server-side. Tabs inside one `EntityList` (`EntityList.tabs`) do not yet persist search per tab.
+
+## 2026-07-25 - Split Local/Production Databases + Release Branch
+
+- **Local dev now runs against a local Supabase CLI stack, not the hosted project.** `supabase` is a root devDependency; `pnpm supabase start` boots Postgres + Auth (GoTrue) + Storage in Docker under a separate project, so RLS (`auth.uid()`), OTP login, and admin user APIs behave exactly like production without ever touching the live customer database. `supabase/config.toml` was added by `supabase init`; Drizzle stays the single migration source of truth (no migrations moved into `supabase/migrations`) — `pnpm db:migrate` now just points at the local stack's Postgres (`127.0.0.1:54322`) for day-to-day dev.
+- **New optional data clone:** `packages/db/scripts/clone-remote-to-local.sh` dumps the hosted project's `public` + `auth` schema data (via Dockerized `pg_dump`/`psql`, no local Postgres client needed) and restores it into the local stack. It's a manual, explicit, confirmation-gated script — never run by CI or any other script — and refuses to run if `DATABASE_URL` looks local (protects against running it backwards).
+- **New DB-access gate: `apps/web/lib/env.ts`.** Every Supabase client construction (`lib/supabase/{server,client,admin}.ts`, `middleware.ts`, `next.config.ts`) now reads its URL/keys through this one module. It throws if a Vercel **production** deploy (`VERCEL_ENV=production`) is pointed at a local/`127.0.0.1` Supabase URL, and throws if local dev (no `VERCEL` env) is pointed at the hosted project unless `ALLOW_PROD_DB_FROM_LOCAL=true` is explicitly set. This is the single chokepoint referenced by "hosted code must never reach the local DB, local dev must never silently write to the live DB."
+- **New `blm-cloud-release` branch** is the only path that applies migrations to the hosted database and deploys to production. `.github/workflows/release.yml` runs the same lint/typecheck/test gates as `ci.yml`, then runs `pnpm --dir packages/db db:migrate` against a `PROD_DATABASE_URL` GitHub secret (gated behind a `production` GitHub Environment — configure required reviewers there for a manual approval step before any live migration runs). Regular `ci.yml` on `main`/PRs never touches the hosted `DATABASE_URL`.
+- **Manual steps still needed (dashboard/account access this repo can't script):**
+  1. Vercel project → Settings → Git → set **Production Branch** to `blm-cloud-release` (main/feature branches then only get preview deployments).
+  2. GitHub repo → Settings → Secrets → add `PROD_DATABASE_URL` (hosted session-pooler string), and Settings → Environments → create `production` with required reviewers if you want a human approval gate on live migrations.
+  3. `supabase login` once per machine (needs a Supabase account) before `supabase start` works.
+- No package removed; `supabase` added as a root devDependency. See [README.md](../README.md#2-set-up-the-database) for the day-to-day local setup flow.
+
+## 2026-07-25 - Broker Invoice "BI" Prefix
+
+- Added migration `0039_broker_invoice_bi_prefix.sql`; apply migrations through `0039` before relying on the new invoice number format.
+- `auction_sales.sale_no` (the Broker Invoice number, e.g. what showed as `0010`) is now stored with a `BI` prefix, e.g. `BI0010`. The migration backfills every existing row; `nextDispatchNo()` in `apps/web/app/dashboard/auction/_actions/_shared.ts` generates the prefix for new invoices going forward.
+- This is a stored-data change, not a display-only formatter: `sale_no` stays a plain `text` column, and `saleNoKey`/`saleNoMatches` already normalize by trailing digit run, so existing matching/sorting logic needed no changes. No package dependency was added.
+
+## 2026-07-20 - Shared Detail Workspace Framework
+
+- `apps/web` now depends on `lucide-react` for the shared detail-workspace
+  command icons. Run `pnpm install` after pulling this change.
+- Invoice Details, physical Dispatch Details, and Sale Details now adapt to
+  `apps/web/components/detail-workspace.tsx`. Other compatible detail pages
+  should provide only page-specific lifecycle commands, tenant-safe mutations,
+  detail forms, and related lists instead of copying the shared layout.
+- No database migration or environment variable change is required.
+
 ## 2026-07-15 - Tenant-safe Database Delete Relationships
 
 - Added migration `0033_tenant_delete_relationships.sql`; apply migrations through `0033` before relying on the shared delete behavior.
@@ -110,3 +177,37 @@ Use this file to track changes that matter when hosting or rebuilding the projec
   - apply all committed Drizzle migrations in order;
   - run `db:verify-rls` and `db:verify-auth`;
   - run `tsc --noEmit` or the repo typecheck command.
+
+## 2026-08-11 - Framework LOV Pickers And DB-Level Reference Validation
+
+- New migration `0048_salty_spencer_smythe.sql` adds `fk_auction_lots_grade`:
+  `auction_lots(factory_id, grade)` -> `auction_grades(factory_id, code)`,
+  `ON UPDATE CASCADE`, `ON DELETE NO ACTION`. It references the existing
+  `uq_auction_grades_factory_code` unique index, so no new index is required.
+- Behaviour change: a lot may no longer carry a grade code its factory has not
+  defined. This applies to broker-document ingestion too — an acknowledgement,
+  valuation, or sellers contract naming an unknown grade is now REJECTED at
+  write time instead of silently stored. Add the grade, or an
+  `auction_grade_aliases` row for the broker's spelling, before re-importing.
+- Before applying to an environment with existing data, check for rows the
+  constraint would reject:
+
+  ```sql
+  SELECT DISTINCT l.factory_id, l.grade
+  FROM auction_lots l
+  WHERE l.grade IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM auction_grades g
+      WHERE g.factory_id = l.factory_id AND g.code = l.grade
+    );
+  ```
+
+  Any row returned must be corrected (or its grade registered) first, or the
+  migration will fail. The local stack returned zero rows.
+- No package dependency was added or intentionally changed.
+- Verification checklist for this change:
+  - apply migrations through `0048_salty_spencer_smythe.sql`;
+  - confirm saving a lot with an unknown grade is refused and reports the value;
+  - confirm saving a lot with a known grade still succeeds;
+  - run `db:verify-rls` and `db:verify-auth`;
+  - run the repo lint and typecheck commands.

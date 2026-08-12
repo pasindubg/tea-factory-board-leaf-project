@@ -1,7 +1,10 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
+import { LovCombobox } from "@/components/lov-combobox";
+import { displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
@@ -9,12 +12,13 @@ import { createDispatchedLotForList, deleteLot, markReprint, updateLot } from ".
 import { LOT_STATES } from "../lot-states";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { stateBucket } from "../state-buckets";
-import { DispatchLotForm } from "./dispatch-lot-form";
 import type { LotRow } from "./lot-row";
+import type { InvoicePrefixOption } from "../invoice-number";
 
 const REPRINTABLE_STATES = new Set(["acknowledged", "catalogued", "valued", "withdrawn"]);
 const inputClass = "w-20 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
 const numberInputClass = `${inputClass} text-right`;
+const createInputClass = "min-h-9 w-full min-w-20 rounded-md border border-green-300 bg-white px-2 text-sm text-stone-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-600/15 dark:border-green-800 dark:bg-stone-900 dark:text-stone-100";
 
 function invoiceLabel(row: LotRow) {
   const invoices = (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no);
@@ -22,6 +26,12 @@ function invoiceLabel(row: LotRow) {
     .map(formatFourDigitNo)
     .filter(Boolean)
     .join(", ");
+}
+
+/** Reads invoiceLabel through the show/hide-prefix preference. */
+function InvoiceNoText({ row }: { row: LotRow }) {
+  const { visible } = useInvoicePrefix();
+  return <>{displayInvoiceNo(invoiceLabel(row), visible) || "—"}</>;
 }
 
 function statusCell(row: LotRow, soldLotIds: Set<string>) {
@@ -60,11 +70,12 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       accessor: (row) => (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no).join(", ") || row.invoice_no || null,
       sortable: true,
       filter: "text",
+      prefixColumn: true,
       render: (row) => {
         const invoices = row.lot_invoices ?? [];
         return (
           <div className="font-medium">
-            {invoiceLabel(row) || "—"}
+            <InvoiceNoText row={row} />
             {invoices.length > 1 && (
               <span className="ml-1 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
                 {invoices.length} invoices
@@ -137,9 +148,10 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       accessor: (row) => row.grade ?? null,
       sortable: true,
       filter: "select",
-      edit: (row, { formId }) => (
-        <input form={formId} name="grade" defaultValue={row.grade ?? ""} className={inputClass} />
-      ),
+      // updateLot reads `grade`, so this column opts into the framework's
+      // inline LOV editor instead of writing its own renderer.
+      lovSource: "auction.grades",
+      lovEdit: true,
     },
     {
       key: "bags",
@@ -204,6 +216,121 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
   ];
 }
 
+function InlineCreateCells({
+  formId,
+  grades,
+  lotPrefixes,
+}: {
+  formId: string;
+  grades: { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null }[];
+  lotPrefixes: InvoicePrefixOption[];
+}) {
+  const sampleInputRef = useRef<HTMLInputElement>(null);
+  const [useDifferentPrefix, setUseDifferentPrefix] = useState(false);
+
+  return (
+    <>
+      <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="invoice_no"
+          required
+          placeholder="e.g. 0058"
+          aria-label="Invoice number"
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
+          className={createInputClass}
+        />
+        {lotPrefixes.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setUseDifferentPrefix((v) => !v)}
+              className="mt-1 block text-[11px] text-green-700 dark:text-green-400 hover:underline"
+            >
+              {useDifferentPrefix ? "Use active prefix" : "Different prefix"}
+            </button>
+            {useDifferentPrefix && (
+              <select form={formId} name="prefix_id" defaultValue="" aria-label="Invoice number prefix" className={`${createInputClass} mt-1 text-xs`}>
+                <option value="">Active prefix</option>
+                {lotPrefixes.map((p) => (
+                  <option key={p.id} value={p.id}>{p.prefix}{p.active ? " (active)" : ""}</option>
+                ))}
+              </select>
+            )}
+          </>
+        )}
+      </td>
+      <td className="px-4 py-3 text-sm text-stone-400">Assigned after save</td>
+      <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="lot_no"
+          placeholder="Optional"
+          aria-label="Lot number"
+          onBlur={(event) => {
+            event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
+          }}
+          className={createInputClass}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <LovCombobox
+          source="auction.grades"
+          name="grade"
+          formId={formId}
+          required
+          placeholder="Grade…"
+          ariaLabel="Grade"
+          className={createInputClass}
+          onSelect={(option) => {
+            const grade = grades.find((item) => item.code === option?.value);
+            if (sampleInputRef.current && grade?.sampleWeight != null) {
+              sampleInputRef.current.value = grade.sampleWeight.toFixed(2);
+            }
+          }}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <input form={formId} name="bags" type="number" min="1" step="1" required defaultValue={10} aria-label="Bags" className={`${createInputClass} text-right`} />
+      </td>
+      <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="kg_per_bag"
+          type="number"
+          min="0.01"
+          step="0.01"
+          required
+          placeholder="0.00"
+          aria-label="Kilograms per bag"
+          className={`${createInputClass} text-right`}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <input
+          ref={sampleInputRef}
+          form={formId}
+          name="sample_allowance"
+          type="number"
+          min="0"
+          step="0.01"
+          defaultValue="0"
+          aria-label="Sample kilograms"
+          className={`${createInputClass} text-right`}
+        />
+      </td>
+      <td className="px-4 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400">Calculated</td>
+      <td className="px-4 py-3">
+        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800 dark:bg-blue-900 dark:text-blue-300">
+          Invoiced
+        </span>
+      </td>
+    </>
+  );
+}
+
 async function deleteLots(ids: string[], saleId: string): Promise<ListMutationResult> {
   let succeeded = 0;
   const failures: string[] = [];
@@ -228,6 +355,7 @@ export function DispatchedLotsTable({
   canEdit,
   canAdd,
   grades,
+  lotPrefixes,
   soldLotIds,
   title = "Lot invoices",
   onRowsChange,
@@ -237,7 +365,8 @@ export function DispatchedLotsTable({
   isOwner: boolean;
   canEdit: boolean;
   canAdd: boolean;
-  grades: { code: string; name: string }[];
+  grades: { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null }[];
+  lotPrefixes: InvoicePrefixOption[];
   soldLotIds: string[];
   title?: string;
   onRowsChange?: (rows: LotRow[]) => void;
@@ -291,12 +420,10 @@ export function DispatchedLotsTable({
       create={canAdd ? {
         action: (formData) => createDispatchedLotForList(saleId, formData),
         label: "New lot",
-        panelTitle: "New lot",
         disabledReason: "Finish the current lot action first.",
-        render: ({ action, close }) => (
-          <DispatchLotForm open action={action} grades={grades} onCancel={close} />
-        ),
+        renderRow: ({ formId }) => <InlineCreateCells formId={formId} grades={grades} lotPrefixes={lotPrefixes} />,
       } : undefined}
+      createPlacement="toolbar"
       edit={canEdit ? {
         action: (row, formData) => updateLot(row.id, saleId, formData),
         label: "Edit",

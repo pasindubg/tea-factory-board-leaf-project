@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { LovCombobox } from "@/components/lov-combobox";
+import { InvoicePrefixMenu, displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
+import { DEFAULT_COLUMN_MIN_WIDTH, ListViewModeMenu, useListViewMode } from "@/components/list-view-mode";
 import {
   ListCommandToolbar,
   ListCreatePanel,
@@ -18,11 +21,31 @@ import {
   useListControls,
   useListSelection,
   type ColumnDef,
+  type FrameworkListSearchState,
   type ListDefinition,
 } from "@/components/list-controls";
+import { refreshListResource } from "@/lib/list-resource-action";
+import { saveListSearchState } from "@/lib/list-search-actions";
 import { ENTITY_LIST_METADATA } from "@/lib/entity-list-metadata";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { ListResourceKey, ListResourceRequest, ListResourceRow } from "@/lib/list-resources";
+
+/**
+ * Submit handler for the framework's own inline create/edit `<form>` tags
+ * (their fields live outside the element, associated via `form={id}`). Using
+ * a plain `onSubmit` instead of the `action` prop avoids React's built-in
+ * behavior of resetting the form's fields as soon as submission starts —
+ * which fires regardless of whether the mutation ends up succeeding or
+ * failing, and would otherwise blank out every uncontrolled field (anything
+ * using `defaultValue`) the instant an inline create/edit is submitted, error
+ * or not.
+ */
+function handleInlineFormSubmit(action: (formData: FormData) => Promise<void>) {
+  return (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void action(new FormData(event.currentTarget));
+  };
+}
 
 export type EntityListMutationOptions = {
   notice?: string;
@@ -37,6 +60,12 @@ export type EntityListDataContext<Row> = {
     action: (formData: FormData) => Promise<ListMutationResult>,
     options?: EntityListMutationOptions,
   ) => (formData: FormData) => Promise<void>;
+  /** Restored/locked search state for this list instance — undefined until the (one, generic) restore fetch resolves. */
+  searchState?: FrameworkListSearchState;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadMore?: () => Promise<void>;
+  applySearch?: (criteria: Record<string, string>, advancedQuery: string) => void;
 };
 
 export type EntityListContext<Row> = EntityListDataContext<Row> & {
@@ -58,6 +87,126 @@ export type EntityListColumn<Row> = ColumnDef<Row> & {
   edit?: (row: Row, context: { formId: string }) => ReactNode;
 };
 
+const LOV_EDIT_INPUT_CLASS = "w-full rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-600 dark:bg-stone-900";
+/** Fixed width of the leading checkbox column, matching ListSelectionCell. */
+const SELECTION_COLUMN_WIDTH = 48;
+/**
+ * Floor for a dragged column. Deliberately NOT `ColumnDef.minWidth`: that
+ * expresses "narrowest width this column is still READABLE at", which decides
+ * what fits in list mode. A user dragging a column narrower has decided they
+ * do not need to read it, and must not be blocked by that hint.
+ */
+const MIN_RESIZE_WIDTH = 56;
+
+/**
+ * Full text for a truncated cell's tooltip. Uses the column's accessor — the
+ * sortable/searchable value — because `render` may return arbitrary markup
+ * that has no single string form.
+ */
+function cellTitle<Row>(column: EntityListColumn<Row>, row: Row): string | undefined {
+  const value = column.accessor?.(row);
+  if (value == null) return undefined;
+  const text = String(value).trim();
+  return text === "" ? undefined : text;
+}
+
+/**
+ * Drag target that widens or narrows one column in table mode.
+ *
+ * Tracks the pointer on the window rather than on itself so the drag survives
+ * the cursor leaving the 9px handle, which at speed it always does.
+ */
+function ColumnResizeHandle({
+  label,
+  width,
+  minWidth,
+  onResize,
+}: {
+  label: string;
+  width: number;
+  minWidth: number;
+  onResize: (width: number) => void;
+}) {
+  const [resizing, setResizing] = useState(false);
+
+  function start(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = width;
+    setResizing(true);
+    document.body.dataset.listResizing = "true";
+
+    const move = (moveEvent: PointerEvent) => {
+      onResize(Math.max(minWidth, startWidth + (moveEvent.clientX - startX)));
+    };
+    const end = () => {
+      setResizing(false);
+      delete document.body.dataset.listResizing;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={`Resize ${label} column`}
+      data-resizing={resizing ? "true" : undefined}
+      onPointerDown={start}
+      // Sorting lives on the header label; a click on the grip must not sort.
+      onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        onResize(Math.max(minWidth, width + (event.key === "ArrowRight" ? 16 : -16)));
+      }}
+      className="list-col-resize"
+    />
+  );
+}
+
+/**
+ * The inline editor for one cell.
+ *
+ * A column that declares `lovSource` AND `lovEdit` gets the shared LOV
+ * combobox for free — no per-list `edit` renderer, which is what lets every
+ * list inherit the picker (typeahead, server-side search, descriptions,
+ * DB-enforced values) instead of hand-rolling a `<select>` or a free-text
+ * input. An explicit `edit` still wins, for bespoke controls.
+ *
+ * `lovEdit` is required because `lovSource` is also (and often only) a SEARCH
+ * declaration. Rendering an editor for a column the list's save action does
+ * not read produces a field name nobody consumes: the value is dropped and
+ * the cell snaps back, looking like the edit was rejected.
+ */
+function editCellContent<Row>(
+  column: EntityListColumn<Row>,
+  row: Row,
+  formId: string,
+): ReactNode {
+  if (column.edit) return column.edit(row, { formId });
+  // `lovEdit` is the opt-in; `lovSource` alone only feeds the search field.
+  if (!column.lovSource || !column.lovEdit) return null;
+  const label = column.accessor?.(row);
+  const stored = column.lovValue ? column.lovValue(row) : label;
+  return (
+    <LovCombobox
+      source={column.lovSource}
+      name={column.lovName ?? column.key}
+      formId={formId}
+      defaultValue={stored == null ? "" : String(stored)}
+      defaultLabel={label == null ? "" : String(label)}
+      ariaLabel={column.label}
+      className={LOV_EDIT_INPUT_CLASS}
+    />
+  );
+}
+
 export type EntityListCreate<Row> = {
   action: (formData: FormData) => Promise<ListMutationResult>;
   panelTitle?: string;
@@ -66,9 +215,16 @@ export type EntityListCreate<Row> = {
   label?: string;
   disabledReason?: string;
   onSuccess?: () => void;
-  render: (context: {
+  /** Opens a create workflow rendered by the surrounding detail workspace. */
+  onOpen?: () => void;
+  render?: (context: {
     action: (formData: FormData) => Promise<void>;
     close: () => void;
+    rows: Row[];
+  }) => ReactNode;
+  /** Renders table cells for a draft row whose controls belong to formId. */
+  renderRow?: (context: {
+    formId: string;
     rows: Row[];
   }) => ReactNode;
 };
@@ -163,6 +319,7 @@ export type EntityListSideList<Row> = {
   href: (row: Row) => string;
   content: (row: Row, context: { active: boolean; selected: boolean }) => ReactNode;
   isActive?: (row: Row) => boolean;
+  onSelect?: (row: Row) => void;
   sortColumnKey?: string;
   searchLabel?: string;
   bodyClassName?: string;
@@ -201,6 +358,8 @@ type EntityListCommonProps<Row> = {
   rowLabel: (row: Row) => string;
   canCreate?: boolean;
   create?: EntityListCreate<Row>;
+  /** Header is the default. Toolbar keeps New beside Search for dense tables. */
+  createPlacement?: "header" | "toolbar";
   edit?: EntityListEdit<Row>;
   canDelete?: boolean;
   deleteAction?: EntityListDelete<Row>;
@@ -226,6 +385,10 @@ type EntityListCommonProps<Row> = {
   tabs?: EntityListViewTabs<Row>;
   /** Declarative linked-card presentation for ordinary record side panels. */
   sideList?: EntityListSideList<Row>;
+  /** Hides list-local title and toolbar chrome when controls are hosted by a surrounding workspace header. */
+  chrome?: "default" | "records-only";
+  /** Stable search popover id for a framework search trigger rendered outside the list panel. */
+  searchPanelId?: string;
   /** Initial and route-persistent controls for a specific operational list. */
   listControls?: { initialFilters?: Record<string, string>; storageKey?: string };
 } & (
@@ -281,7 +444,7 @@ function LiveEntityList<Key extends ListResourceKey>(props: LiveEntityListProps<
 }
 
 function LocalEntityList<Row>(props: LocalEntityListProps<Row>) {
-  const data = useLocalEntityListData(props.initialRows);
+  const data = useLocalEntityListData(props.initialRows, props.scope);
   return <EntityListPanel {...props} {...data} />;
 }
 
@@ -299,9 +462,29 @@ export function EntityListResource<Key extends ListResourceKey>({
   return <>{children(data)}</>;
 }
 
-function useLocalEntityListData<Row>(initialRows: Row[]): EntityListDataContext<Row> {
+function useLocalEntityListData<Row>(initialRows: Row[], scope: string): EntityListDataContext<Row> {
   const [rows, setRows] = useState(initialRows);
   useEffect(() => setRows(initialRows), [initialRows]);
+
+  // Local lists (detail-page side panels) get their rows as server-rendered
+  // props, not through the resource registry — this one small fetch is the
+  // only generic hook point available to restore their saved+locked search.
+  const [searchState, setSearchState] = useState<EntityListDataContext<Row>["searchState"]>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void refreshListResource({ key: "framework.search-state", params: { listScope: scope } }).then((result) => {
+      if (cancelled || !result.ok) return;
+      const state = result.rows[0];
+      if (state) setSearchState(state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+
+  function applySearch(criteria: Record<string, string>, advancedQuery: string) {
+    void saveListSearchState({ listScope: scope, criteria, advancedQuery: advancedQuery || null });
+  }
 
   async function mutate(
     action: () => Promise<ListMutationResult>,
@@ -328,7 +511,7 @@ function useLocalEntityListData<Row>(initialRows: Row[]): EntityListDataContext<
     await mutate(() => action(formData), options);
   };
 
-  return { rows, refreshing: false, mutate, mutationAction };
+  return { rows, refreshing: false, mutate, mutationAction, searchState, applySearch };
 }
 
 type EntityListPanelProps<Row> = EntityListCommonProps<Row>
@@ -342,6 +525,7 @@ function EntityListPanel<Row>({
   rowLabel,
   canCreate = true,
   create,
+  createPlacement = "toolbar",
   edit,
   canDelete = true,
   deleteAction,
@@ -360,12 +544,19 @@ function EntityListPanel<Row>({
   onRowsChange,
   tabs,
   sideList,
+  chrome = "default",
+  searchPanelId,
   listControls,
   render,
   rows,
   refreshing,
   mutate,
   mutationAction,
+  searchState,
+  hasMore,
+  loadingMore,
+  loadMore,
+  applySearch,
 }: EntityListPanelProps<Row>) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -374,13 +565,80 @@ function EntityListPanel<Row>({
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
   const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const [panelCommand, setPanelCommand] = useState<string | null>(null);
-  const controls = useListControls(rows, definition.columns, listControls);
+  const { mode: viewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth } = useListViewMode(scope);
+  const tableViewportRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const { visible: prefixVisible } = useInvoicePrefix();
+  const [prefixMenuAt, setPrefixMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const tableId = `entity-list-${useId().replace(/:/g, "")}`;
+  const controls = useListControls(rows, definition.columns, { ...listControls, searchState, onApplySearch: applySearch });
   const visibleRows = controls.rows;
   const selectionMode = definition.selectionMode ?? "single";
   const selection = useListSelection(rows, { mode: selectionMode, getId });
   const selectedRows = rows.filter((row) => selection.selectedIds.has(getId(row)));
   const editingRow = rows.find((row) => getId(row) === editingId) ?? null;
-  const supportsCreate = Boolean(definition.add && create);
+  const supportsCreate = Boolean(
+    definition.add && create && (create.render || create.renderRow || create.onOpen),
+  );
+  const createFormId = `entity-create-${useId().replace(/:/g, "")}`;
+  const inlineCreating = Boolean(adding && create?.renderRow);
+
+  // `sideList` is an object prop with a fresh identity every render, so the
+  // observer effect below may only depend on whether one is present.
+  const hasSideList = Boolean(sideList);
+
+  // List mode fits the viewport, so it has to know how wide the viewport is.
+  useEffect(() => {
+    const element = tableViewportRef.current;
+    if (!element) return;
+    setViewportWidth(element.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number") setViewportWidth(width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [viewMode, hasSideList]);
+
+  const columnWidth = (column: EntityListColumn<Row>) =>
+    columnWidths[column.key] ?? column.minWidth ?? DEFAULT_COLUMN_MIN_WIDTH;
+
+  // Table mode is as wide as its columns; the viewport scrolls to reach them.
+  const tableWidth = (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0)
+    + definition.columns.reduce((total, column) => total + columnWidth(column), 0);
+
+  /**
+   * How many leading columns fit the viewport in list mode. Null whenever
+   * nothing needs dropping — table mode, an unmeasured viewport, or a table
+   * that already fits. At least one column always survives.
+   *
+   * Measured against each column's CURRENT width, so a width dragged in table
+   * mode carries over: narrowing columns there fits more of them here.
+   */
+  const fittedColumnCount = (() => {
+    if (viewMode !== "list" || viewportWidth <= 0) return null;
+    let remaining = viewportWidth - (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0);
+    let fitted = 0;
+    for (const column of definition.columns) {
+      remaining -= columnWidth(column);
+      if (remaining < 0) break;
+      fitted += 1;
+    }
+    fitted = Math.max(1, fitted);
+    return fitted >= definition.columns.length ? null : fitted;
+  })();
+
+  /** 1-based cell position the generated rule starts hiding from. */
+  const hiddenFromNthChild = fittedColumnCount == null
+    ? null
+    : (selectionMode === "multi" ? 1 : 0) + fittedColumnCount + 1;
+
+  // A <col> for a hidden column would still reserve width under
+  // `table-layout: fixed`, so dropped columns get no <col> at all and the
+  // surviving ones share the width evenly.
+  const layoutColumns = fittedColumnCount == null
+    ? definition.columns
+    : definition.columns.slice(0, fittedColumnCount);
   const changing = adding || Boolean(editingId) || deleting || Boolean(busyCommand) || Boolean(panelCommand);
   const createEnabled = Boolean(supportsCreate && canCreate && !changing);
   const editEnabled = Boolean(
@@ -410,6 +668,13 @@ function EntityListPanel<Row>({
 
   useEffect(() => onRowsChange?.(rows), [onRowsChange, rows]);
   const resolvedDescription = typeof description === "function" ? description(rows) : description;
+  function openCreate() {
+    if (create?.onOpen) {
+      create.onOpen();
+      return;
+    }
+    setAdding(true);
+  }
 
   async function confirmDelete() {
     if (!deleteAction || selectedRows.length === 0) return;
@@ -466,6 +731,7 @@ function EntityListPanel<Row>({
                 rowLabel={rowLabel}
                 canCreate={canCreate}
                 create={create}
+                createPlacement={createPlacement}
                 edit={edit}
                 canDelete={canDelete}
                 deleteAction={deleteAction}
@@ -481,6 +747,8 @@ function EntityListPanel<Row>({
                 className={tab.className ?? className}
                 headerClassName={tab.headerClassName ?? headerClassName}
                 rowClassName={tab.rowClassName ?? rowClassName}
+                chrome={chrome}
+                searchPanelId={searchPanelId}
                 rows={tabRows}
                 refreshing={refreshing}
                 mutate={mutate}
@@ -502,78 +770,103 @@ function EntityListPanel<Row>({
     ? definition.columns.find((column) => column.key === sideList.sortColumnKey)
     : undefined;
   const Surface = sideList ? ListSidePanel : ListSurface;
+  const recordsOnly = chrome === "records-only";
 
   return (
     <Surface
-      title={title ?? "Records"}
-      description={resolvedDescription}
-      onCreate={supportsCreate ? () => setAdding(true) : undefined}
+      title={recordsOnly ? undefined : title ?? "Records"}
+      description={recordsOnly ? undefined : resolvedDescription}
+      onCreate={!recordsOnly && supportsCreate && createPlacement === "header" ? openCreate : undefined}
       canCreate={createEnabled}
       createDisabledReason={create?.disabledReason ?? (canCreate ? "Finish the current list action first." : "You do not have permission to create this record.")}
       createLabel={create?.label ?? "New"}
-      actions={typeof actions === "function" ? actions(rows) : actions}
+      actions={recordsOnly ? undefined : typeof actions === "function" ? actions(rows) : actions}
       refreshing={refreshing}
       className={className}
       headerClassName={headerClassName}
     >
-      <ListCommandToolbar
-        mode={selectionMode}
-        count={selection.selectedCount}
-        showSelectionSummary={sideList?.showSelectionSummary}
-        enableEdit={Boolean(definition.edit && edit && edit.canEdit !== false)}
-        onEdit={{
-          label: edit?.label,
-          onClick: () => setEditingId(getId(selectedRows[0])),
-          disabled: !editEnabled,
-        }}
-        enableDelete={Boolean(definition.delete && deleteAction && canDelete)}
-        onDelete={{
-          onClick: () => setConfirmingDelete(true),
-          disabled: !deleteEnabled,
-          busy: deleting,
-          label: deleteAction?.disabledReason?.(selectedRows) ? "Delete" : undefined,
-        }}
-      >
-        {sideSortColumn && <SortButton col={sideSortColumn} controls={controls} />}
-        {editingRow && edit && !edit.renderPanel && (
-          <>
-            <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
-              Cancel
-            </button>
-            <button form={edit.formId?.(editingRow) ?? `entity-edit-${getId(editingRow)}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
-              {edit.saveLabel ?? "Save"}
-            </button>
-          </>
-        )}
-        {commands.filter((command) => command.visible !== false).map((command) => {
-          const disabled = changing || Boolean(command.disabled?.(commandContext));
-          const label = typeof command.label === "function" ? command.label(commandContext) : command.label;
-          const titleText = command.disabledReason?.(commandContext);
-          return (
-            <button
-              key={command.id}
-              type="button"
-              title={titleText}
-              disabled={disabled}
-              onClick={() => {
-                if (command.panel) setPanelCommand(command.id);
-                else if (command.confirm) setConfirmingCommand(command.id);
-                else void runCommand(command);
-              }}
-              className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                command.destructive
-                  ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
-                  : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
-              }`}
-            >
-              {busyCommand === command.id && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
-              {busyCommand === command.id ? command.pendingLabel ?? "Working…" : label}
-            </button>
-          );
-        })}
-      </ListCommandToolbar>
+      {!recordsOnly && (
+        <ListCommandToolbar
+          mode={selectionMode}
+          count={selection.selectedCount}
+          showSelectionSummary={sideList?.showSelectionSummary}
+          enableCreate={Boolean(supportsCreate && createPlacement === "toolbar" && !adding)}
+          onCreate={{
+            label: create?.label,
+            onClick: () => {
+              setEditingId(null);
+              openCreate();
+            },
+            disabled: !createEnabled,
+          }}
+          enableEdit={Boolean(definition.edit && edit && edit.canEdit !== false)}
+          onEdit={{
+            label: edit?.label,
+            onClick: () => setEditingId(getId(selectedRows[0])),
+            disabled: !editEnabled,
+          }}
+          enableDelete={Boolean(definition.delete && deleteAction && canDelete)}
+          onDelete={{
+            onClick: () => setConfirmingDelete(true),
+            disabled: !deleteEnabled,
+            busy: deleting,
+            label: deleteAction?.disabledReason?.(selectedRows) ? "Delete" : undefined,
+          }}
+        >
+          {sideSortColumn && <SortButton col={sideSortColumn} controls={controls} />}
+          {inlineCreating && (
+            <>
+              <button type="button" onClick={() => setAdding(false)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
+                Cancel
+              </button>
+              <button form={createFormId} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
+                Save
+              </button>
+            </>
+          )}
+          {editingRow && edit && !edit.renderPanel && (
+            <>
+              <button type="button" onClick={() => setEditingId(null)} className="min-h-10 rounded-full border border-stone-300 px-4 text-sm font-semibold dark:border-stone-600">
+                Cancel
+              </button>
+              <button form={edit.formId?.(editingRow) ?? `entity-edit-${getId(editingRow)}`} className="min-h-10 rounded-full bg-green-700 px-4 text-sm font-semibold text-white">
+                {edit.saveLabel ?? "Save"}
+              </button>
+            </>
+          )}
+          {commands.filter((command) => command.visible !== false).map((command) => {
+            const disabled = changing || Boolean(command.disabled?.(commandContext));
+            const label = typeof command.label === "function" ? command.label(commandContext) : command.label;
+            const titleText = command.disabledReason?.(commandContext);
+            return (
+              <button
+                key={command.id}
+                type="button"
+                title={titleText}
+                disabled={disabled}
+                onClick={() => {
+                  if (command.panel) setPanelCommand(command.id);
+                  else if (command.confirm) setConfirmingCommand(command.id);
+                  else void runCommand(command);
+                }}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  command.destructive
+                    ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
+                    : "border-stone-300 bg-white text-stone-700 hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+                }`}
+              >
+                {busyCommand === command.id && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+                {busyCommand === command.id ? command.pendingLabel ?? "Working…" : label}
+              </button>
+            );
+          })}
+          {/* Last, so it sits at the far right of the list's toolbar. A
+              display preference, kept apart from the record commands. */}
+          {!sideList && <ListViewModeMenu mode={viewMode} onChange={setViewMode} />}
+        </ListCommandToolbar>
+      )}
 
-      {supportsCreate && create && (
+      {supportsCreate && create?.render && !create.renderRow && (
         <ListCreatePanel open={adding} title={create.panelTitle ?? create.label ?? "Add record"} className={create.panelClassName}>
           {create.render({
             action: mutationAction(create.action, {
@@ -631,7 +924,7 @@ function EntityListPanel<Row>({
       )}
 
       {(summary ?? beforeTable)?.(rows)}
-      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} />
+      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
       {sideList ? (
         <div className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {
@@ -642,7 +935,10 @@ function EntityListPanel<Row>({
               <Link
                 key={id}
                 href={sideList.href(row)}
-                onClick={() => selection.select(id)}
+                onClick={() => {
+                  selection.select(id);
+                  sideList.onSelect?.(row);
+                }}
                 aria-current={active ? "page" : undefined}
                 className={`block border-b border-stone-100 px-4 py-3 text-sm last:border-0 dark:border-stone-800 ${
                   active
@@ -663,8 +959,44 @@ function EntityListPanel<Row>({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div ref={tableViewportRef} className={viewMode === "table" ? "list-scroll-x" : "list-scroll-none"}>
+          {inlineCreating && create ? (
+            <form
+              id={createFormId}
+              onSubmit={handleInlineFormSubmit(mutationAction(create.action, {
+                onSuccess: () => {
+                  create.onSuccess?.();
+                  setAdding(false);
+                },
+              }))}
+            />
+          ) : null}
+          {/*
+            List mode hides the columns that do not fit with a generated rule
+            rather than by rendering fewer cells. A create row's cells come
+            from the page's own renderRow, so dropping cells here would leave
+            the draft row wider than its header; one rule over every cell of
+            this table keeps header, body, draft row and footer aligned.
+          */}
+          {hiddenFromNthChild != null && (
+            <style>{`#${tableId} > thead > tr > *:nth-child(n+${hiddenFromNthChild}),#${tableId} > tbody > tr > *:nth-child(n+${hiddenFromNthChild}),#${tableId} > tfoot > tr > *:nth-child(n+${hiddenFromNthChild}){display:none}`}</style>
+          )}
+          <table
+            id={tableId}
+            className="list-fixed-layout list-single-line text-sm"
+            // Table mode is exactly as wide as its columns — no `minWidth:100%`,
+            // which would stretch a narrow table back over the viewport and
+            // silently undo every attempt to drag a column narrower.
+            // List mode fills the viewport, distributing any slack across the
+            // columns that fit while keeping their relative widths.
+            style={viewMode === "table" ? { width: `${tableWidth}px` } : { width: "100%" }}
+          >
+          <colgroup>
+            {selectionMode === "multi" ? <col style={{ width: SELECTION_COLUMN_WIDTH }} /> : null}
+            {layoutColumns.map((column) => (
+              <col key={column.key} style={{ width: columnWidth(column) }} />
+            ))}
+          </colgroup>
           <thead>
             <tr className="border-b border-stone-200 text-left text-xs uppercase tracking-wide text-stone-500 dark:border-stone-700 dark:text-stone-400">
               <ListSelectionHeader
@@ -675,13 +1007,36 @@ function EntityListPanel<Row>({
                 disabled={changing || refreshing}
               />
               {definition.columns.map((column) => (
-                <th key={column.key} className={["px-4 py-3", column.headerClassName].filter(Boolean).join(" ")}>
+                <th
+                  key={column.key}
+                  title={typeof column.label === "string" ? column.label : undefined}
+                  onContextMenu={column.prefixColumn ? (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPrefixMenuAt({ x: event.clientX, y: event.clientY });
+                  } : undefined}
+                  className={["relative px-4 py-3", column.headerClassName].filter(Boolean).join(" ")}
+                >
                   {column.sortable ? <SortButton col={column} controls={controls} /> : column.label}
+                  {viewMode === "table" && (
+                    <ColumnResizeHandle
+                      label={typeof column.label === "string" ? column.label : column.key}
+                      width={columnWidth(column)}
+                      minWidth={MIN_RESIZE_WIDTH}
+                      onResize={(next) => setColumnWidth(column.key, next)}
+                    />
+                  )}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
+            {inlineCreating && create?.renderRow ? (
+              <tr className="border-b border-green-200 bg-green-50/70 align-top dark:border-green-900 dark:bg-green-950/20">
+                {selectionMode === "multi" ? <td className="w-12 px-4 py-3" /> : null}
+                {create.renderRow({ formId: createFormId, rows })}
+              </tr>
+            ) : null}
             {visibleRows.map((row) => {
               const id = getId(row);
               const editing = editingId === id;
@@ -707,11 +1062,24 @@ function EntityListPanel<Row>({
                     disabled={changing || refreshing}
                   />
                   {definition.columns.map((column, index) => (
-                    <td key={column.key} className={["px-4 py-3", column.cellClassName].filter(Boolean).join(" ")}>
+                    <td
+                      key={column.key}
+                      // Truncated text is unreadable without the whole value,
+                      // so every cell carries it. Skipped while editing: the
+                      // cell is an input the user is already reading.
+                      title={editing ? undefined : cellTitle(column, row)}
+                      onContextMenu={column.prefixColumn ? (event) => {
+                        event.preventDefault();
+                        // The row selects on click; a right-click must not.
+                        event.stopPropagation();
+                        setPrefixMenuAt({ x: event.clientX, y: event.clientY });
+                      } : undefined}
+                      className={["px-4 py-3", column.cellClassName].filter(Boolean).join(" ")}
+                    >
                       {editing && edit && formId && index === 0 && (
                         <form
                           id={formId}
-                          action={mutationAction(
+                          onSubmit={handleInlineFormSubmit(mutationAction(
                             (formData) => edit.action(row, formData),
                             {
                               onSuccess: () => {
@@ -720,20 +1088,22 @@ function EntityListPanel<Row>({
                                 setEditingId(null);
                               },
                             },
-                          )}
+                          ))}
                         />
                       )}
-                      {editing && column.edit && formId
-                        ? column.edit(row, { formId })
+                      {editing && formId && (column.edit || (column.lovSource && column.lovEdit))
+                        ? editCellContent(column, row, formId)
                         : column.render
                           ? column.render(row, cellContext)
-                          : String(column.accessor?.(row) ?? "—")}
+                          : column.prefixColumn
+                            ? displayInvoiceNo(String(column.accessor?.(row) ?? ""), prefixVisible) || "—"
+                            : String(column.accessor?.(row) ?? "—")}
                     </td>
                   ))}
                 </tr>
               );
             })}
-            {visibleRows.length === 0 && (
+            {visibleRows.length === 0 && !inlineCreating && (
               <tr>
                 <td colSpan={definition.columns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-center text-stone-400">
                   {rows.length ? filteredEmptyMessage : emptyMessage}
@@ -747,6 +1117,22 @@ function EntityListPanel<Row>({
           </table>
         </div>
       )}
+
+      {hasMore && (
+        <div className="flex justify-center border-t border-stone-100 py-3 dark:border-stone-800">
+          <button
+            type="button"
+            onClick={() => void loadMore?.()}
+            disabled={loadingMore}
+            className="inline-flex min-h-9 items-center gap-2 rounded-full border border-stone-300 px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"
+          >
+            {loadingMore && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+            {loadingMore ? "Loading…" : "Show more"}
+          </button>
+        </div>
+      )}
+
+      <InvoicePrefixMenu anchor={prefixMenuAt} onClose={() => setPrefixMenuAt(null)} />
 
       {deleteAction && (
         <ConfirmationDialog

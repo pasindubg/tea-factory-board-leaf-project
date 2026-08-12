@@ -2,22 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import {
-  isAcknowledgement,
-  parseAcknowledgement,
-  reconcileAcknowledgement,
-  isValuation,
-  parseValuation,
-  isContract,
-  parseContract,
-  contractValidationIssues,
-  repairLegacyContractLines,
-  computeSettlement,
-  reconcileVat,
-  type ParsedAcknowledgement,
-  type ParsedValuation,
-  type ParsedContract,
-} from "@tea/api";
+import { computeSettlement, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -34,6 +19,7 @@ import {
 } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 
 type CarryForwardLot = {
   id: string;
@@ -57,10 +43,15 @@ type CarryForwardLot = {
 
 const CARRY_FORWARD_BLOCKED_STATES = new Set(["sold", "settled"]);
 
+/**
+ * The keys a stored lot can be matched by. Broker documents print the bare
+ * sequence while the factory stores an index-cycle prefix, so these are
+ * match keys (see invoiceMatchKey) rather than the displayed numbers.
+ */
 function invoiceKeys(row: { invoice_no?: string | null; lot_invoices?: { invoice_no: string | null }[] | null }) {
   return [
-    formatFourDigitNo(row.invoice_no ?? null),
-    ...((row.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean)),
+    invoiceMatchKey(row.invoice_no ?? null),
+    ...((row.lot_invoices ?? []).map((invoice) => invoiceMatchKey(invoice.invoice_no)).filter(Boolean)),
   ].filter(Boolean);
 }
 
@@ -68,7 +59,6 @@ function invoiceKeys(row: { invoice_no?: string | null; lot_invoices?: { invoice
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
@@ -76,7 +66,7 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   const parsed = parseAcknowledgement(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/ack/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
@@ -114,6 +104,10 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   );
   const currentBrokerId = (groupSales ?? [])[0]?.broker_id as string | undefined;
   const dispatchNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.sale_no as string | null]));
+  // The sale each broker invoice actually belongs to. This — not the document
+  // header — is what a lot created from the acknowledgement is stamped with;
+  // see the provisional_sale_no assignment below.
+  const targetSaleNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.target_sale_no as string | null]));
   const { data: lotRows } = await supabase
     .from("auction_lots")
     .select("id, sale_id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
@@ -175,7 +169,13 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         sale_id: targetSaleId,
         mark_id: markByCode.get(ackLot.markCode.toUpperCase()) ?? null,
         invoice_no: formatFourDigitNo(ackLot.invoiceNo),
-        provisional_sale_no: formatSaleNo(parsed.saleNo),
+        // Taken from the broker invoice this lot is attached to, NOT from the
+        // parsed document header. Broker layouts differ and a header number can
+        // be something else entirely — an Asia Siyaka acknowledgement prints a
+        // "tbBOSS" report code right after the title, which was being read as
+        // the sale number and stamped a real sale-0019 lot as sale 0027,
+        // conjuring a phantom sale in the sales rail.
+        provisional_sale_no: formatSaleNo(targetSaleNoBySaleId.get(targetSaleId) ?? parsed.saleNo),
         lot_no: formatFourDigitNo(ackLot.lotNo) || null,
         grade: ackLot.grade,
         bags: ackLot.bags,
@@ -235,8 +235,8 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .filter((lot) => {
         if (usedCarryForwardLotIds.has(lot.id)) return false;
         const invoiceMatches =
-          formatFourDigitNo(lot.invoice_no) === row.invoice_no ||
-          (lot.lot_invoices ?? []).some((invoice) => formatFourDigitNo(invoice.invoice_no) === row.invoice_no);
+          invoiceNumbersMatch(lot.invoice_no, row.invoice_no) ||
+          (lot.lot_invoices ?? []).some((invoice) => invoiceNumbersMatch(invoice.invoice_no, row.invoice_no));
         const lotMatches = row.lot_no && formatFourDigitNo(lot.lot_no) === row.lot_no;
         return invoiceMatches || lotMatches;
       })
@@ -289,7 +289,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     };
     await supabase.from("auction_lots").update(patch).eq("id", candidate.id);
 
-    if (!(candidate.lot_invoices ?? []).some((invoice) => formatFourDigitNo(invoice.invoice_no) === row.invoice_no)) {
+    if (!(candidate.lot_invoices ?? []).some((invoice) => invoiceNumbersMatch(invoice.invoice_no, row.invoice_no))) {
       await supabase.from("lot_invoices").insert({
         factory_id: profile.factory_id,
         lot_id: candidate.id,
@@ -358,6 +358,11 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .update({ status: "catalogued" })
       .in("id", [...affectedSales])
     .in("status", ["draft", "dispatched", "invoiced", "grn"]);
+    // A dispatch becomes "catalogued" only once every invoice in it is
+    // acknowledged, so re-derive each affected invoice's dispatch.
+    for (const saleId of affectedSales) {
+      await syncDispatchForBrokerInvoice(supabase, saleId, profile.factory_id);
+    }
   }
   revalidatePath(detail);
   const movedNotice = movedLotsFromAck.length > 0 ? ` ${movedLotsFromAck.length} lot(s) rolled forward.` : "";
@@ -370,7 +375,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 export async function ingestValuation(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
@@ -378,7 +382,7 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   const parsed = parseValuation(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/valuation/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
@@ -424,7 +428,6 @@ export async function confirmValuation(importId: string, saleId: string) {
 export async function ingestContract(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const reviewBase = `${AUC}/${saleId}`;
   const file = formData.get("file");
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
@@ -432,7 +435,7 @@ export async function ingestContract(saleId: string, formData: FormData) {
   const parsed = parseContract(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
-  redirect(`${reviewBase}/contract/${staged.importId}`);
+  redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmContract(importId: string, saleId: string) {
@@ -455,7 +458,7 @@ export async function confirmContract(importId: string, saleId: string) {
   const validationIssues = contractValidationIssues(parsed.lines);
   if (validationIssues.length > 0) {
     return back(
-      `${AUC}/${saleId}/contract/${importId}`,
+      `${AUC}/documents/${importId}`,
       `Contract validation failed: ${validationIssues.join(" ")}`,
     );
   }
@@ -487,11 +490,11 @@ export async function confirmContract(importId: string, saleId: string) {
     }
   }
   const unmatchedInvoiceNos = parsed.lines
-    .filter((line) => !lotByInv.has(line.invoiceNo))
+    .filter((line) => !lotByInv.has(invoiceMatchKey(line.invoiceNo)))
     .map((line) => line.invoiceNo);
   if (unmatchedInvoiceNos.length > 0) {
     return back(
-      `${AUC}/${saleId}/contract/${importId}`,
+      `${AUC}/documents/${importId}`,
       `Contract confirmation stopped: these invoices are not present in this broker sale: ${unmatchedInvoiceNos.join(", ")}.`,
     );
   }
@@ -501,8 +504,8 @@ export async function confirmContract(importId: string, saleId: string) {
   // to create the linked child. The audit guard prevents double deduction when
   // a confirmed contract is re-run.
   const notSoldMatches = parsed.lines
-    .filter((line) => line.sold === false && lotByInv.has(line.invoiceNo))
-    .map((line) => ({ line, lot: lotByInv.get(line.invoiceNo)! }));
+    .filter((line) => line.sold === false && lotByInv.has(invoiceMatchKey(line.invoiceNo)))
+    .map((line) => ({ line, lot: lotByInv.get(invoiceMatchKey(line.invoiceNo))! }));
   const notSoldLotIds = [...new Set(notSoldMatches.map(({ lot }) => lot.id))];
   const reprintAuditAction = "Contract not sold re-print";
   const { data: priorReprintAudits } = notSoldLotIds.length > 0
@@ -574,11 +577,11 @@ export async function confirmContract(importId: string, saleId: string) {
   }
 
   // ── Sale lines (one row per lot; last contract line wins, as before) ──
-  const matchedLines = soldLines.filter((line) => lotByInv.has(line.invoiceNo));
+  const matchedLines = soldLines.filter((line) => lotByInv.has(invoiceMatchKey(line.invoiceNo)));
   const applied = matchedLines.length;
   const saleLineByLot = new Map<string, Record<string, unknown>>();
   for (const line of matchedLines) {
-    const lot = lotByInv.get(line.invoiceNo)!;
+    const lot = lotByInv.get(invoiceMatchKey(line.invoiceNo))!;
     saleLineByLot.set(lot.id, {
       factory_id: profile.factory_id, sale_id: lot.sale_id, lot_id: lot.id,
       buyer_id: buyerByName.get(line.buyerName) ?? null,
@@ -711,7 +714,7 @@ export async function confirmContract(importId: string, saleId: string) {
   // related dispatches, but keep dispatch status capped at catalogued.
   const settledSales = new Set<string>([saleId]);
   for (const line of matchedLines) {
-    const lot = lotByInv.get(line.invoiceNo);
+    const lot = lotByInv.get(invoiceMatchKey(line.invoiceNo));
     if (lot) settledSales.add(lot.sale_id);
   }
   await supabase
@@ -734,7 +737,7 @@ export async function confirmContract(importId: string, saleId: string) {
 
 export async function rejectImport(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const sourceDetail = `${AUC}/${saleId}`;
+  const documentDetail = `${AUC}/documents/${importId}`;
   const { data: importRow, error: importError } = await supabase
     .from("doc_imports")
     .select("id, doc_type, status")
@@ -742,9 +745,9 @@ export async function rejectImport(importId: string, saleId: string) {
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
-  if (importError) return back(sourceDetail, friendlyError(importError));
-  if (!importRow) return back(sourceDetail, "The staged document was not found for this Broker Invoice.");
-  if (importRow.status === "confirmed") return back(sourceDetail, "A confirmed document cannot be rejected.");
+  if (importError) return back(documentDetail, friendlyError(importError));
+  if (!importRow) return back(documentDetail, "The staged document was not found for this Broker Invoice.");
+  if (importRow.status === "confirmed") return back(documentDetail, "A confirmed document cannot be rejected.");
 
   const { error: rejectError } = await supabase
     .from("doc_imports")
@@ -752,10 +755,11 @@ export async function rejectImport(importId: string, saleId: string) {
     .eq("id", importId)
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id);
-  if (rejectError) return back(sourceDetail, friendlyError(rejectError));
+  if (rejectError) return back(documentDetail, friendlyError(rejectError));
 
   const saleDetail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  revalidatePath(sourceDetail);
+  revalidatePath(`${AUC}/${saleId}`);
+  revalidatePath(documentDetail);
   revalidatePath(saleDetail);
   revalidatePath(`${AUC}/sales`);
   const documentLabel = {
@@ -764,6 +768,6 @@ export async function rejectImport(importId: string, saleId: string) {
     contract: "Sellers Contract",
   }[importRow.doc_type as string] ?? "Document";
   redirect(
-    `${sourceDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
+    `${documentDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
   );
 }

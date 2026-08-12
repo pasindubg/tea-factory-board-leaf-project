@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dayRange, localDateString, lastNDates } from "../dates";
+import { dayRange, formatDate, formatDateTime, lastNDates, localDateString } from '../dates';
 
 describe("dayRange", () => {
   it("returns a 24-hour window", () => {
@@ -66,5 +66,49 @@ describe("lastNDates", () => {
 
   it("all entries match YYYY-MM-DD format", () => {
     lastNDates(7).forEach((d) => expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/));
+  });
+});
+
+// These render inside client components, so the server's output and the
+// browser's must be byte-identical or React throws away the hydrated tree.
+// Both the locale and the time zone are therefore pinned, not inherited.
+describe("display formatters", () => {
+  const instant = "2026-06-22T12:36:00Z"; // 18:06 in Asia/Colombo
+
+  it("formats an instant in the factory's time zone, not the runtime's", () => {
+    expect(formatDateTime(instant)).toBe("22 Jun 2026, 18:06");
+    expect(formatDate(instant)).toBe("22 Jun 2026");
+  });
+
+  it("is unaffected by the process time zone", () => {
+    // The regression this guards: toLocaleString() with no locale rendered
+    // "Jun 22, 2026, 12:36 PM" on a UTC server and "22 Jun 2026, 18:06" in a
+    // Colombo browser — a different format AND a different hour.
+    const original = process.env.TZ;
+    try {
+      for (const zone of ["UTC", "America/New_York", "Asia/Colombo", "Europe/London"]) {
+        process.env.TZ = zone;
+        expect(formatDateTime(instant)).toBe("22 Jun 2026, 18:06");
+      }
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+
+  it("crosses the date boundary using the factory's calendar", () => {
+    // 20:00 UTC is already the next day in Colombo (+05:30).
+    expect(formatDate("2026-06-22T20:00:00Z")).toBe("23 Jun 2026");
+  });
+
+  it("returns the fallback for missing or unparseable values", () => {
+    expect(formatDateTime(null)).toBe("—");
+    expect(formatDateTime("")).toBe("—");
+    expect(formatDateTime("not-a-date")).toBe("—");
+    expect(formatDate(undefined)).toBe("—");
+    expect(formatDateTime(null, "n/a")).toBe("n/a");
+  });
+
+  it("accepts a Date as well as a string", () => {
+    expect(formatDateTime(new Date(instant))).toBe("22 Jun 2026, 18:06");
   });
 });

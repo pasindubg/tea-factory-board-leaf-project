@@ -1,6 +1,7 @@
-import { pgTable, uuid, text, integer, numeric, timestamp, index, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, numeric, timestamp, index, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
+import { auctionGrades } from "./auction-grades";
 import { marks } from "./marks";
 
 // A lot offered in an auction sale — the spine of the auction flow. Each
@@ -28,6 +29,9 @@ export const auctionLots = pgTable(
     provisionalSaleNo: text("provisional_sale_no"),
     finalSaleNo: text("final_sale_no"),
     lotNo: text("lot_no"), // broker catalogue no, e.g. 0477 — null until catalogued
+    // Broker-catalogue grade CODE, referencing the factory's own auction_grades
+    // set (see the composite foreign key below) — not the teaGrade enum, which
+    // is the factory's intake/production grade set.
     grade: text("grade").notNull(),
     bags: integer("bags"),
     kgPerBag: numeric("kg_per_bag", { precision: 8, scale: 2 }),
@@ -77,5 +81,18 @@ export const auctionLots = pgTable(
     index("idx_auction_lots_sale").on(t.saleId),
     index("idx_auction_lots_factory_provisional_sale").on(t.factoryId, t.provisionalSaleNo),
     index("idx_auction_lots_factory_final_sale").on(t.factoryId, t.finalSaleNo),
+    // LOV integrity, enforced by the database rather than by each caller: a lot
+    // may only carry a grade code its own factory has defined. Because the key
+    // is composite it also pins the grade to the SAME tenant, so one factory's
+    // code can never satisfy another's row.
+    //
+    // ON UPDATE CASCADE so renaming a grade code carries into its lots.
+    // ON DELETE stays NO ACTION: a grade in use must not vanish underneath the
+    // lots that reference it (friendlyDeleteError reports the dependency).
+    foreignKey({
+      columns: [t.factoryId, t.grade],
+      foreignColumns: [auctionGrades.factoryId, auctionGrades.code],
+      name: "fk_auction_lots_grade",
+    }).onUpdate("cascade"),
   ],
 );

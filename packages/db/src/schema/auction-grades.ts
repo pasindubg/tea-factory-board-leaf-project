@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 
 // Factory-owned tea grade registry for auction dispatch entry. Broker catalogue
@@ -14,6 +14,11 @@ export const auctionGrades = pgTable(
     name: text("name").notNull(),
     active: boolean("active").default(true).notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
+    // Default sample weight (kg) auto-filled when this grade is picked on a new lot.
+    sampleWeight: numeric("sample_weight", { precision: 8, scale: 2 }),
+    // Minimum kg/bag for this grade. Lots entered below this weight are rejected
+    // at save time; it is no longer auto-filled into the lot's kg/bag input.
+    defaultKgPerBag: numeric("default_kg_per_bag", { precision: 8, scale: 2 }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

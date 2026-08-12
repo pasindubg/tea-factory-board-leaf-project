@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 export type ButtonSize = "sm" | "md" | "icon";
@@ -18,26 +18,44 @@ const sizes: Record<ButtonSize, string> = {
   icon: "h-10 w-10 rounded-full p-0",
 };
 
-export function AppButton({
-  variant = "secondary",
-  size = "md",
-  busy = false,
-  busyLabel = "Working…",
-  className = "",
-  disabled,
-  children,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean; busyLabel?: string; children: ReactNode }) {
-  return (
-    <button
-      {...props}
-      disabled={disabled || busy}
-      aria-busy={busy || undefined}
-      className={`inline-flex items-center justify-center gap-2 border font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-stone-950 ${variants[variant]} ${sizes[size]} ${className}`}
-    >
-      {busy && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />}
-      {busy ? busyLabel : children}
-    </button>
-  );
-}
+export type AppButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  busy?: boolean;
+  busyLabel?: string;
+  children: ReactNode;
+};
 
+export const AppButton = forwardRef<HTMLButtonElement, AppButtonProps>(
+  function AppButton(
+    {
+      variant = "secondary",
+      size = "md",
+      busy = false,
+      busyLabel = "Working…",
+      className = "",
+      disabled,
+      children,
+      ...props
+    },
+    ref,
+  ) {
+    return (
+      <button
+        ref={ref}
+        {...props}
+        disabled={disabled || busy}
+        aria-busy={busy || undefined}
+        className={`inline-flex items-center justify-center gap-2 border font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-stone-950 ${variants[variant]} ${sizes[size]} ${className}`}
+      >
+        {busy && (
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+          />
+        )}
+        {busy ? busyLabel : children}
+      </button>
+    );
+  },
+);

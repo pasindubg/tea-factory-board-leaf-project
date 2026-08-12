@@ -52,7 +52,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <head>
         <Script id="dashboard-progressive-enhancement" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: progressiveEnhancementScript }} />
       </head>
-      <body className="min-h-screen antialiased transition-colors">
+      {/*
+        suppressHydrationWarning covers only the element it is set on, not its
+        descendants — so <html>'s does not extend to <body>. Extensions such as
+        Grammarly and password managers write their own attributes onto <body>
+        (data-gr-ext-installed, data-new-gr-c-s-check-loaded, …) before React
+        hydrates, which React then reports as a mismatch it "won't patch up".
+        Nothing in the app renders those attributes, and the markup we do
+        control is still diffed normally.
+      */}
+      <body className="min-h-screen antialiased transition-colors" suppressHydrationWarning>
         <Providers forcedTheme={forcedTheme}>{children}</Providers>
       </body>
     </html>

@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
+import { getSupabasePublicEnv } from "./lib/env";
 
-const supabaseStorageUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+function readSupabaseStorageUrl() {
+  try {
+    return getSupabasePublicEnv().url;
+  } catch {
+    return undefined;
+  }
+}
+
+const supabaseStorageUrl = readSupabaseStorageUrl();
 
 const nextConfig: NextConfig = {
   // @tea/api is an internal TS package consumed from source (the payment engine).

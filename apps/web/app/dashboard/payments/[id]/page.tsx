@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { MANAGEMENT_ROLES } from "@/lib/roles";
 import { lkr, MONTHS } from "@/lib/money";
 import { PrintButton } from "./print-button";
@@ -65,6 +66,8 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
   const paid = p.status === "paid";
   const bonusMissed = Number(p.bonus_missed);
 
+  const visibleLineRows = await applyServerListSearch(supabase, profile, "payment-statement-lines", lineRows);
+
   return (
     <StatementStatusProvider paymentId={p.id} initialPaid={paid} initialPaidAt={p.paid_at}>
     <div className="mx-auto max-w-2xl">
@@ -103,7 +106,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
           </div>
         </div>
 
-        <StatementLinesList rows={lineRows} />
+        <StatementLinesList rows={visibleLineRows} />
 
         <div className="mt-4 space-y-1 text-sm">
           <div className="flex justify-between"><span className="text-stone-500 dark:text-stone-400">Gross (leaf + bonus)</span><span className="tabular-nums">{lkr(p.gross_amount)}</span></div>

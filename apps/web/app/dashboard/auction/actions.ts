@@ -11,3 +11,4 @@ export * from "./_actions/orphans";
 export * from "./_actions/bank";
 export * from "./_actions/ingest";
 export * from "./_actions/report-analyser";
+export * from "./_actions/prefix-approvals";

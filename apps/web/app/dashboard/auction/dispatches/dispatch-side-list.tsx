@@ -1,37 +1,50 @@
 "use client";
 
-import { EntityList } from "@/components/entity-list";
-import type { ColumnDef, ListDefinition } from "@/components/list-controls";
+import { DetailSideList } from "@/components/detail-side-list";
+import { enumFilterOptions, type ColumnDef } from "@/components/list-controls";
+import type { ListMutationResult } from "@/lib/list-mutations";
 import type { PhysicalDispatchListRow } from "./dispatch-list";
+import { DISPATCH_STATUSES } from "../dispatch-status";
 
 const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "dispatchNo", label: "Dispatch no.", accessor: (row) => row.dispatchNo, sortable: true, filter: "text", lov: false },
   { key: "dispatchDateFrom", label: "Dispatch from", accessor: (row) => row.dispatchDateFrom, sortable: true, lov: false, searchInput: "date" },
   { key: "dispatchDateTo", label: "Dispatch to", accessor: (row) => row.dispatchDateTo, sortable: true, lov: false, searchInput: "date" },
   { key: "warehouse", label: "Warehouse", accessor: (row) => row.warehouse, sortable: true, filter: "select" },
-  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(DISPATCH_STATUSES) },
 ];
 
-const LIST: ListDefinition<PhysicalDispatchListRow> = {
-  columns: COLUMNS,
-  selectionMode: "single",
-  add: false,
-  edit: false,
-  delete: false,
-};
-
-export function DispatchSideList({ rows, currentId }: { rows: PhysicalDispatchListRow[]; currentId: string }) {
+export function DispatchSideList({
+  rows,
+  currentId,
+  searchPanelId,
+  onCreate,
+  createDisabledReason,
+}: {
+  rows: PhysicalDispatchListRow[];
+  currentId: string;
+  searchPanelId: string;
+  /** Present only when this rail's detail page owns a create workflow. */
+  onCreate?: () => void;
+  createDisabledReason?: string;
+}) {
   return (
-    <EntityList
-      scope="physical-dispatch-side-list"
+    <DetailSideList
+      resource={{ key: "auction.physical-dispatches" }}
       initialRows={rows}
-      definition={LIST}
+      columns={COLUMNS}
       getId={(row) => row.id}
       rowLabel={(row) => `Dispatch ${row.dispatchNo}`}
-      title="Dispatches"
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
+      searchPanelId={searchPanelId}
       emptyMessage="No dispatches."
       filteredEmptyMessage="No dispatches match."
+      create={onCreate ? {
+        // No render/renderRow: the detail page swaps its own main content to
+        // the create form on open, exactly like the broker-invoice rail does.
+        action: async (): Promise<ListMutationResult> => ({ ok: false, error: "Use the New dispatch form." }),
+        disabledReason: createDisabledReason,
+        onOpen: onCreate,
+      } : undefined}
       sideList={{
         href: (dispatch) => `/dashboard/auction/dispatches/${dispatch.id}`,
         isActive: (dispatch) => dispatch.id === currentId,

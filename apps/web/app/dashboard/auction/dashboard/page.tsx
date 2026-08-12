@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/profile";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { BySaleTable, type BySaleRow } from "./by-sale-table";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
@@ -28,7 +29,7 @@ const STATE_ORDER: { key: string; label: string; bar: string; chip: string }[] =
 ];
 
 export default async function AuctionDashboardPage() {
-  const { supabase } = await requirePageAccess("auction-dashboard");
+  const { supabase, profile } = await requirePageAccess("auction-dashboard");
 
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([
@@ -137,6 +138,8 @@ export default async function AuctionDashboardPage() {
     };
   });
 
+  const visibleBySaleRows = await applyServerListSearch(supabase, profile, "auction-by-sale", bySaleRows);
+
   return (
     <div className="space-y-8">
       <div>
@@ -149,10 +152,10 @@ export default async function AuctionDashboardPage() {
       {totalLots === 0 ? (
         <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
           Nothing to show yet.{" "}
-          <Link href="/dashboard/auction" className="text-green-700 dark:text-green-400 hover:underline">
-            Open broker invoices
+          <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
+            Create the first broker invoice
           </Link>{" "}
-          and use the list&apos;s New command to get started.
+          to get started.
         </div>
       ) : (
         <>
@@ -191,7 +194,7 @@ export default async function AuctionDashboardPage() {
           {/* Per-sale detail */}
           <section>
             <h3 className="mb-3 text-lg font-medium text-stone-700 dark:text-stone-300">By sale</h3>
-            <BySaleTable rows={bySaleRows} />
+            <BySaleTable rows={visibleBySaleRows} />
           </section>
         </>
       )}

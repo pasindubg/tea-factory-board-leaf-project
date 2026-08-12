@@ -28,10 +28,12 @@ describe("modulesForRole", () => {
     });
   });
 
-  it("keeps physical dispatch creation inside Dispatch Overview", () => {
+  it("has no standalone dispatch/invoice overview modules — creation lives on the detail pages", () => {
     expect(MODULES.some((module) => module.href === "/dashboard/auction/dispatches/new")).toBe(false);
-    expect(MODULES.find((module) => module.key === "auction-dispatch-overview")?.roles)
-      .toEqual(["owner", "manager", "accountant"]);
+    expect(MODULES.some((module) => module.key === "auction-dispatch-overview")).toBe(false);
+    expect(MODULES.some((module) => module.key === "auction")).toBe(false);
+    expect(MODULES.some((module) => module.href === "/dashboard/auction/dispatches")).toBe(false);
+    expect(MODULES.some((module) => module.href === "/dashboard/auction")).toBe(false);
   });
 });
 

@@ -5,10 +5,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
-import { friendlyError } from "@/lib/errors";
+import { friendlyDeleteError, friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit, gradeRulesByCode, isRecordId, notAnExisting } from "./_shared";
+import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
+import { isOpenDraft } from "../state-buckets";
+import { resolveInvoicePrefix } from "../invoice-number";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
   const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
@@ -72,31 +75,126 @@ async function ensureDailyBundledDispatch(
   throw new Error(error?.message ?? "Could not create the bundled dispatch.");
 }
 
+type OpenDraftInvoice = { id: string; sale_no: string; dispatch_date: string | null };
+
+/**
+ * There must be one and only one open Broker Invoice for a broker + selling
+ * mark ON A GIVEN DISPATCH DATE. A later dispatch day is separate work and
+ * gets its own invoice, so the date is part of the key — mirroring the
+ * uq_auction_sales_open_broker_mark index that backs this check.
+ *
+ * A null dispatch date can never collide (Postgres treats nulls as distinct in
+ * a unique index), so it short-circuits rather than matching other null-dated
+ * rows and reporting a conflict the database would happily accept.
+ */
+async function findOpenDraftInvoice(
+  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  factoryId: string,
+  brokerId: string,
+  sellingMarkId: string,
+  dispatchDate: string | null,
+  excludingId?: string,
+): Promise<OpenDraftInvoice | null> {
+  if (!dispatchDate) return null;
+  let query = supabase
+    .from("auction_sales")
+    .select("id, sale_no, dispatch_date")
+    .eq("factory_id", factoryId)
+    .eq("broker_id", brokerId)
+    .eq("selling_mark_id", sellingMarkId)
+    .eq("dispatch_date", dispatchDate)
+    .eq("sale_kind", "dispatch")
+    .in("status", ["draft", "dispatched"])
+    .order("created_at", { ascending: true })
+    .limit(1);
+  if (excludingId) query = query.neq("id", excludingId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data?.[0] as OpenDraftInvoice | undefined) ?? null;
+}
+
+function duplicateDraftInvoiceError(invoice: OpenDraftInvoice) {
+  const invoiceNo = formatFourDigitNo(invoice.sale_no) || invoice.sale_no;
+  const date = invoice.dispatch_date ? ` on ${invoice.dispatch_date}` : "";
+  return `Broker Invoice ${invoiceNo} is already open for this broker and selling mark${date}. Confirm, delete, or reuse it, or use a different dispatch date.`;
+}
+
 // ---------- Broker invoices ----------
-async function insertDispatch(formData: FormData): Promise<
+const DISPATCH_PAYLOAD_FIELDS = [
+  "broker_id", "target_sale_no", "sale_date", "dispatch_date",
+  "selling_mark_id", "broker_lorry_no", "driver_name", "transporter",
+] as const;
+
+type InsertDispatchResult =
   | { ok: true; id: string }
-  | { ok: false; error: string }
-> {
+  | { ok: true; pending: true }
+  | { ok: false; error: string };
+
+async function insertDispatch(formData: FormData, options: { bypassPrefixId?: string } = {}): Promise<InsertDispatchResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
   const brokerId = str(formData.get("broker_id"));
-  const saleNo = await nextDispatchNo(supabase);
+
+  let saleNoPrefix: string;
+  if (options.bypassPrefixId) {
+    const { data: prefixRow, error: prefixError } = await supabase
+      .from("invoice_number_prefixes")
+      .select("prefix")
+      .eq("id", options.bypassPrefixId)
+      .eq("factory_id", profile.factory_id)
+      .maybeSingle();
+    if (prefixError) return { ok: false, error: friendlyError(prefixError) };
+    if (!prefixRow) return { ok: false, error: "Unknown invoice number prefix." };
+    saleNoPrefix = prefixRow.prefix as string;
+  } else {
+    const requestedPrefixId = str(formData.get("prefix_id")) || undefined;
+    const prefixResult = await resolveInvoicePrefix({
+      supabase, factoryId: profile.factory_id, category: "broker_invoice", role: profile.role, requestedPrefixId,
+    });
+    if (!prefixResult.ok) return { ok: false, error: prefixResult.error };
+    if (prefixResult.needsApproval) {
+      const payload = Object.fromEntries(DISPATCH_PAYLOAD_FIELDS.map((field) => [field, str(formData.get(field))]));
+      const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
+        factory_id: profile.factory_id,
+        category: "broker_invoice",
+        requested_prefix_id: prefixResult.prefix.id,
+        context_id: null,
+        payload,
+        requested_by: profile.id,
+      });
+      if (exceptionError) return { ok: false, error: friendlyError(exceptionError) };
+      return { ok: true, pending: true };
+    }
+    saleNoPrefix = prefixResult.prefix.prefix;
+  }
+  const saleNo = await nextDispatchNo(supabase, profile.factory_id, saleNoPrefix);
   const targetSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
   const dispatchDate = str(formData.get("dispatch_date"));
   const sellingMarkId = str(formData.get("selling_mark_id"));
   const brokerLorryNo = str(formData.get("broker_lorry_no"));
   const driverName = str(formData.get("driver_name"));
+  const transporter = str(formData.get("transporter"));
   if (!brokerId) return { ok: false, error: "Pick a broker." };
   if (!targetSaleNo) return { ok: false, error: "Sale number is required." };
   if (!saleDate) return { ok: false, error: "Sale date is required." };
   if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
   if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
+  // Typed-but-not-picked text must be rejected BEFORE it reaches a uuid
+  // column, or Postgres fails it as unreadable 22P02 syntax instead.
+  if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
   const [{ data: broker }, { data: mark }] = await Promise.all([
     supabase.from("brokers").select("id").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle(),
     supabase.from("marks").select("id").eq("id", sellingMarkId).eq("factory_id", profile.factory_id).maybeSingle(),
   ]);
-  if (!broker) return { ok: false, error: "Unknown broker." };
-  if (!mark) return { ok: false, error: "Unknown selling mark." };
+  if (!broker) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!mark) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
+  try {
+    const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
+    if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
+  }
   let bundleId = "";
   try {
     bundleId = await ensureDailyBundledDispatch(supabase, profile.factory_id, dispatchDate);
@@ -116,12 +214,13 @@ async function insertDispatch(formData: FormData): Promise<
       selling_mark_id: sellingMarkId,
       broker_lorry_no: brokerLorryNo || null,
       driver_name: driverName || null,
+      transporter: transporter || null,
       bundled_dispatch_id: bundleId,
       status: "draft",
     })
     .select("id")
     .single();
-  if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have a Broker Invoice in this bundled dispatch." };
+  if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice on this dispatch date. Refresh the list and reuse or finish that draft, or use a different dispatch date." };
   if (error || !data) return { ok: false, error: friendlyError(error ?? { message: "Could not create the broker invoice." }) };
   const { error: linkError } = await supabase.from("auction_bundled_dispatch_invoices").insert({
     factory_id: profile.factory_id,
@@ -147,28 +246,205 @@ async function insertDispatch(formData: FormData): Promise<
 export async function createSale(formData: FormData): Promise<ListMutationResult> {
   const result = await insertDispatch(formData);
   if (!result.ok) return result;
+  if ("pending" in result) return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
   return { ok: true, notice: "Broker invoice created." };
 }
 
+export async function createSaleWithId(formData: FormData): Promise<
+  ListMutationResult & { id?: string }
+> {
+  const result = await insertDispatch(formData);
+  if (!result.ok) return result;
+  if ("pending" in result) return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
+  return { ok: true, id: result.id, notice: "Broker invoice created." };
+}
+
 export { createSale as createDispatch };
+export { createSaleWithId as createDispatchWithId };
+
+export type ResolvedBrokerInvoice =
+  | { ok: true; saleId: string; created: boolean }
+  | { ok: true; pending: true }
+  | { ok: false; error: string };
+
+/**
+ * The broker invoice a lot invoice belongs to, given its broker, selling mark
+ * and dispatch date. Used by the Invoice Overview page so a lot invoice can be
+ * added without first navigating to its broker invoice.
+ *
+ * The grouping rule is deliberately not re-implemented here: it reuses the
+ * same findOpenDraftInvoice lookup that governs direct broker invoice
+ * creation, and when nothing is open it creates the invoice through
+ * insertDispatch itself — so numbering, prefix resolution and the
+ * one-open-invoice-per broker+mark+dispatch-date rule stay identical whichever
+ * page the user starts from.
+ */
+export async function resolveBrokerInvoiceForLot(formData: FormData): Promise<ResolvedBrokerInvoice> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const brokerId = str(formData.get("broker_id"));
+  const sellingMarkId = str(formData.get("selling_mark_id"));
+  const dispatchDate = str(formData.get("dispatch_date"));
+  if (!brokerId) return { ok: false, error: "Pick a broker." };
+  if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
+  if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
+  // This runs before insertDispatch's own checks, and findOpenDraftInvoice
+  // below filters uuid columns by these values — so free text has to be caught
+  // here too, or it surfaces as a raw driver message rather than this one.
+  if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
+
+  try {
+    const existing = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
+    if (existing) return { ok: true, saleId: existing.id, created: false };
+  } catch (error) {
+    // Never surface the driver's own text: it leaks column and type names.
+    return { ok: false, error: friendlyError(error) };
+  }
+
+  const created = await insertDispatch(formData);
+  if (!created.ok) return created;
+  if ("pending" in created) return { ok: true, pending: true };
+  return { ok: true, saleId: created.id, created: true };
+}
+
+/** Replays a broker-invoice creation from an approved invoice_prefix_exceptions row. */
+export async function createDispatchFromApprovedException(
+  payload: Record<string, unknown>,
+  requestedPrefixId: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value != null) formData.set(key, String(value));
+  }
+  const result = await insertDispatch(formData, { bypassPrefixId: requestedPrefixId });
+  if (!result.ok) return result;
+  if ("pending" in result) return { ok: false, error: "Unexpected pending state while replaying an approved broker invoice." };
+  return result;
+}
 
 export async function deleteSale(id: string): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const { supabase, profile } = await requireModuleAccess("auction");
   // Preserve the entity-specific role and tenant guard. PostgreSQL then owns
   // the atomic relationship behavior: operational lots/configuration cascade,
   // while sale proceeds, VAT and settlements reject deletion with a readable
   // dependent-record error.
   const { data: sale } = await supabase
-    .from("auction_sales").select("id").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
+    .from("auction_sales").select("id, status").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
   if (!sale) return { ok: false, error: "Broker invoice not found." };
+  // The owner may delete at any point in the lifecycle; everyone else only
+  // while it is still an unconfirmed draft.
+  if (profile.role !== "owner" && !isOpenDraft(sale.status as string | null)) {
+    return { ok: false, error: "This broker invoice has been confirmed — only the owner can delete it now." };
+  }
   const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
   if (deleteError) return { ok: false, error: deleteError };
   revalidatePath(AUC);
   return { ok: true, notice: "Broker invoice deleted." };
 }
 
+/**
+ * Owner-only. A "sale" is a virtual grouping of broker invoices by
+ * target_sale_no (see auction.sales-side-list) — deleting one deletes every
+ * broker invoice assigned to it, which cascades to their lots/lot_invoices
+ * at the DB level exactly like a single deleteSale call.
+ *
+ * sale_lines, vat_ledger, and settlements are declared restrictive in the
+ * schema so an accidental single-invoice or single-lot delete can never
+ * silently destroy financial history. Deleting a whole sale is the one
+ * deliberate exception: this removes that owned financial subtree first,
+ * innermost dependency outwards, so the invoice deletes below succeed.
+ * The FKs stay restrictive for every other delete path.
+ */
+export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleRole("auction", ["owner"]);
+  const [{ data: dispatches, error: dispatchError }, { data: lots, error: lotError }] = await Promise.all([
+    supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no")
+      .eq("factory_id", profile.factory_id)
+      .eq("sale_kind", "dispatch"),
+    supabase
+      .from("auction_lots")
+      .select("sale_id, provisional_sale_no, final_sale_no")
+      .eq("factory_id", profile.factory_id),
+  ]);
+  if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
+
+  const dispatchIds = new Set(
+    (dispatches ?? [])
+      .filter((dispatch) => saleNoMatches(dispatch.target_sale_no as string | null, saleNo) || saleNoMatches(dispatch.sale_no as string, saleNo))
+      .map((dispatch) => dispatch.id as string),
+  );
+  for (const lot of (lots ?? []) as { sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null }[]) {
+    if (saleNoMatches(lot.final_sale_no || lot.provisional_sale_no, saleNo)) dispatchIds.add(lot.sale_id);
+  }
+  if (dispatchIds.size === 0) return { ok: false, error: "Sale not found." };
+  const invoiceIds = [...dispatchIds];
+
+  // A sale line is normally reachable by its own sale_id, but it also carries a
+  // restrictive lot_id — so collect both ways, or a stray line would block its
+  // lot from cascading away with the invoice below.
+  const { data: lotIdRows, error: lotIdError } = await supabase
+    .from("auction_lots")
+    .select("id")
+    .in("sale_id", invoiceIds);
+  if (lotIdError) return { ok: false, error: friendlyError(lotIdError) };
+  const lotIds = (lotIdRows ?? []).map((row) => row.id as string);
+
+  const [{ data: linesBySale, error: linesBySaleError }, { data: linesByLot, error: linesByLotError }] = await Promise.all([
+    supabase.from("sale_lines").select("id").in("sale_id", invoiceIds),
+    lotIds.length > 0
+      ? supabase.from("sale_lines").select("id").in("lot_id", lotIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (linesBySaleError || linesByLotError) return { ok: false, error: friendlyError(linesBySaleError ?? linesByLotError) };
+  const saleLineIds = [...new Set([...(linesBySale ?? []), ...(linesByLot ?? [])].map((row) => row.id as string))];
+
+  if (saleLineIds.length > 0) {
+    const { error: vatError } = await supabase.from("vat_ledger").delete().in("sale_line_id", saleLineIds);
+    if (vatError) return { ok: false, error: friendlyDeleteError(vatError) };
+    const { error: saleLineError } = await supabase.from("sale_lines").delete().in("id", saleLineIds);
+    if (saleLineError) return { ok: false, error: friendlyDeleteError(saleLineError) };
+  }
+  // settlement_charges cascade with their settlement; matched bank_txns are
+  // only unlinked (ON DELETE SET NULL), so bank history itself survives.
+  const { error: settlementError } = await supabase.from("settlements").delete().in("sale_id", invoiceIds);
+  if (settlementError) return { ok: false, error: friendlyDeleteError(settlementError) };
+
+  let succeeded = 0;
+  const failures: string[] = [];
+  for (const id of dispatchIds) {
+    const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
+    if (deleteError) failures.push(deleteError);
+    else succeeded += 1;
+  }
+  if (succeeded === 0) {
+    return { ok: false, error: failures[0] ?? "No broker invoices were deleted." };
+  }
+  revalidatePath(AUC);
+  return {
+    ok: true,
+    notice: `Sale ${formatSaleNo(saleNo)} deleted (${succeeded} broker invoice${succeeded === 1 ? "" : "s"})${failures.length ? `; ${failures.length} could not be deleted` : ""}.`,
+  };
+}
+
 export async function updateSale(id: string, formData: FormData): Promise<ListMutationResult> {
-  const { supabase, profile } = await requireProfile(["owner"]);
+  const { supabase, profile } = await requireModuleAccess("auction");
+  // Fetched once up front: the owner may edit at any point in the lifecycle,
+  // everyone else only while the invoice is still an unconfirmed draft. The
+  // selling-mark branch below reuses this row rather than re-reading it.
+  const { data: currentSale, error: currentSaleError } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_kind, status, dispatch_date")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (currentSaleError) return { ok: false, error: friendlyError(currentSaleError) };
+  if (!currentSale) return { ok: false, error: "Broker invoice not found." };
+  if (profile.role !== "owner" && !isOpenDraft(currentSale.status as string | null)) {
+    return { ok: false, error: "This broker invoice has been confirmed — only the owner can edit it now." };
+  }
+
   const updates: Record<string, string | null> = {};
   const target = formatSaleNo(str(formData.get("target_sale_no")));
   const saleDate = str(formData.get("sale_date"));
@@ -179,6 +455,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   if (formData.has("selling_mark_id")) {
     const sellingMarkId = str(formData.get("selling_mark_id"));
     if (!sellingMarkId) return { ok: false, error: "Selling mark is required." };
+    if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
     const { data: mark, error: markError } = await supabase
       .from("marks")
       .select("id")
@@ -186,7 +463,22 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
       .eq("factory_id", profile.factory_id)
       .maybeSingle();
     if (markError) return { ok: false, error: friendlyError(markError) };
-    if (!mark) return { ok: false, error: "Unknown selling mark." };
+    if (!mark) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
+    if (currentSale.sale_kind === "dispatch" && isOpenDraft(currentSale.status as string | null)) {
+      try {
+        const existingDraft = await findOpenDraftInvoice(
+          supabase,
+          profile.factory_id,
+          currentSale.broker_id as string,
+          sellingMarkId,
+          (currentSale as { dispatch_date?: string | null }).dispatch_date ?? null,
+          id,
+        );
+        if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
+      }
+    }
     updates.selling_mark_id = sellingMarkId;
   }
   if (formData.has("broker_lorry_no")) {
@@ -197,6 +489,10 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
     const driverName = str(formData.get("driver_name"));
     updates.driver_name = driverName || null;
   }
+  if (formData.has("transporter")) {
+    const transporter = str(formData.get("transporter"));
+    updates.transporter = transporter || null;
+  }
   if (Object.keys(updates).length > 0) {
     const { data: updatedSale, error } = await supabase
       .from("auction_sales")
@@ -205,7 +501,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
       .eq("factory_id", profile.factory_id)
       .select("id")
       .maybeSingle();
-    if (error?.code === "23505") return { ok: false, error: "This broker and selling mark are already used in this bundled dispatch." };
+    if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice on this dispatch date. Refresh the list and reuse or finish that draft before saving." };
     if (error) return { ok: false, error: friendlyError(error) };
     if (!updatedSale) return { ok: false, error: "This broker invoice was not found or changed before it could be updated." };
     if (updates.target_sale_no) {
@@ -235,6 +531,8 @@ export async function confirmDispatchDraft(id: string): Promise<ListMutationResu
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
   if (!confirmed) return { ok: false, error: "This broker invoice was not found or is no longer a draft." };
+  // The dispatch holding this invoice may now qualify for a later stage.
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
   return { ok: true, notice: "Broker invoice confirmed." };
@@ -304,6 +602,8 @@ export async function completeGrn(id: string, formData: FormData) {
     .select("id")
     .maybeSingle();
   if (grnError || !grnInvoice) back(detail, grnError ? friendlyError(grnError) : "This broker invoice changed before GRN could be completed.");
+  // Every invoice reaching GRN is what moves its dispatch to "received".
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);
@@ -392,6 +692,14 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
     .select("lot_id, buyer_id, price_per_kg, proceeds, vat_amount, on_guarantee")
     .in("lot_id", lotIds);
   const lineByLot = new Map((existingLines ?? []).map((line) => [line.lot_id as string, line]));
+  const gradeRules = await gradeRulesByCode(
+    supabase,
+    profile.factory_id,
+    [grade, ...lotRows.map((lot) => lot.grade)],
+  );
+  // Only a newly typed grade can be wrong here; grades already stored on the
+  // selected lots were validated when they were written.
+  if (hasGrade && !gradeRules.has(grade)) back(detail, notAnExisting(grade, "tea grade"));
 
   if (nextState === "sold") {
     const invalidLot = lotRows.find((lot) => {
@@ -439,6 +747,11 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
     if (hasBags || hasKgPerBag || hasSampleKg) {
       if (!(nextBags > 0) || !(nextKgPerBag > 0)) back(detail, "Bags and kg/bag must be positive.");
       if (nextSampleKg >= nextBags * nextKgPerBag) back(detail, "Sample weight must be less than the gross lot weight.");
+      const nextGrade = hasGrade ? grade : lot.grade;
+      const minKgPerBag = nextGrade ? gradeRules.get(nextGrade)?.minKgPerBag : undefined;
+      if (minKgPerBag != null && minKgPerBag > 0 && nextKgPerBag < minKgPerBag) {
+        back(detail, `kg/bag for grade ${nextGrade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).`);
+      }
       lotUpdates.net_wt = Number(Math.max(0, nextBags * nextKgPerBag - nextSampleKg).toFixed(2));
     }
     if (Object.keys(lotUpdates).length > 0) {
@@ -593,11 +906,19 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
     buyerByName.set(buyerName, (buyer as { id: string }).id);
   }
 
+  const gradeRules = await gradeRulesByCode(supabase, profile.factory_id, submittedRows.map((row) => row.grade));
   for (const row of submittedRows) {
     if (row.invoiceList.length === 0) return { ok: false, error: "Invoice number is required for every edited lot." };
     if (!row.grade) return { ok: false, error: "Grade is required for every edited lot." };
+    // The foreign key would reject this too, but only the caller knows which
+    // value was typed — see gradeRulesByCode.
+    if (!gradeRules.has(row.grade)) return { ok: false, error: notAnExisting(row.grade, "tea grade") };
     if (!(row.bags > 0) || !(row.kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
     if (row.sampleKg >= row.bags * row.kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+    const minKgPerBag = gradeRules.get(row.grade)?.minKgPerBag;
+    if (minKgPerBag != null && minKgPerBag > 0 && row.kgPerBag < minKgPerBag) {
+      return { ok: false, error: `kg/bag for grade ${row.grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+    }
     if (row.state === "sold" && (!(Number(row.pricePerKg) > 0) || !(Number(row.proceeds) > 0) || row.vatAmount == null || Number.isNaN(Number(row.vatAmount)))) {
       return { ok: false, error: "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT." };
     }

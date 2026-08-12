@@ -6,6 +6,7 @@ import { EntityList, type EntityListColumn, type EntityListCommand } from "@/com
 import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
+import { LovCombobox } from "@/components/lov-combobox";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionSaleLineListRow } from "@/lib/list-resources";
 import { deleteLot } from "../../_actions/lots";
@@ -42,6 +43,8 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
       </Link>
     ) : "—",
   },
+  { key: "broker", label: "Broker", accessor: (row) => row.broker ?? null, sortable: true, filter: "select" },
+  { key: "mark", label: "Mark", accessor: (row) => row.mark ?? null, sortable: true, filter: "select" },
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.lotNo ?? null, sortable: true, filter: "text", lov: false },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-medium" },
   { key: "grade", label: "Grade", accessor: (row) => row.grade ?? null, sortable: true, filter: "select" },
@@ -283,7 +286,21 @@ function SaleLinesEditForm({
                 <TextInput name="lot_no" defaultValue={row.lotNo ?? ""} />
               </Field>
               <Field label="Grade">
-                <TextInput name="grade" defaultValue={row.grade ?? ""} required />
+                {/*
+                  updateSaleLotsInline reads these positionally with
+                  getAll("grade"), so exactly one named input per row is
+                  required — the combobox's visible field is deliberately
+                  unnamed, leaving only its hidden value input to submit.
+                */}
+                <LovCombobox
+                  source="auction.grades"
+                  name="grade"
+                  defaultValue={row.grade ?? ""}
+                  defaultLabel={row.grade ?? ""}
+                  ariaLabel="Grade"
+                  required
+                  className={fieldClass}
+                />
               </Field>
               <Field label="Status">
                 <select name="state" defaultValue={row.state ?? "acknowledged"} className={fieldClass}>

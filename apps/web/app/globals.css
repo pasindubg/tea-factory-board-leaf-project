@@ -157,33 +157,33 @@ body {
   filter: saturate(1.45) contrast(1.25);
 }
 
-@keyframes navigation-gradient {
-  from { background-position: 0% 50%; }
-  to { background-position: 200% 50%; }
+@keyframes navigation-dim {
+  0%, 100% { opacity: 0.52; }
+  50% { opacity: 0.78; }
 }
 
 .navigation-progress {
-  background: linear-gradient(90deg, #047857, #34d399, #047857);
-  background-size: 200% 100%;
+  background: #16a34a;
   box-shadow: 0 1px 6px color-mix(in srgb, #16a34a 38%, transparent);
-  animation: navigation-gradient 1.6s ease-in-out infinite;
+  animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
-/* The action itself is the loading indicator. Links and navigation buttons
-   retain this animated tonal state until the destination route settles. */
+/* The action itself is the loading indicator. The clicked/previous destination
+   dims slowly until the destination route settles. */
 .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
-  background-image: linear-gradient(110deg, #ecfdf5, #d1fae5, #ecfdf5) !important;
-  background-size: 180% 100% !important;
-  border-color: #86efac !important;
-  color: #166534 !important;
-  box-shadow: 0 1px 5px color-mix(in srgb, #16a34a 22%, transparent) !important;
-  animation: navigation-gradient 1.8s ease-in-out infinite;
+  background-image: none !important;
+  background-color: #d1d5db !important;
+  border-color: #9ca3af !important;
+  color: #4b5563 !important;
+  box-shadow: none !important;
+  animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
 .dark .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
-  background-image: linear-gradient(110deg, #14532d, #166534, #14532d) !important;
-  border-color: #22c55e !important;
-  color: #dcfce7 !important;
+  background-image: none !important;
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #9ca3af !important;
 }
 .dashboard-content input[type="radio"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);
@@ -210,4 +210,182 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/*
+ * Printing a Broker Invoice. The workspace is never what should come out of
+ * the printer, so every direct child of <body> is removed except the printout
+ * (which is portalled onto <body> for exactly this reason) and Next.js's own
+ * dev/portal nodes are dropped with it.
+ *
+ * `display: none` matters here: `visibility: hidden` would keep the whole
+ * full-height workspace's layout boxes alive and emit a trailing blank sheet
+ * for an invoice that only needs one page. For the same reason the height
+ * constraints the app shell sets on html/body are released, so the printed
+ * flow is exactly as tall as the invoice content and no taller.
+ */
+@media print {
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff;
+  }
+
+  body > *:not([data-print-document]) {
+    display: none !important;
+  }
+
+  [data-print-document] {
+    display: block !important;
+    height: auto;
+    min-height: 0;
+    color: #000;
+    background: #fff;
+  }
+
+  /* Keep a lot row from splitting across two sheets, and repeat the header
+     when the list genuinely runs long enough to need a second page. */
+  [data-print-document] tr {
+    break-inside: avoid;
+  }
+
+  [data-print-document] thead {
+    display: table-header-group;
+  }
+
+  /* A trailing margin/border on the last block can spill past the page box and
+     pull an otherwise-empty sheet after it. */
+  [data-print-document] > *:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
+/*
+ * Framework list tables scroll horizontally when their columns exceed the
+ * available width. macOS (and iOS) hide overlay scrollbars until the user
+ * scrolls, so a wide table gives no hint that more columns exist off-screen.
+ * This keeps the bar permanently visible on any list that opts in, without
+ * affecting page-level scrolling.
+ */
+.list-scroll-x {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-outline) transparent;
+}
+
+.list-scroll-x::-webkit-scrollbar {
+  height: 10px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.list-scroll-x::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--md-outline) 12%, transparent);
+  border-radius: 999px;
+}
+
+.list-scroll-x::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--md-outline) 65%, transparent);
+  border-radius: 999px;
+}
+
+.list-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: var(--md-outline);
+}
+
+@media print {
+  /* Never print a scrollbar or clip a column off the sheet. */
+  .list-scroll-x {
+    overflow-x: visible;
+  }
+}
+
+/*
+ * Framework list view modes (see components/list-view-mode.tsx).
+ *
+ * Both modes lay the table out with `table-layout: fixed`. That is what makes
+ * `text-overflow: ellipsis` work on a cell at all — with the default `auto`
+ * layout a table widens to fit its content instead of clipping it — and it is
+ * also what guarantees a row can never grow to a second line, including the
+ * create and edit rows whose cells hold inputs.
+ */
+.list-fixed-layout {
+  table-layout: fixed;
+}
+
+/* Applies to every cell, including ones a page renders itself (create rows,
+ * footers), so a list cannot opt half of its table out of the contract. */
+.list-single-line th,
+.list-single-line td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The checkbox column holds a control, not text. `text-overflow` still paints
+ * an ellipsis when that control overflows by even a pixel, which reads as a
+ * truncated value at the start of every row — so it is excluded outright. */
+.list-single-line th[data-list-selection],
+.list-single-line td[data-list-selection] {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* An input inside a cell must fill the column, never force it wider. */
+.list-single-line td input:not([type="checkbox"]):not([type="radio"]),
+.list-single-line td select,
+.list-single-line td textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* List mode fits the viewport, so it must not scroll sideways. */
+.list-scroll-none {
+  overflow-x: hidden;
+}
+
+/* Table mode: the drag target that resizes a column. It sits inside the
+ * header cell's padding so it never adds width of its own. */
+.list-col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: transparent;
+  border: 0;
+}
+
+.list-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  right: 4px;
+  height: 60%;
+  width: 1px;
+  background: color-mix(in srgb, var(--md-outline) 55%, transparent);
+}
+
+.list-col-resize:hover::after,
+.list-col-resize[data-resizing="true"]::after {
+  background: var(--md-primary, #15803d);
+  width: 2px;
+}
+
+/* While dragging, suppress text selection across the whole document. */
+body[data-list-resizing="true"] {
+  user-select: none;
+  cursor: col-resize;
 }

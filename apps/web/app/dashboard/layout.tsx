@@ -30,11 +30,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
   );
   const pagePermissionMap = new Map((pagePermissions ?? []).map((row) => [row.page_key as string, Boolean(row.can_view)]));
 
-  // Owner always sees everything; others respect overrides → defaults.
+  // Owner always sees everything; others respect overrides → defaults. The
+  // module's base `roles` list is a hard ceiling a custom role's explicit
+  // page-permission rows can only narrow, never widen — otherwise a role
+  // that used to be allowed (before a module's base roles were tightened)
+  // keeps seeing it forever via its stale `can_view: true` row.
+  //
+  // A custom role (profile.access_role_id set) always has an explicit row
+  // per page that existed when it was created. A missing row means the page
+  // was added later, which must default to "not yet granted" — never a
+  // fallback to the base role's default access — or every existing custom
+  // role silently inherits full access to any brand-new page the moment it
+  // ships.
   const nav = MODULES.filter((mod) => {
+    if (mod.visibleInNavigation === false) return false;
     if (profile.role === "owner") return true;
+    if (!mod.roles.includes(profile.role as Role)) return false;
     const pageKey = pagesForModule(mod.key)[0]?.key;
-    if (pageKey && pagePermissionMap.has(pageKey)) return pagePermissionMap.get(pageKey) === true;
+    if (profile.access_role_id) return pageKey ? pagePermissionMap.get(pageKey) === true : false;
     const allowed: string[] = overrideMap[mod.key] ?? [...mod.roles];
     return allowed.includes(profile.role as Role);
   });

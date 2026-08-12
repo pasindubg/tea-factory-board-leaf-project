@@ -267,6 +267,83 @@
       "when": 1784459906326,
       "tag": "0037_opposite_santa_claus",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784557929684,
+      "tag": "0038_open_draft_broker_mark",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0039_broker_invoice_bi_prefix",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1784997930194,
+      "tag": "0040_lame_raza",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1785320010599,
+      "tag": "0041_auction_grade_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1785337597640,
+      "tag": "0042_invoice_number_prefixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1785615969448,
+      "tag": "0043_auction_sale_transporter",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1785659435524,
+      "tag": "0044_list_search_lock_advanced_query",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1785684902823,
+      "tag": "0045_flippant_mojo",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1785780319137,
+      "tag": "0046_blue_rocket_raccoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786205296007,
+      "tag": "0047_fix_valuation_invoice_match",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786386870634,
+      "tag": "0048_salty_spencer_smythe",
+      "breakpoints": true
     }
   ]
 }

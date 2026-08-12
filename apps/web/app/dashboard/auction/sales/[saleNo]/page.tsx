@@ -1,15 +1,25 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  DetailField,
+  DetailRecordPanel,
+} from "@/components/detail-workspace";
+import { EntityListTabs } from "@/components/entity-list";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
+import { applyServerListSearch } from "@/lib/list-search-state";
 import { stateBucket } from "../../state-buckets";
+import { brokerInvoiceRank } from "../../dispatch-status";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
 import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
-import { EntityListTabs } from "@/components/entity-list";
+import { SaleDetailWorkspace } from "./sale-detail-workspace";
+import { SaleDocumentsTable, type SaleDocumentRow } from "./sale-documents-table";
+import { DOC_TYPE_LABELS, docStatus, computeActiveDocumentIds, type AuctionDocType } from "../../doc-status";
+
+const SEARCH_PANEL_ID = "auction-sale-detail-search";
 
 type DispatchRow = {
   id: string;
@@ -47,19 +57,47 @@ type LineRow = {
   on_guarantee: boolean | null;
 };
 
-type MachineStep = {
-  label: string;
-  count: number;
-  detail: string;
+type DocImportRow = {
+  id: string;
+  doc_type: AuctionDocType;
+  source_filename: string | null;
+  status: "parsed" | "reviewed" | "confirmed" | "rejected";
+  parsed_at: string | null;
+  confirmed_at: string | null;
+  sale_id: string | null;
+  parsed_json: unknown;
 };
 
 function plural(n: number, singular: string, pluralText = `${singular}s`) {
   return `${n} ${n === 1 ? singular : pluralText}`;
 }
 
+// Human label for a broker invoice's furthest-progressed status — drives the
+// "Stage" column in the Document reconciliation assistant's broker list.
+const BROKER_STAGE_LABEL: Record<string, string> = {
+  draft: "Draft",
+  dispatched: "Draft",
+  invoiced: "Invoiced",
+  grn: "At GRN",
+  catalogued: "Acknowledged",
+  valued: "Valued",
+  sold: "Sold",
+  settled: "Settled",
+  broker_statement: "Broker statement",
+};
+
 function lotCount(lots: LotRow[], states: readonly string[]) {
   const wanted = new Set(states);
   return lots.filter((lot) => wanted.has(lot.state ?? "")).length;
+}
+
+// A valuation confirm only ever updates auction_lots.state — auction_sales.status
+// never advances past "catalogued" — so lot state, not dispatch status, is the
+// only real signal that a broker's valuation (or sale) has been recorded.
+const VALUED_LOT_STATES = new Set(["valued", "sold", "settled", "withdrawn", "re-print"]);
+
+function lotIsValued(lot: LotRow) {
+  return VALUED_LOT_STATES.has(lot.state ?? "");
 }
 
 function lotIsSold(lot: LotRow) {
@@ -69,16 +107,6 @@ function lotIsSold(lot: LotRow) {
 function dispatchCount(dispatches: DispatchRow[], statuses: readonly string[]) {
   const wanted = new Set(statuses);
   return dispatches.filter((dispatch) => wanted.has(dispatch.status ?? "")).length;
-}
-
-function stepClass(index: number, currentIndex: number) {
-  if (index < currentIndex) {
-    return "border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200";
-  }
-  if (index === currentIndex) {
-    return "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200";
-  }
-  return "border-stone-200 bg-white text-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400";
 }
 
 function statusBreakdown(lots: LotRow[]) {
@@ -96,11 +124,14 @@ function statusBreakdown(lots: LotRow[]) {
 
 export default async function SaleDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ saleNo: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { supabase, profile } = await requirePageAccess("auction-sale-detail");
   const { saleNo: rawSaleNo } = await params;
+  const { tab } = await searchParams;
   const saleNo = decodeURIComponent(rawSaleNo);
   const displaySaleNo = formatSaleNo(saleNo);
 
@@ -139,6 +170,46 @@ export default async function SaleDetailPage({
 
   if (dispatches.length === 0 && lotRows.length === 0) notFound();
   const saleLineResourceId = dispatches[0]?.id ?? lotRows[0]?.sale_id;
+
+  const { data: docImports, error: docImportsError } = dispatchIds.size > 0
+    ? await supabase
+        .from("doc_imports")
+        .select("id, doc_type, source_filename, status, parsed_at, confirmed_at, sale_id, parsed_json")
+        .in("sale_id", [...dispatchIds])
+        .neq("doc_type", "bank_csv")
+        .order("parsed_at", { ascending: false })
+    : { data: [], error: null };
+  if (docImportsError) throw new Error(`Could not load sale documents: ${docImportsError.message}`);
+  const docImportRows = (docImports ?? []) as unknown as DocImportRow[];
+  const brokerNameByDispatchId = new Map(
+    dispatches.map((dispatch) => [dispatch.id, (dispatch.brokers as { name: string } | null)?.name ?? "—"]),
+  );
+  const brokerIdByDispatchId = new Map(dispatches.map((dispatch) => [dispatch.id, dispatch.broker_id]));
+
+  // A sale can have multiple brokers, each submitting their own acknowledgement/
+  // valuation/contract (see saleGroupIds — reconciliation is scoped per broker
+  // within the sale). So "active" tracks the latest confirmed import per
+  // (doc type, broker), not per doc type across the whole sale — otherwise one
+  // broker's confirmed report would wrongly supersede another broker's.
+  const activeDocIds = computeActiveDocumentIds(
+    docImportRows,
+    (doc) => (doc.sale_id ? brokerIdByDispatchId.get(doc.sale_id) : null) ?? doc.sale_id ?? "",
+  );
+  const documentRows: SaleDocumentRow[] = docImportRows.map((doc) => {
+    const { status, label } = docStatus(doc);
+    return {
+      id: doc.id,
+      docType: doc.doc_type,
+      docTypeLabel: DOC_TYPE_LABELS[doc.doc_type],
+      filename: doc.source_filename ?? "document.pdf",
+      broker: doc.sale_id ? brokerNameByDispatchId.get(doc.sale_id) ?? "—" : "—",
+      status,
+      statusLabel: label,
+      active: activeDocIds.has(doc.id),
+      uploadedAt: doc.parsed_at,
+      href: `/dashboard/auction/documents/${doc.id}`,
+    };
+  });
   if (!saleLineResourceId) notFound();
 
   const { data: lines, error: linesError } = lotRows.length > 0
@@ -171,39 +242,40 @@ export default async function SaleDetailPage({
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
   const soldCount = soldLotIds.size;
+  // Weight offered in this sale, over the same lots the "Lots sold" ratio
+  // counts, so the two figures always describe one population.
+  const totalNetKg = lotRows.reduce((sum, lot) => sum + Number(lot.net_wt ?? 0), 0);
+  // One auction sale can span several broker invoices, and they need not share
+  // a sale date — show the span rather than silently picking the first.
+  const saleDates = [...new Set(dispatches.map((dispatch) => dispatch.sale_date).filter(Boolean))].sort();
+  const saleDateLabel = saleDates.length === 0
+    ? "—"
+    : saleDates.length === 1
+      ? saleDates[0]
+      : `${saleDates[0]} – ${saleDates[saleDates.length - 1]}`;
   const settledCount = dispatchCount(dispatches, ["settled"]);
   const invoiceEditingLocked = settledCount > 0;
-  const machineSteps: MachineStep[] = [
+  const currentStateKey =
+    settledCount > 0
+      ? "settled"
+      : soldCount > 0
+        ? "sold"
+        : valuedCount > 0
+          ? "valued"
+          : acknowledgedCount > 0
+            ? "acknowledged"
+            : "draft";
+  const lifecycleSteps = [
+    { key: "draft", label: "Draft", metric: plural(lotRows.length, "lot") },
+    { key: "acknowledged", label: "Acknowledged", metric: `${acknowledgedCount}/${lotRows.length} lots` },
+    { key: "valued", label: "Valued", metric: `${valuedCount}/${lotRows.length} lots` },
+    { key: "sold", label: "Sold", metric: plural(soldCount, "lot") },
     {
-      label: "Draft",
-      count: dispatches.length,
-      detail: plural(lotRows.length, "lot"),
-    },
-    {
-      label: "Acknowledged",
-      count: acknowledgedCount,
-      detail: `${acknowledgedCount}/${lotRows.length} lots`,
-    },
-    {
-      label: "Valued",
-      count: valuedCount,
-      detail: `${valuedCount}/${lotRows.length} lots`,
-    },
-    {
-      label: "Sold",
-      count: soldCount,
-      detail: plural(soldCount, "lot"),
-    },
-    {
+      key: "settled",
       label: "Settled",
-      count: settledCount,
-      detail: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
+      metric: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
     },
   ];
-  const currentStepIndex = Math.max(
-    0,
-    machineSteps.reduce((furthest, step, index) => (step.count > 0 ? index : furthest), -1),
-  );
   const issueSteps = [
     { label: "Pending", count: lotCount(lotRows, ["pending"]) },
     { label: "Not Valued", count: lotCount(lotRows, ["not-valued"]) },
@@ -212,57 +284,12 @@ export default async function SaleDetailPage({
     { label: "Re-print", count: lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length },
     { label: "Missing", count: lotCount(lotRows, ["missing"]) },
   ].filter((item) => item.count > 0);
-  const saleListSummaries = new Map<string, {
-    saleNo: string;
-    dispatchNos: Map<string, string>;
-    brokers: Set<string>;
-    saleDate: string | null;
-    statuses: Set<string>;
-  }>();
-  const allDispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
-  for (const dispatch of allDispatchRows) {
-    const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
-    if (!key) continue;
-    const current = saleListSummaries.get(key) ?? {
-      saleNo: key,
-      dispatchNos: new Map<string, string>(),
-      brokers: new Set<string>(),
-      saleDate: dispatch.sale_date,
-      statuses: new Set<string>(),
-    };
-    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
-    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
-    current.saleDate ??= dispatch.sale_date;
-    current.statuses.add(stateBucket(dispatch.status).label);
-    saleListSummaries.set(key, current);
-  }
-  for (const lot of allLotRows) {
-    const dispatch = allDispatchById.get(lot.sale_id);
-    if (!dispatch) continue;
-    const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
-    if (!key) continue;
-    const current = saleListSummaries.get(key) ?? {
-      saleNo: key,
-      dispatchNos: new Map<string, string>(),
-      brokers: new Set<string>(),
-      saleDate: dispatch.sale_date,
-      statuses: new Set<string>(),
-    };
-    current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
-    if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
-    current.saleDate ??= dispatch.sale_date;
-    current.statuses.add(stateBucket(dispatch.status).label);
-    saleListSummaries.set(key, current);
-  }
-  const saleListRows: SaleSideListRow[] = [...saleListSummaries.values()]
-    .sort((a, b) => b.saleNo.localeCompare(a.saleNo, undefined, { numeric: true }))
-    .map((sale) => ({
-      saleNo: sale.saleNo,
-      dispatchNos: [...sale.dispatchNos.values()],
-      brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
-      saleDate: sale.saleDate,
-      statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
-    }));
+  // Shared with the side rail's own client-side refetch on search — one
+  // source of truth for the sale-grouping aggregation instead of duplicating
+  // it here for the initial render.
+  const saleListResource = await loadListResource({ key: "auction.sales-side-list" });
+  if (!saleListResource.ok) throw new Error(saleListResource.error);
+  const saleListRows: SaleSideListRow[] = saleListResource.rows;
 
   const dispatchTableRows: DispatchInSaleRow[] = dispatches.map((dispatch) => {
     const state = stateBucket(dispatch.status);
@@ -282,7 +309,8 @@ export default async function SaleDetailPage({
     };
   });
 
-  const reconciliationGroupsByBroker = new Map<string, SalesReconciliationGroup>();
+  type ReconciliationGroupBuild = SalesReconciliationGroup & { dispatchRank: number; dispatchStageLabel: string };
+  const reconciliationGroupsByBroker = new Map<string, ReconciliationGroupBuild>();
   for (const dispatch of dispatches) {
     const broker = (dispatch.brokers as { name: string } | null)?.name ?? "—";
     const key = dispatch.broker_id ?? broker;
@@ -291,74 +319,99 @@ export default async function SaleDetailPage({
       broker,
       dispatchNos: [],
       lotCount: 0,
+      ackDone: false,
+      valuationDone: false,
+      soldDone: false,
+      stageLabel: "Draft",
+      dispatchRank: -1,
+      dispatchStageLabel: "Draft",
     };
     current.dispatchNos.push(formatFourDigitNo(dispatch.sale_no));
-    current.lotCount += (lotsByDispatch.get(dispatch.id) ?? []).length;
+    const dispatchLots = lotsByDispatch.get(dispatch.id) ?? [];
+    current.lotCount += dispatchLots.length;
+    // A single dispatch reaching "catalogued" means the broker's ack covers
+    // the whole group (it's uploaded once per broker, not once per dispatch).
+    // Ack confirmation is the only step that still moves auction_sales.status;
+    // valuation/sale progress only ever shows up on the lots themselves.
+    const dispatchRank = brokerInvoiceRank(dispatch.status);
+    if (dispatchRank >= brokerInvoiceRank("catalogued")) current.ackDone = true;
+    if (dispatchRank > current.dispatchRank) {
+      current.dispatchRank = dispatchRank;
+      current.dispatchStageLabel = BROKER_STAGE_LABEL[dispatch.status] ?? dispatch.status;
+    }
+    if (dispatchLots.some(lotIsValued)) current.valuationDone = true;
+    if (dispatchLots.some(lotIsSold)) current.soldDone = true;
     reconciliationGroupsByBroker.set(key, current);
+  }
+  for (const group of reconciliationGroupsByBroker.values()) {
+    group.stageLabel = group.soldDone ? "Sold" : group.valuationDone ? "Valued" : group.ackDone ? "Acknowledged" : group.dispatchStageLabel;
   }
   const reconciliationGroups = [...reconciliationGroupsByBroker.values()].sort((a, b) => a.broker.localeCompare(b.broker));
 
   const saleLineTableRows = saleLines.rows;
 
+  const [visibleSaleListRows, visibleDispatchTableRows, visibleDocumentRows] = await Promise.all([
+    applyServerListSearch(supabase, profile, "auction-sales-side-list", saleListRows),
+    applyServerListSearch(supabase, profile, "dispatches-in-sale", dispatchTableRows),
+    applyServerListSearch(supabase, profile, "auction-sale-documents", documentRows),
+  ]);
+
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
-      <SalesSideList rows={saleListRows} currentSaleNo={displaySaleNo} />
-      <div className="min-w-0 space-y-6">
-      <div>
-        <Link href="/dashboard/auction/sales" className="text-sm text-green-700 hover:underline dark:text-green-400">
-          ← Sales Overview
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-5">
-          <div>
-            <h2 className="text-xl font-semibold">Sale {displaySaleNo}</h2>
-            <p className="text-sm text-stone-500 dark:text-stone-400">
-              {dispatches.length} broker invoice{dispatches.length === 1 ? "" : "s"} · {lotRows.length} lots · {soldCount} sold · {reprintCount} re-print
-            </p>
-          </div>
-          <div className="w-full max-w-xl lg:ml-auto lg:w-[34rem]">
-            <ol className="grid grid-cols-5 gap-1.5">
-              {machineSteps.map((step, index) => (
-                <li
-                  key={step.label}
-                  className={`min-h-12 rounded-lg border px-2 py-1.5 ${stepClass(index, currentStepIndex)}`}
+    <SaleDetailWorkspace
+      saleNo={displaySaleNo}
+      isOwner={profile.role === "owner"}
+      saleListRows={saleListRows}
+      rail={
+        <SalesSideList
+          rows={visibleSaleListRows}
+          currentSaleNo={displaySaleNo}
+          searchPanelId={SEARCH_PANEL_ID}
+        />
+      }
+      railAriaLabel="Auction sales"
+      searchPanelId={SEARCH_PANEL_ID}
+      state={{
+        currentKey: currentStateKey,
+        steps: lifecycleSteps,
+        testId: "sale-state-indicator",
+      }}
+      headerActions={
+        <SalesReconciliationAssistant
+          saleNo={displaySaleNo}
+          groups={reconciliationGroups}
+        />
+      }
+    >
+      <DetailRecordPanel
+        eyebrow="Sale details"
+        title={`Sale ${displaySaleNo}`}
+        description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${reprintCount} re-print`}
+        contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
+        footer={
+          issueSteps.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {issueSteps.map((item) => (
+                <span
+                  key={item.label}
+                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[10px] font-medium opacity-75">{step.detail}</span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${index <= currentStepIndex ? "bg-current" : "bg-stone-300 dark:bg-stone-600"}`} />
-                  </div>
-                  <p className="mt-1 truncate text-[11px] font-semibold">{step.label}</p>
-                </li>
+                  {item.label}: {item.count}
+                </span>
               ))}
-            </ol>
-            {issueSteps.length > 0 && (
-              <div className="mt-2 flex flex-wrap justify-end gap-2">
-                {issueSteps.map((item) => (
-                  <span
-                    key={item.label}
-                    className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                  >
-                    {item.label}: {item.count}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <Summary label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
-        <Summary label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
-        <Summary label="Total VAT" value={`LKR ${money(totalVat)}`} accent="blue" />
-        <Summary label="Guarantee lots" value={guaranteeLots.toString()} />
-      </div>
-
-      <section>
-        <SalesReconciliationAssistant saleNo={displaySaleNo} groups={reconciliationGroups} />
-      </section>
-
+            </div>
+          ) : undefined
+        }
+      >
+        <DetailField label="Sale date" value={saleDateLabel} />
+        <DetailField label="Total kg to sale" value={`${totalNetKg.toFixed(2)} kg`} />
+        <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
+        <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
+        <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
+        <DetailField label="Guarantee lots" value={guaranteeLots} />
+      </DetailRecordPanel>
       <EntityListTabs
         label="Sale lists"
+        defaultTab={tab === "documents" ? "documents" : undefined}
         tabs={[
           {
             id: "lots",
@@ -372,21 +425,10 @@ export default async function SaleDetailPage({
               />
             ),
           },
-          { id: "dispatches", label: "Broker invoices", count: `${dispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={dispatchTableRows} /> },
+          { id: "dispatches", label: "Broker invoices", count: `${visibleDispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
+          { id: "documents", label: "Documents", count: `${visibleDocumentRows.length} documents`, content: <SaleDocumentsTable rows={visibleDocumentRows} /> },
         ]}
       />
-      </div>
-    </div>
-  );
-}
-
-function Summary({ label, value, accent }: { label: string; value: string; accent?: "blue" }) {
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900">
-      <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${accent === "blue" ? "text-blue-800 dark:text-blue-400" : "text-stone-800 dark:text-stone-200"}`}>
-        {value}
-      </p>
-    </div>
+    </SaleDetailWorkspace>
   );
 }

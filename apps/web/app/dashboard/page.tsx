@@ -1,10 +1,11 @@
 import { requirePageAccess } from "@/lib/profile";
-import { dayRange, lastNDates, localDateString } from "@/lib/dates";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import { dayRange, formatFullDate, formatWeekday, lastNDates, localDateString } from "@/lib/dates";
 import { IntakeChart } from "@/components/intake-chart";
 import { CollectorIntakeList, RecentWeighingsList } from "./dashboard-lists";
 
 export default async function DashboardPage() {
-  const { supabase } = await requirePageAccess("overview");
+  const { supabase, profile } = await requirePageAccess("overview");
 
   const today = localDateString();
   const todayRange = dayRange(today);
@@ -41,14 +42,27 @@ export default async function DashboardPage() {
     if (byDay.has(d)) byDay.set(d, (byDay.get(d) ?? 0) + Number(w.weight_kg));
   }
   const chartData = week.map((d) => ({
-    day: new Date(`${d}T00:00:00`).toLocaleDateString([], { weekday: "short" }),
+    day: formatWeekday(`${d}T00:00:00`),
     kg: Number((byDay.get(d) ?? 0).toFixed(2)),
   }));
+
+  const collectorIntakeRows = [...byCollector.entries()].map(([name, kg]) => ({ id: name, name, kg }));
+  const recentWeighingRows = (recent ?? []).map((weighing) => ({
+    id: weighing.id as string,
+    supplier: (weighing.suppliers as unknown as { name: string } | null)?.name ?? "—",
+    collector: (weighing.collectors as unknown as { name: string } | null)?.name ?? "—",
+    collectedAt: weighing.collected_at as string,
+    weightKg: Number(weighing.weight_kg),
+  }));
+  const [visibleCollectorIntake, visibleRecentWeighings] = await Promise.all([
+    applyServerListSearch(supabase, profile, "dashboard-collector-intake", collectorIntakeRows),
+    applyServerListSearch(supabase, profile, "dashboard-recent-weighings", recentWeighingRows),
+  ]);
 
   return (
     <div>
       <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{new Date().toLocaleDateString([], { dateStyle: "full" })}</p>
+      <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{formatFullDate(new Date())}</p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
@@ -74,16 +88,10 @@ export default async function DashboardPage() {
             <IntakeChart data={chartData} />
           </div>
         </div>
-        <CollectorIntakeList rows={[...byCollector.entries()].map(([name, kg]) => ({ id: name, name, kg }))} />
+        <CollectorIntakeList rows={visibleCollectorIntake} />
       </div>
 
-      <div className="mt-6"><RecentWeighingsList rows={(recent ?? []).map((weighing) => ({
-        id: weighing.id as string,
-        supplier: (weighing.suppliers as unknown as { name: string } | null)?.name ?? "—",
-        collector: (weighing.collectors as unknown as { name: string } | null)?.name ?? "—",
-        collectedAt: weighing.collected_at as string,
-        weightKg: Number(weighing.weight_kg),
-      }))} /></div>
+      <div className="mt-6"><RecentWeighingsList rows={visibleRecentWeighings} /></div>
     </div>
   );
 }

@@ -1,20 +1,40 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Pencil, Printer } from "lucide-react";
+import {
+  DetailEmptyPanel,
+  DetailField,
+  DetailLovField,
+  DetailRecordPanel,
+  DetailWorkspace,
+} from "@/components/detail-workspace";
+import { startNavigationFeedback } from "@/components/navigation-progress";
 import { SubmitButton } from "@/components/submit-button";
+import { AppButton } from "@/components/ui/button";
+import { AppDrawer } from "@/components/ui/drawer";
 import { showAppToast } from "@/components/action-feedback";
-import { EntityList } from "@/components/entity-list";
-import type { ColumnDef, ListDefinition } from "@/components/list-controls";
-import { completeGrn, confirmDispatchDraft, createDispatch, updateSale } from "../actions";
-import { stateBucket } from "../state-buckets";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
-import { DeleteDispatchButton } from "./delete-dispatch-button";
+import {
+  completeGrn,
+  confirmDispatchDraft,
+  createDispatchWithId,
+  deleteSale,
+  updateSale,
+} from "../actions";
+import { isOpenDraft, stateBucket } from "../state-buckets";
+import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import {
+  InvoiceSideList,
+  INVOICE_SEARCH_PANEL_ID,
+  cappedDispatchStatus,
+  type DispatchListItem,
+} from "../invoice-side-list";
+import { buildCompositeInvoiceNo, parseCompositeInvoiceNo, type InvoicePrefixOption } from "../invoice-number";
+import { BrokerInvoicePrintout } from "./broker-invoice-printout";
 import { LotsSection } from "./lots-section";
 import type { LotRow } from "./lot-row";
-import type { AuctionDispatchListRow } from "@/lib/list-resources";
-import { NewDispatchForm, type DispatchCreationOptions } from "../new-dispatch-form";
+import { NewDispatchFields, type DispatchCreationOptions } from "../new-dispatch-form";
 
 type SaleDetail = {
   id: string;
@@ -28,13 +48,13 @@ type SaleDetail = {
   selling_mark: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
+  transporter: string | null;
   bundle_dispatch_no: string | null;
   created_date: string | null;
 };
 
 type MarkOption = { id: string; code: string; name: string | null };
-type GradeOption = { code: string; name: string };
-type DispatchListItem = AuctionDispatchListRow;
+type GradeOption = { code: string; name: string; sampleWeight: number | null; defaultKgPerBag: number | null };
 type DispatchStats = {
   totalLots: number;
   cataloguedLots: number;
@@ -54,42 +74,10 @@ const DISPATCH_STEPS: DispatchStep[] = [
   { key: "catalogued", label: "Catalogued", metric: (stats) => `${stats.cataloguedLots}/${stats.totalLots} lots` },
 ];
 
-const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
-  { key: "sale_no", label: "Broker invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
-  { key: "broker", label: "Broker", accessor: (row) => row.brokers?.name ?? null, sortable: true, filter: "select" },
-  { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
-  { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
-  { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
-  { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select" },
-];
-
-const DISPATCH_LIST = {
-  columns: DISPATCH_LIST_COLUMNS,
-  selectionMode: "single",
-  add: true,
-  edit: false,
-  delete: false,
-} satisfies ListDefinition<DispatchListItem>;
-
 function statusIndex(status: string | null) {
   const normalizedStatus = status === "dispatched" ? "draft" : status;
   const index = DISPATCH_STEPS.findIndex((step) => step.key === normalizedStatus);
   return index >= 0 ? index : 0;
-}
-
-function statusStepClass(index: number, currentIndex: number, editing: boolean, selected: boolean) {
-  if (selected) {
-    return "border-green-500 bg-green-50 text-green-900 dark:border-green-600 dark:bg-green-950 dark:text-green-100";
-  }
-  if (index < currentIndex) {
-    return "border-green-300 bg-green-50/70 text-green-900 dark:border-green-800 dark:bg-green-950/70 dark:text-green-200";
-  }
-  if (index === currentIndex) {
-    return "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200";
-  }
-  return editing
-    ? "border-stone-300 bg-white text-stone-600 hover:border-green-300 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400 dark:hover:border-green-700 dark:hover:text-stone-100"
-    : "border-stone-200 bg-white text-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-400";
 }
 
 function effectiveDispatchStatus(status: string | null, stats: DispatchStats) {
@@ -97,9 +85,6 @@ function effectiveDispatchStatus(status: string | null, stats: DispatchStats) {
   return status === "dispatched" ? "draft" : status;
 }
 
-function cappedDispatchStatus(status: string | null) {
-  return ["valued", "sold", "settled", "broker_statement"].includes(status ?? "") ? "catalogued" : status;
-}
 
 export function DispatchDetailEditor({
   sale,
@@ -110,6 +95,7 @@ export function DispatchDetailEditor({
   grades,
   isOwner,
   soldLotIds,
+  lotPrefixes,
   creation,
 }: {
   sale: SaleDetail;
@@ -120,23 +106,36 @@ export function DispatchDetailEditor({
   grades: GradeOption[];
   isOwner: boolean;
   soldLotIds: string[];
+  lotPrefixes: InvoicePrefixOption[];
   creation: DispatchCreationOptions;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [printAfterConfirm, setPrintAfterConfirm] = useState(false);
   const [grnOpen, setGrnOpen] = useState(false);
   const [liveRows, setLiveRows] = useState(rows);
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const canDelete = isOwner && (sale.status === "dispatched" || sale.status === "draft");
-  const canEditDetails = isOwner;
-  const isDraftStatus = sale.status === "draft" || sale.status === "dispatched";
-  const canConfirmDraft = !isEditing && isDraftStatus;
+  const isDraftStatus = isOpenDraft(sale.status);
+  // The owner can edit or delete a broker invoice in any state. Everyone else
+  // may do so only while it is still an unconfirmed draft — once confirmed it
+  // is downstream financial work and stops being theirs to change.
+  const canDelete = isOwner || isDraftStatus;
+  const canEditDetails = isOwner || isDraftStatus;
+  const canConfirmDraft = !creatingInvoice && !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
   const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
   const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
   const reprintLots = liveRows.filter((row) => row.state === "re-print").length;
   const appliedThresholdGrades = new Set(liveRows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
+  const invoiceCount = new Set(
+    liveRows.flatMap((row) =>
+      row.lot_invoices?.length ? row.lot_invoices.map((invoice) => invoice.invoice_no) : row.invoice_no ? [row.invoice_no] : [],
+    ),
+  ).size;
+  const totalBags = liveRows.reduce((sum, row) => sum + Number(row.bags ?? 0), 0);
+  const totalNetWt = liveRows.reduce((sum, row) => sum + Number(row.net_wt ?? 0), 0);
   const dispatchStats: DispatchStats = {
     totalLots: liveRows.length,
     cataloguedLots,
@@ -144,10 +143,11 @@ export function DispatchDetailEditor({
     reprintLots,
   };
   const displayStatus = effectiveDispatchStatus(sale.status, dispatchStats);
-  const bucket = stateBucket(displayStatus);
   const currentStatusIndex = statusIndex(displayStatus);
-  const detailConfirmed = currentStatusIndex >= statusIndex("invoiced");
-  const canProceedToGrn = currentStatusIndex >= statusIndex("invoiced") && currentStatusIndex < statusIndex("catalogued");
+  const canProceedToGrn =
+    !creatingInvoice &&
+    !isEditing &&
+    currentStatusIndex === statusIndex("invoiced");
   const handleRowsChange = useCallback((nextRows: LotRow[]) => setLiveRows(nextRows), []);
 
   useEffect(() => setLiveRows(rows), [rows]);
@@ -170,275 +170,377 @@ export function DispatchDetailEditor({
         showAppToast(result.error, "error");
         return;
       }
+      setPrintAfterConfirm(true);
       router.refresh();
     } finally {
       setIsConfirming(false);
     }
   }
 
+  // Confirming a draft hands the invoice straight to the printer. It waits for
+  // the refreshed status to arrive rather than printing immediately, so the
+  // sheet shows the confirmed invoice and not the draft it was a moment ago.
+  useEffect(() => {
+    if (!printAfterConfirm || isOpenDraft(sale.status)) return;
+    setPrintAfterConfirm(false);
+    const timer = window.setTimeout(() => window.print(), 0);
+    return () => window.clearTimeout(timer);
+  }, [printAfterConfirm, sale.status]);
+
+  async function createNewDispatch(formData: FormData) {
+    const result = await createDispatchWithId(formData);
+    if (!result.ok) {
+      showAppToast(result.error, "error");
+      return;
+    }
+    showAppToast(result.notice ?? "Broker invoice created.");
+    if (result.id) {
+      startNavigationFeedback();
+      router.push(`/dashboard/auction/${result.id}`);
+    }
+  }
+
+  // Prefix-aware live preview: only bump the sequence among dispatches that
+  // share the same suggested prefix (an older/abnormal prefix's numbers don't
+  // affect this one's next available number).
+  const suggested = parseCompositeInvoiceNo(creation.nextDispatchNo);
+  const suggestedPrefix = suggested?.prefix ?? "";
+  const suggestedSeq = Number(suggested?.seq ?? "0") || 0;
+  const latestSeq = dispatches.reduce((maximum, row) => {
+    const parsed = parseCompositeInvoiceNo(row.sale_no);
+    if (!parsed || parsed.prefix !== suggestedPrefix) return maximum;
+    return Math.max(maximum, Number(parsed.seq) || 0);
+  }, 0);
+  const liveCreation: DispatchCreationOptions = {
+    ...creation,
+    nextDispatchNo: suggestedPrefix
+      ? buildCompositeInvoiceNo(suggestedPrefix, Math.max(suggestedSeq, latestSeq + 1))
+      : creation.nextDispatchNo,
+    dispatchHistory: dispatches.map((row) => ({
+      saleNo: row.sale_no,
+      targetSaleNo: row.target_sale_no,
+      dispatchDate: row.dispatch_date,
+      saleDate: row.sale_date,
+    })),
+  };
+  const visibleStats = creatingInvoice
+    ? { totalLots: 0, cataloguedLots: 0, issueLots: 0, reprintLots: 0 }
+    : dispatchStats;
+  const visibleStatusIndex = creatingInvoice ? 0 : currentStatusIndex;
+  const visibleStateKey =
+    DISPATCH_STEPS[visibleStatusIndex]?.key ?? DISPATCH_STEPS[0]!.key;
+
   return (
-    <div className="grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-cols-[clamp(13rem,18vw,20rem)_minmax(0,1fr)]">
-      <DispatchSideList
-        rows={dispatches}
-        currentId={sale.id}
-        currentDisplayStatus={displayStatus}
-        title="Invoice Overview"
-        creation={creation}
-      />
-      <div className="min-w-0 space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link href="/dashboard/auction" className="text-sm text-green-700 dark:text-green-400 hover:underline">
-            ← Invoice Overview
-          </Link>
-          <h2 className="mt-1 text-xl font-semibold">
-            Invoice Details · {sale.sale_no}
-          </h2>
-          <p className="text-sm text-stone-500 dark:text-stone-400">
-            {broker}
-            {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
-            {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
-            {" · "}
-            <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`} title={`Actual status: ${sale.status}`}>
-              {bucket.label}
-            </span>
-          </p>
-        </div>
-
-        <div className="w-full max-w-md lg:ml-auto lg:w-[26rem]">
-          <ol className="grid grid-cols-4 gap-1.5">
-            {DISPATCH_STEPS.map((step, index) => {
-              const selected = index === currentStatusIndex;
-              const stepCard = (
-                <div
-                  className={`min-h-12 rounded-lg border px-2 py-1.5 text-left transition-colors ${statusStepClass(index, currentStatusIndex, false, selected)}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[10px] font-medium text-current/70">{step.metric(dispatchStats)}</span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${index <= currentStatusIndex ? "bg-current" : "bg-stone-300 dark:bg-stone-600"}`} />
-                  </div>
-                  <p className="mt-1 truncate text-[11px] font-semibold">{step.label}</p>
-                </div>
-              );
-              return (
-                <li key={step.key}>
-                  {step.key === "grn" && canProceedToGrn ? (
-                    <button type="button" className="w-full" onClick={() => setGrnOpen((open) => !open)}>
-                      {stepCard}
-                    </button>
-                  ) : stepCard}
-                </li>
-              );
-            })}
-          </ol>
-          {grnOpen && canProceedToGrn && (
-            <form
-              action={completeGrn.bind(null, sale.id)}
-              className="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left dark:border-blue-900 dark:bg-blue-950"
-            >
-              <label className="block text-xs font-semibold text-blue-900 dark:text-blue-200">GRN image or PDF</label>
-              <input
-                type="file"
-                name="grn_file"
-                accept="image/*,application/pdf"
-                className="mt-2 block w-full text-xs text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-stone-300 dark:file:bg-stone-900"
-              />
-              <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">
-                Upload the physical GRN now, or continue without one. Parsing and GRN-specific automation will be added later.
-              </p>
-              <SubmitButton
-                pendingText="Proceeding…"
-                className="mt-3 inline-flex h-8 items-center justify-center rounded-md bg-blue-700 px-3 text-xs font-semibold text-white hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-700"
-              >
-                Save GRN and proceed
-              </SubmitButton>
-            </form>
-          )}
-        </div>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div>
-          <LotsSection
-            rows={rows}
-            saleId={sale.id}
-            isOwner={isOwner}
-            grades={grades}
-            canEdit={canAddLots}
-            canAdd={canAddLots}
-            soldLotIds={soldLotIds}
-            title="Lot invoices"
-            onRowsChange={handleRowsChange}
-          />
-        </div>
-
-        <form ref={formRef} action={saveDispatch}>
-          <aside className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-900 xl:sticky xl:top-6">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">Invoice Details</h3>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${detailConfirmed ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400"}`}>
-                    {detailConfirmed ? "Confirmed" : "Unconfirmed"}
-                  </span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`}>{bucket.label}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {canEditDetails && !isEditing && (
-                  <button
-                    type="button"
-                    onClick={() => setIsEditing(true)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
-                    title="Edit details"
-                  >
-                    <EditIcon />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2 text-sm">
-              <DetailRow label="Broker" value={broker} />
-              <DetailRow label="Broker invoice" value={sale.sale_no ?? "—"} />
-              <DetailRow label="Created date" value={sale.created_date ?? "—"} />
-              <DetailRow label="Bundle dispatch" value={sale.bundle_dispatch_no ?? "—"} />
-              <DetailRow label="Dispatch date" value={sale.dispatch_date ?? "—"} />
-              <SellingMarkField marks={marks} defaultValue={sale.selling_mark_id ?? ""} displayValue={sale.selling_mark ?? "—"} disabled={!isEditing} />
-              <CompactField label="Lorry no." name="broker_lorry_no" defaultValue={sale.broker_lorry_no ?? ""} disabled={!isEditing} />
-              <CompactField label="Driver" name="driver_name" defaultValue={sale.driver_name ?? ""} disabled={!isEditing} />
-              <CompactField label="Sale no." name="target_sale_no" defaultValue={sale.target_sale_no ?? ""} format="sale-no" disabled={!isEditing} />
-              <CompactField label="Sale date" name="sale_date" type="date" defaultValue={sale.sale_date ?? ""} disabled={!isEditing} />
-              <DetailRow label="Issues" value={`${issueLots} lots`} />
-              <DetailRow label="Re-print" value={`${reprintLots} lots`} />
-              <DetailRow label="Min kg rules" value={appliedThresholdGrades.size > 0 ? `${appliedThresholdGrades.size} applied` : "Not applied"} />
-            </div>
-
-            {canConfirmDraft && (
-              <div className="mt-4 border-t border-stone-200 pt-4 dark:border-stone-800">
-                <button
+    <>
+    <DetailWorkspace
+      railAriaLabel="Broker invoices"
+      rail={
+        <InvoiceSideList
+          rows={dispatches}
+          currentId={creatingInvoice ? "" : sale.id}
+          currentDisplayStatus={displayStatus}
+          onSelect={() => setCreatingInvoice(false)}
+          onCreate={() => {
+            setIsEditing(false);
+            setCreatingInvoice(true);
+          }}
+        />
+      }
+      createAction={{
+        label: "New invoice",
+        title: creatingInvoice
+          ? "A new invoice is already open"
+          : "New invoice",
+        disabled: creatingInvoice,
+        onClick: () => {
+          setIsEditing(false);
+          setGrnOpen(false);
+          setCreatingInvoice(true);
+        },
+      }}
+      searchAction={{
+        panelId: INVOICE_SEARCH_PANEL_ID,
+        label: "Search",
+      }}
+      state={{
+        currentKey: visibleStateKey,
+        steps: DISPATCH_STEPS.map((step) => ({
+          key: step.key,
+          label: step.label,
+          metric: step.metric(visibleStats),
+        })),
+        menuLabel: "State",
+        testId: "invoice-state-indicator",
+        commands: [
+          {
+            id: "confirm-invoice",
+            label: isConfirming
+              ? "Confirming…"
+              : "Confirm",
+            disabled: !canConfirmDraft || isConfirming,
+            busy: isConfirming,
+            busyLabel: "Confirming…",
+            onSelect: confirmDraft,
+          },
+          {
+            id: "record-grn",
+            label: "GRN",
+            disabled: !canProceedToGrn,
+            onSelect: () => setGrnOpen(true),
+          },
+        ],
+      }}
+      deleteAction={
+        canDelete && !creatingInvoice
+          ? {
+              label: "Delete",
+              title: "Delete broker invoice?",
+              description:
+                "This removes the broker invoice and its operational lot records. Financial sale, VAT, or settlement records will safely block deletion instead. This cannot be undone.",
+              confirmLabel: "Delete broker invoice",
+              errorMessage:
+                "Could not delete the broker invoice. Please try again.",
+              action: () => deleteSale(sale.id),
+              onSuccess: () => {
+                startNavigationFeedback();
+                // No overview list to fall back to — go to whichever other
+                // broker invoice is now most recent, or the bootstrap/create
+                // page if that was the last one.
+                const remaining = dispatches.filter((row) => row.id !== sale.id);
+                const latest = [...remaining].sort((a, b) => {
+                  const byDate = String(b.dispatch_date ?? "").localeCompare(String(a.dispatch_date ?? ""));
+                  return byDate !== 0 ? byDate : String(b.sale_no ?? "").localeCompare(String(a.sale_no ?? ""));
+                })[0];
+                router.replace(latest ? `/dashboard/auction/${latest.id}` : "/dashboard/auction/new");
+              },
+            }
+          : undefined
+      }
+    >
+      {creatingInvoice ? (
+        <form action={createNewDispatch}>
+          <DetailRecordPanel
+            tone="draft"
+            eyebrow="Draft broker invoice"
+            title={`Broker Invoice Details · ${liveCreation.nextDispatchNo}`}
+            description="Enter the invoice details here. The workspace stays in place after saving."
+            contentClassName="pt-5"
+            actions={
+              <>
+                <AppButton
                   type="button"
-                  onClick={confirmDraft}
-                  disabled={isConfirming}
-                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-green-700 px-3 text-xs font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-green-600 dark:hover:bg-green-700"
+                  variant="secondary"
+                  onClick={() => setCreatingInvoice(false)}
                 >
-                  {isConfirming ? "Confirming..." : "Confirm broker invoice"}
-                </button>
-              </div>
-            )}
-
-            {isEditing && (
-              <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-stone-200 pt-4 dark:border-stone-800">
-                {canDelete && <DeleteDispatchButton saleId={sale.id} />}
-                <button
-                  type="button"
-                  onClick={() => {
-                    formRef.current?.reset();
-                    setIsEditing(false);
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800"
-                >
-                  <span aria-hidden="true">×</span>
                   Cancel
-                </button>
-                <SubmitButton
-                  pendingText="Saving..."
-                  className="inline-flex h-8 items-center justify-center rounded-md bg-green-700 px-3 text-xs font-semibold text-white hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-700"
-                >
+                </AppButton>
+                <SubmitButton variant="primary" pendingText="Saving…">
                   Save
                 </SubmitButton>
-              </div>
-            )}
-          </aside>
+              </>
+            }
+          >
+            <NewDispatchFields {...liveCreation} />
+          </DetailRecordPanel>
         </form>
-      </div>
+      ) : (
+        <form ref={formRef} action={saveDispatch}>
+          <DetailRecordPanel
+            eyebrow="Broker invoice details"
+            title={`Broker Invoice Details · ${sale.sale_no}`}
+            description={
+              <>
+                {broker}
+                {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
+                {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
+              </>
+            }
+            contentClassName=""
+            actions={
+              <>
+                {!isEditing ? (
+                  <AppButton
+                    type="button"
+                    variant="secondary"
+                    onClick={() => window.print()}
+                  >
+                    <Printer aria-hidden="true" className="h-4 w-4" />
+                    Print
+                  </AppButton>
+                ) : null}
+                {canEditDetails && !isEditing ? (
+                  <AppButton
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    <Pencil aria-hidden="true" className="h-4 w-4" />
+                    Edit
+                  </AppButton>
+                ) : null}
+                {isEditing ? (
+                  <>
+                    <AppButton
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        formRef.current?.reset();
+                        setIsEditing(false);
+                      }}
+                    >
+                      Cancel
+                    </AppButton>
+                    <SubmitButton variant="primary" pendingText="Saving…">
+                      Save
+                    </SubmitButton>
+                  </>
+                ) : null}
+              </>
+            }
+            footer="Lot invoices are managed in the list directly below."
+          >
+            <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+              <DetailField label="Broker" value={broker} />
+              <DetailField
+                label="Broker invoice"
+                value={sale.sale_no ?? "—"}
+              />
+              <DetailField
+                label="Created date"
+                value={sale.created_date ?? "—"}
+              />
+              <DetailField
+                label="Bundle dispatch"
+                value={sale.bundle_dispatch_no ?? "—"}
+              />
+              <DetailField
+                label="Dispatch date"
+                value={sale.dispatch_date ?? "—"}
+              />
+              <SellingMarkField
+                defaultValue={sale.selling_mark_id ?? ""}
+                displayValue={sale.selling_mark ?? "—"}
+                disabled={!isEditing}
+              />
+              <CompactField
+                label="Lorry no."
+                name="broker_lorry_no"
+                defaultValue={sale.broker_lorry_no ?? ""}
+                disabled={!isEditing}
+              />
+              <CompactField
+                label="Driver"
+                name="driver_name"
+                defaultValue={sale.driver_name ?? ""}
+                disabled={!isEditing}
+              />
+              <CompactField
+                label="Transporter"
+                name="transporter"
+                defaultValue={sale.transporter ?? ""}
+                disabled={!isEditing}
+              />
+              <CompactField
+                label="Sale no."
+                name="target_sale_no"
+                defaultValue={sale.target_sale_no ?? ""}
+                format="sale-no"
+                disabled={!isEditing}
+              />
+              <CompactField
+                label="Sale date"
+                name="sale_date"
+                type="date"
+                defaultValue={sale.sale_date ?? ""}
+                disabled={!isEditing}
+              />
+              <DetailField label="Invoices" value={`${invoiceCount}`} />
+              <DetailField label="Total bags" value={`${totalBags}`} />
+              <DetailField label="Net weight" value={`${totalNetWt.toFixed(2)} kg`} />
+              <DetailField label="Issues" value={`${issueLots} lots`} />
+              <DetailField label="Re-print" value={`${reprintLots} lots`} />
+              <DetailField
+                label="Min kg rules"
+                value={
+                  appliedThresholdGrades.size > 0
+                    ? `${appliedThresholdGrades.size} applied`
+                    : "Not applied"
+                }
+              />
+            </div>
+          </DetailRecordPanel>
+        </form>
+      )}
 
-      </div>
-    </div>
+      {creatingInvoice ? (
+        <DetailEmptyPanel
+          title="Lot invoices"
+          description="Save the broker invoice before adding its lot rows."
+        />
+      ) : (
+        <LotsSection
+          rows={rows}
+          saleId={sale.id}
+          isOwner={isOwner}
+          grades={grades}
+          lotPrefixes={lotPrefixes}
+          canEdit={canAddLots}
+          canAdd={canAddLots}
+          soldLotIds={soldLotIds}
+          title="Lot invoices"
+          onRowsChange={handleRowsChange}
+        />
+      )}
+    </DetailWorkspace>
+    <AppDrawer
+      open={grnOpen && canProceedToGrn}
+      title={`GRN · ${sale.sale_no ?? "Broker invoice"}`}
+      description="Upload a GRN document or continue without one."
+      onClose={() => setGrnOpen(false)}
+    >
+      <form action={completeGrn.bind(null, sale.id)} className="grid gap-5">
+        <label className="grid gap-2 text-sm font-semibold text-stone-900 dark:text-stone-100">
+          GRN image or PDF
+          <input
+            type="file"
+            name="grn_file"
+            accept="image/*,application/pdf"
+            className="block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-normal text-stone-700 file:mr-3 file:rounded-md file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-stone-800 hover:file:bg-stone-200 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-200 dark:file:bg-stone-800 dark:file:text-stone-100"
+          />
+        </label>
+        <div className="flex flex-wrap justify-end gap-2">
+          <SubmitButton variant="secondary" pendingText="Proceeding…">
+            Skip GRN
+          </SubmitButton>
+          <SubmitButton variant="primary" pendingText="Saving…">
+            Save GRN
+          </SubmitButton>
+        </div>
+      </form>
+    </AppDrawer>
+    {/* Off-screen; only the print stylesheet ever lays this out. Skipped while
+        creating a new invoice, which has nothing to print yet. */}
+    {!creatingInvoice && (
+      <BrokerInvoicePrintout
+        saleNo={sale.sale_no}
+        broker={broker}
+        sellingMark={sale.selling_mark}
+        dispatchDate={sale.dispatch_date}
+        saleDate={sale.sale_date}
+        promptDate={sale.prompt_date}
+        targetSaleNo={sale.target_sale_no}
+        transporter={sale.transporter}
+        brokerLorryNo={sale.broker_lorry_no}
+        driverName={sale.driver_name}
+        bundleDispatchNo={sale.bundle_dispatch_no}
+        status={displayStatus}
+        rows={liveRows}
+      />
+    )}
+    </>
   );
 }
 
-function DispatchSideList({
-  rows,
-  currentId,
-  currentDisplayStatus,
-  title,
-  creation,
-}: {
-  rows: DispatchListItem[];
-  currentId: string;
-  currentDisplayStatus: string | null;
-  title: string;
-  creation: DispatchCreationOptions;
-}) {
-  return (
-    <EntityList
-      resource={{ key: "auction.dispatches" }}
-      initialRows={rows}
-      definition={DISPATCH_LIST}
-      getId={(row) => row.id}
-      rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
-      title={title}
-      description={(liveRows) => `${liveRows.length} broker invoice${liveRows.length === 1 ? "" : "s"}`}
-      create={{
-        action: createDispatch,
-        label: "New broker invoice",
-        panelTitle: "New broker invoice",
-        panelClassName: "max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain",
-        disabledReason: "Finish creating the current broker invoice first.",
-        render: ({ action, close, rows: liveRows }) => {
-          const latestSaleNo = liveRows.reduce((maximum, row) => Math.max(maximum, Number(saleNoKey(row.sale_no)) || 0), 0);
-          const liveNextDispatchNo = formatFourDigitNo(Math.max(Number(saleNoKey(creation.nextDispatchNo)) || 0, latestSaleNo + 1));
-          const liveDispatchHistory = liveRows.map((row) => ({
-            saleNo: row.sale_no,
-            targetSaleNo: row.target_sale_no,
-            dispatchDate: row.dispatch_date,
-            saleDate: row.sale_date,
-          }));
-          return (
-            <NewDispatchForm
-              {...creation}
-              nextDispatchNo={liveNextDispatchNo}
-              dispatchHistory={liveDispatchHistory}
-              action={action}
-              onCancel={close}
-            />
-          );
-        },
-      }}
-      className="xl:sticky xl:top-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] xl:flex-col"
-      listControls={{
-        initialFilters: { status: "Draft" },
-        storageKey: "auction.invoice-overview.filters",
-      }}
-      emptyMessage="No broker invoices."
-      filteredEmptyMessage="No broker invoices match."
-      sideList={{
-        href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
-        isActive: (dispatch) => dispatch.id === currentId,
-        sortColumnKey: "sale_no",
-        searchLabel: "Search",
-        showSelectionSummary: false,
-        content: (dispatch, { active }) => {
-          const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
-          return (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
-                {active && <span className="text-stone-400">‹</span>}
-              </div>
-              <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
-              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                <span className="tabular-nums text-stone-500 dark:text-stone-400">Sale {formatSaleNo(dispatch.target_sale_no) || "—"}</span>
-                <span className={`rounded-full px-2 py-0.5 ${bucket.style}`}>{bucket.label}</span>
-              </div>
-            </>
-          );
-        },
-      }}
-    />
-  );
-}
 
 function CompactField({
   label,
@@ -455,10 +557,12 @@ function CompactField({
   format?: "four-digit" | "sale-no";
   disabled?: boolean;
 }) {
-  if (disabled) return <DetailRow label={label} value={defaultValue || "—"} />;
+  if (disabled) {
+    return <DetailField label={label} value={defaultValue || "—"} />;
+  }
   return (
-    <div className="flex items-center justify-between gap-3">
-      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</label>
+    <div className="grid min-w-0 gap-1.5">
+      <label className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</label>
       <input
         name={name}
         type={type}
@@ -467,51 +571,34 @@ function CompactField({
           if (format === "four-digit") event.currentTarget.value = formatFourDigitNo(event.currentTarget.value);
           if (format === "sale-no") event.currentTarget.value = formatSaleNo(event.currentTarget.value);
         }}
-        className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        className="h-9 min-w-0 w-full rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-600/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
       />
     </div>
   );
 }
 
 function SellingMarkField({
-  marks,
   defaultValue,
   displayValue,
   disabled,
 }: {
-  marks: MarkOption[];
   defaultValue: string;
   displayValue: string;
   disabled: boolean;
 }) {
-  if (disabled) return <DetailRow label="Selling mark" value={displayValue} />;
+  if (disabled) {
+    return <DetailField label="Selling mark" value={displayValue} />;
+  }
   return (
-    <div className="flex items-center justify-between gap-3">
-      <label className="shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
-      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-8 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 text-right text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
-        <option value="" disabled>Select selling mark</option>
-        {marks.map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">{label}</span>
-      <span className="truncate text-sm font-medium text-stone-800 dark:text-stone-200" title={value}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function EditIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-      <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
-      <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
-    </svg>
+    <DetailLovField
+      label="Selling mark"
+      source="auction.marks"
+      name="selling_mark_id"
+      required
+      defaultValue={defaultValue}
+      // The record already reads as "MF1530 — KUMUDU"; keep that showing until
+      // the user picks a different mark.
+      defaultLabel={displayValue === "—" ? "" : displayValue}
+    />
   );
 }

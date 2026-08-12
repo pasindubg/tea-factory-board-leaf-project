@@ -1,0 +1,1 @@
+ALTER TABLE "auction_sales" ADD COLUMN "transporter" text;

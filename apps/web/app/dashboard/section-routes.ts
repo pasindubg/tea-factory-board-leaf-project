@@ -4,6 +4,7 @@ const SECTION_SLUGS: Record<ModuleGroup, string> = {
   "Leaf Handling": "leaf-handling",
   "Sales Handling": "sales-handling",
   "Dispatch Handling": "dispatch-handling",
+  "Index Cycle Management": "index-cycle-management",
   "User Handling": "user-handling",
 };
 

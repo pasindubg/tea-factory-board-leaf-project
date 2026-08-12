@@ -1,0 +1,223 @@
+import { SubmitButton } from "@/components/submit-button";
+import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
+import {
+  contractValidationIssues,
+  invoiceMatchKey,
+  reconcileValuation,
+  repairLegacyContractLines,
+  validateContractLine,
+  type ParsedContract,
+  type ValuationInput,
+  type SaleInput,
+} from "@tea/api";
+import { confirmContract, rejectImport } from "@/app/dashboard/auction/actions";
+import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { formatFourDigitNo } from "@/app/dashboard/auction/sale-number";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import type { requirePageAccess } from "@/lib/profile";
+import { ContractLinesTable, type ContractLineRow } from "./contract-lines-table";
+
+type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
+
+export async function ContractContent({
+  supabase,
+  profile,
+  saleId,
+  importId,
+}: {
+  supabase: Ctx["supabase"];
+  profile: Ctx["profile"];
+  saleId: string;
+  importId: string;
+}) {
+  const { data: imp } = await supabase
+    .from("doc_imports")
+    .select("parsed_json, status, source_filename")
+    .eq("id", importId)
+    .single();
+  if (!imp?.parsed_json) {
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Staged import not found.</p>;
+  }
+
+  // The contract covers the broker's whole sale — match against lots on every
+  // dispatch in this sale's group.
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const { data: lotRows } = await supabase
+    .from("auction_lots")
+    .select("id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
+    .in("sale_id", groupIds);
+  const lotIds = (lotRows ?? []).map((l) => l.id as string);
+  const { data: valRows } = await supabase
+    .from("valuations")
+    .select("lot_id, price_min, price_max, projected_proceeds")
+    .in("lot_id", lotIds.length > 0 ? lotIds : ["00000000-0000-0000-0000-000000000000"]);
+
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
+  const rawParsed = imp.parsed_json as ParsedContract;
+  const repairedLines = repairLegacyContractLines(rawParsed.lines);
+  const parsed: ParsedContract = {
+    ...rawParsed,
+    lines: repairedLines.map((line) => ({ ...line, grade: canonicalGrade(line.grade, aliases) })),
+  };
+  const reviewIssues = [...new Set([...parsed.issues, ...contractValidationIssues(parsed.lines)])];
+  const confirmed = imp.status === "confirmed";
+
+  const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
+  // A broker's sellers contract only ever prints the bare invoice sequence
+  // ("0003"), never the factory's index-cycle prefix ("26I01-0003") — match on
+  // the normalized key, not the display string.
+  const invoiceToLotId = new Map<string, string>();
+  for (const lot of (lotRows ?? []) as { id: string; invoice_no: string | null; lot_invoices?: { invoice_no: string | null }[] | null }[]) {
+    if (lot.invoice_no) invoiceToLotId.set(invoiceMatchKey(lot.invoice_no), lot.id);
+    for (const invoice of lot.lot_invoices ?? []) {
+      if (invoice.invoice_no) invoiceToLotId.set(invoiceMatchKey(invoice.invoice_no), lot.id);
+    }
+  }
+
+  const valInputs: ValuationInput[] = (valRows ?? [])
+    .filter((v) => lotById.has(v.lot_id as string))
+    .map((v) => {
+      const lot = lotById.get(v.lot_id as string)!;
+      return {
+        lotId: v.lot_id as string,
+        invoiceNo: formatFourDigitNo(lot.invoice_no as string),
+        grade: lot.grade as string,
+        netWt: Number(lot.net_wt),
+        priceMin: v.price_min == null ? null : Number(v.price_min),
+        priceMax: v.price_max == null ? null : Number(v.price_max),
+        projectedProceeds: v.projected_proceeds == null ? null : Number(v.projected_proceeds),
+      };
+    });
+  const saleInputs: SaleInput[] = parsed.lines
+    .filter((l) => l.sold !== false && invoiceToLotId.has(invoiceMatchKey(l.invoiceNo)))
+    .map((l) => ({ lotId: invoiceToLotId.get(invoiceMatchKey(l.invoiceNo))!, pricePerKg: l.pricePerKg, proceeds: l.proceeds }));
+  const unmatchedLines = parsed.lines.filter((line) => !invoiceToLotId.has(invoiceMatchKey(line.invoiceNo)));
+  const parsedSoldCount = parsed.lines.filter((line) => line.sold !== false).length;
+  const parsedNotSoldCount = parsed.lines.length - parsedSoldCount;
+  const canConfirm = reviewIssues.length === 0 && unmatchedLines.length === 0;
+
+  const recon = reconcileValuation(valInputs, saleInputs);
+  const reconByLot = new Map(recon.rows.map((r) => [r.lotId, r]));
+  const s = recon.summary;
+  const hasValuations = valInputs.length > 0;
+
+  const contractLineRows: ContractLineRow[] = parsed.lines.map((l) => {
+    const lotId = invoiceToLotId.get(invoiceMatchKey(l.invoiceNo));
+    const r = lotId ? reconByLot.get(lotId) : undefined;
+    const validation = validateContractLine(l);
+    return {
+      sold: l.sold !== false,
+      status: l.sold !== false ? "Sold" : confirmed ? "Re-print" : "Not sold",
+      invoiceNo: l.invoiceNo,
+      invoiceMatched: lotId != null,
+      buyerName: l.buyerName,
+      netWt: l.netWt,
+      pricePerKg: l.pricePerKg,
+      priceMin: r?.priceMin ?? null,
+      priceMax: r?.priceMax ?? null,
+      classification: r?.classification ?? "no-valuation",
+      proceeds: l.proceeds,
+      expectedProceeds: validation.expectedProceeds,
+      proceedsVariance: validation.proceedsVariance,
+      proceedsMatch: validation.proceedsMatch,
+      variance: r?.variance ?? null,
+      vatAmount: l.vatAmount,
+      onGuarantee: l.onGuarantee,
+    };
+  });
+
+  const visibleContractLineRows = await applyServerListSearch(supabase, profile, "contract-lines", contractLineRows);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ② — valuation ↔ sale price</h3>
+        <p className="text-sm text-stone-500 dark:text-stone-400">
+          {parsed.lines.length} contract lines · {parsedSoldCount} sold · {parsedNotSoldCount} not sold · {parsed.lines.length - unmatchedLines.length} matched · prompt {parsed.promptDate ?? "—"}
+        </p>
+      </div>
+
+      {confirmed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">
+          <span>Sale lines confirmed and applied.</span>
+          <form action={confirmContract.bind(null, importId, saleId)}>
+            <SubmitButton
+              pendingText="Re-running…"
+              className="rounded-md border border-green-600 dark:border-green-500 px-3 py-1 text-xs font-medium text-green-800 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900"
+            >
+              Re-run settlement
+            </SubmitButton>
+          </form>
+        </div>
+      )}
+      {!hasValuations && (
+        <p className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
+          No valuations recorded yet — upload the Valuation Report first to compare against it. You can still
+          confirm the sale prices.
+        </p>
+      )}
+      {reviewIssues.length > 0 && (
+        <div className="rounded-md bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-400">
+          <p className="font-medium">Parse warnings:</p>
+          <ul className="ml-4 list-disc">
+            {reviewIssues.map((i, idx) => (
+              <li key={idx}>{i}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {unmatchedLines.length > 0 && (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">
+          <p className="font-medium">Invoice matching required before confirmation:</p>
+          <p className="mt-1">
+            {unmatchedLines.length} contract line{unmatchedLines.length === 1 ? "" : "s"} could not be matched to a lot in this broker sale:{" "}
+            {unmatchedLines.map((line) => formatFourDigitNo(line.invoiceNo)).join(", ")}.
+          </p>
+        </div>
+      )}
+
+      {hasValuations && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-green-100 dark:bg-green-900 px-3 py-1 text-sm text-green-800 dark:text-green-400">Above: <strong>{s.above}</strong></span>
+          <span className="rounded-full bg-blue-100 dark:bg-blue-900 px-3 py-1 text-sm text-blue-800 dark:text-blue-400">Within: <strong>{s.within}</strong></span>
+          <span className="rounded-full bg-red-100 dark:bg-red-900 px-3 py-1 text-sm text-red-800 dark:text-red-400">Below: <strong>{s.below}</strong></span>
+          <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-3 py-1 text-sm text-stone-700 dark:text-stone-300">
+            Valued avg {s.valuationAvg.toLocaleString()} → realised {s.realisedAvg.toLocaleString()} /kg
+          </span>
+          <span className={`rounded-full px-3 py-1 text-sm font-medium ${s.premiumPct >= 0 ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-400" : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"}`}>
+            {s.premiumPct >= 0 ? "+" : ""}
+            {s.premiumPct}% vs valuation
+          </span>
+        </div>
+      )}
+
+      <ContractLinesTable rows={visibleContractLineRows} />
+
+      {!confirmed && (
+        <div className="flex gap-3">
+          <form action={confirmContract.bind(null, importId, saleId)}>
+            <SubmitButton
+              pendingText="Saving…"
+              disabled={!canConfirm}
+              title={!canConfirm ? "Resolve the contract validation and invoice-matching warnings before confirming." : undefined}
+              variant="primary"
+              className="rounded-md px-4 py-2 text-sm"
+            >
+              Confirm — record {saleInputs.length} sold; mark {parsed.lines.filter((line) => line.sold === false && invoiceToLotId.has(invoiceMatchKey(line.invoiceNo))).length} re-print
+            </SubmitButton>
+          </form>
+          <form action={rejectImport.bind(null, importId, saleId)}>
+            <ConfirmSubmitButton
+              title="Reject Sellers Contract?"
+              description="This discards the staged contract only. The sale, Broker Invoice, and lots will remain unchanged."
+              confirmLabel="Reject contract"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+            >
+              Reject
+            </ConfirmSubmitButton>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
