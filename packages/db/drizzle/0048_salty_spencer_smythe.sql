@@ -1,0 +1,1 @@
+ALTER TABLE "auction_lots" ADD CONSTRAINT "fk_auction_lots_grade" FOREIGN KEY ("factory_id","grade") REFERENCES "public"."auction_grades"("factory_id","code") ON DELETE no action ON UPDATE cascade;

@@ -7,6 +7,7 @@ import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, pars
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
 import { stateBucket } from "@/app/dashboard/auction/state-buckets";
+import { DOC_TYPE_LABELS, docStatus, computeActiveDocumentIds, type AuctionDocType } from "@/app/dashboard/auction/doc-status";
 import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
 import { mergeAdvancedQuery, mergeListCriteria, resolveListSearchState } from "@/lib/list-search-state";
@@ -150,9 +151,18 @@ type RefreshReprintLot = RefreshLotRow & {
   } | null;
 };
 
-function reprintOverviewRows(lots: RefreshReprintLot[]) {
+/**
+ * Groups lots into re-print chains keyed by the earliest ancestor's id,
+ * walking reprint_source_lot_id back to its root. A lot with no re-print
+ * history at all is its own one-node chain. Shared by the Re-print Overview
+ * (one summary row per chain) and any per-lot view that needs to know how
+ * many times a lot's whole chain has failed to sell so far.
+ */
+function groupIntoReprintChains<T extends { id: string; reprint_source_lot_id: string | null }>(
+  lots: readonly T[],
+): Map<string, T[]> {
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
-  const rootIdFor = (lot: RefreshReprintLot) => {
+  const rootIdFor = (lot: T) => {
     let current = lot;
     const seen = new Set<string>();
     while (current.reprint_source_lot_id && lotById.has(current.reprint_source_lot_id) && !seen.has(current.id)) {
@@ -161,11 +171,34 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
     }
     return current.id;
   };
-  const chains = new Map<string, RefreshReprintLot[]>();
+  const chains = new Map<string, T[]>();
   for (const lot of lots) {
     const rootId = rootIdFor(lot);
     chains.set(rootId, [...(chains.get(rootId) ?? []), lot]);
   }
+  return chains;
+}
+
+/**
+ * How many times each lot's re-print chain has failed to sell so far, keyed
+ * by every lot id in the chain (not just the root) — a lot currently sitting
+ * in "re-print" state counts its own failure, unlike the old "how many lots
+ * were re-printed FROM this one" count, which was always 0 for the lot that
+ * just failed and hasn't been re-catalogued into a child yet.
+ */
+function reprintCountsByLotId(lots: readonly { id: string; reprint_source_lot_id: string | null; state: string | null }[]): Map<string, number> {
+  const chains = groupIntoReprintChains(lots);
+  const counts = new Map<string, number>();
+  for (const chain of chains.values()) {
+    const chainReprintCount = chain.filter((node) => node.state === "re-print").length;
+    for (const node of chain) counts.set(node.id, chainReprintCount);
+  }
+  return counts;
+}
+
+function reprintOverviewRows(lots: RefreshReprintLot[]) {
+  const lotById = new Map(lots.map((lot) => [lot.id, lot]));
+  const chains = groupIntoReprintChains(lots);
 
   return [...chains.entries()].map(([rootId, unsortedChain]) => {
     const chain = [...unsortedChain].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
@@ -878,6 +911,66 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       };
     },
   },
+  // Every staged/confirmed doc_imports row, factory-wide — the Document
+  // Details page's side rail. "Active" is derived per (doc type, broker) via
+  // the same helper the per-sale Documents tab uses, so the two never drift.
+  "auction.documents-side-list": {
+    moduleKey: "auction",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const [{ data: docs, error: docsError }, { data: dispatches, error: dispatchError }] = await Promise.all([
+        supabase
+          .from("doc_imports")
+          .select("id, doc_type, source_filename, status, parsed_at, confirmed_at, sale_id, parsed_json")
+          .order("parsed_at", { ascending: false }),
+        supabase
+          .from("auction_sales")
+          .select("id, sale_no, target_sale_no, broker_id, brokers(name)")
+          .eq("sale_kind", "dispatch"),
+      ]);
+      if (docsError || dispatchError) return { ok: false, error: friendlyError(docsError ?? dispatchError) };
+
+      type DocRow = {
+        id: string;
+        doc_type: AuctionDocType;
+        source_filename: string | null;
+        status: "parsed" | "reviewed" | "confirmed" | "rejected";
+        parsed_at: string | null;
+        confirmed_at: string | null;
+        sale_id: string | null;
+        parsed_json: unknown;
+      };
+      type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; broker_id: string | null; brokers: { name: string } | null };
+      const docRows = (docs ?? []) as unknown as DocRow[];
+      const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
+      const dispatchById = new Map(dispatchRows.map((dispatch) => [dispatch.id, dispatch]));
+
+      const activeIds = computeActiveDocumentIds(docRows, (doc) => {
+        const dispatch = doc.sale_id ? dispatchById.get(doc.sale_id) : undefined;
+        return dispatch?.broker_id ?? doc.sale_id ?? "";
+      });
+
+      return {
+        ok: true,
+        rows: docRows.map((doc) => {
+          const dispatch = doc.sale_id ? dispatchById.get(doc.sale_id) : undefined;
+          const { status, label } = docStatus(doc);
+          return {
+            id: doc.id,
+            docType: doc.doc_type,
+            docTypeLabel: DOC_TYPE_LABELS[doc.doc_type],
+            filename: doc.source_filename ?? "document.pdf",
+            broker: dispatch?.brokers?.name ?? "—",
+            saleNo: formatSaleNo(saleNoKey(dispatch?.target_sale_no || dispatch?.sale_no)) || "—",
+            status,
+            statusLabel: label,
+            active: activeIds.has(doc.id),
+            uploadedAt: doc.parsed_at,
+          };
+        }),
+      };
+    },
+  },
   "auction.eligible-broker-invoices": {
     moduleKey: "auction",
     parse: parseNoParams,
@@ -1275,18 +1368,22 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id as string));
       const lotRows = allLotRows.filter((lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id));
       const lotIds = lotRows.map((lot) => lot.id);
-      const [{ data: lines, error: lineError }, { data: reprints, error: reprintError }] = lotIds.length > 0
+      const [{ data: lines, error: lineError }, { data: reprintTouchedLots, error: reprintError }] = lotIds.length > 0
         ? await Promise.all([
             supabase
               .from("sale_lines")
               .select("lot_id, net_wt, price_per_kg, proceeds, vat_amount, on_guarantee, buyers(name, vat_no)")
               .eq("factory_id", profile.factory_id)
               .in("lot_id", lotIds),
+            // Factory-wide, not scoped to this sale's lots: a re-print's chain
+            // can span multiple sales (a failed lot re-catalogues into a new
+            // broker invoice/sale), so the id and state of every node need to
+            // be known to compute a chain-wide count for any lot in it.
             supabase
               .from("auction_lots")
-              .select("reprint_source_lot_id")
+              .select("id, reprint_source_lot_id, state")
               .eq("factory_id", profile.factory_id)
-              .in("reprint_source_lot_id", lotIds),
+              .or("state.eq.re-print,reprint_source_lot_id.not.is.null"),
           ])
         : [{ data: [], error: null }, { data: [], error: null }];
       if (lineError || reprintError) return { ok: false, error: friendlyError(lineError ?? reprintError) };
@@ -1303,11 +1400,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .filter((line) => line.lot_id)
           .map((line) => [line.lot_id as string, line]),
       );
-      const reprintCountBySource = new Map<string, number>();
-      for (const row of (reprints ?? []) as { reprint_source_lot_id: string | null }[]) {
-        if (!row.reprint_source_lot_id) continue;
-        reprintCountBySource.set(row.reprint_source_lot_id, (reprintCountBySource.get(row.reprint_source_lot_id) ?? 0) + 1);
-      }
+      const reprintCountByLotId = reprintCountsByLotId(
+        (reprintTouchedLots ?? []) as { id: string; reprint_source_lot_id: string | null; state: string | null }[],
+      );
 
       return {
         ok: true,
@@ -1339,8 +1434,8 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
             vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
             onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
-            reprint: Boolean(lot.reprint_source_lot_id),
-            reprintCount: reprintCountBySource.get(lot.id) ?? 0,
+            reprint: Boolean(lot.reprint_source_lot_id) || lot.state === "re-print",
+            reprintCount: reprintCountByLotId.get(lot.id) ?? 0,
           };
         }),
       };

@@ -67,7 +67,7 @@ const COLUMNS: EntityListColumn<GradeTableRow>[] = [
   },
   {
     key: "defaultKgPerBag",
-    label: "kg/bag",
+    label: "Min kg/bag",
     accessor: (row) => row.defaultKgPerBag ?? null,
     sortable: true,
     headerClassName: "text-right",
@@ -143,7 +143,7 @@ export function GradesTable({ rows, isOwner }: { rows: GradeTableRow[]; isOwner:
             <input name="name" placeholder="Display name" className={input} />
             <input name="sort_order" type="number" step="1" min="0" placeholder="Sort order" className={input} />
             <input name="sample_weight" type="number" step="0.01" min="0" placeholder="Sample kg" className={input} />
-            <input name="default_kg_per_bag" type="number" step="0.01" min="0" placeholder="kg/bag" className={input} />
+            <input name="default_kg_per_bag" type="number" step="0.01" min="0" placeholder="Min kg/bag" className={input} />
             <div className="flex gap-2">
               <input name="aliases" placeholder="PEK, PEKOE" className={input} />
               <button type="button" onClick={close} className="shrink-0 rounded-md border border-stone-300 px-3 py-2 text-sm font-medium dark:border-stone-600">Cancel</button>

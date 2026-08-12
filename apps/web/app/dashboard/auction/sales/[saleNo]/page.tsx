@@ -8,6 +8,7 @@ import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { applyServerListSearch } from "@/lib/list-search-state";
 import { stateBucket } from "../../state-buckets";
+import { brokerInvoiceRank } from "../../dispatch-status";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
 import { DispatchesInSaleTable, type DispatchInSaleRow } from "./dispatches-in-sale-table";
@@ -15,6 +16,8 @@ import { SaleLinesTable } from "./sale-lines-table";
 import { SalesSideList, type SaleSideListRow } from "./sales-side-list";
 import { SalesReconciliationAssistant, type SalesReconciliationGroup } from "./sales-reconciliation-assistant";
 import { SaleDetailWorkspace } from "./sale-detail-workspace";
+import { SaleDocumentsTable, type SaleDocumentRow } from "./sale-documents-table";
+import { DOC_TYPE_LABELS, docStatus, computeActiveDocumentIds, type AuctionDocType } from "../../doc-status";
 
 const SEARCH_PANEL_ID = "auction-sale-detail-search";
 
@@ -54,13 +57,47 @@ type LineRow = {
   on_guarantee: boolean | null;
 };
 
+type DocImportRow = {
+  id: string;
+  doc_type: AuctionDocType;
+  source_filename: string | null;
+  status: "parsed" | "reviewed" | "confirmed" | "rejected";
+  parsed_at: string | null;
+  confirmed_at: string | null;
+  sale_id: string | null;
+  parsed_json: unknown;
+};
+
 function plural(n: number, singular: string, pluralText = `${singular}s`) {
   return `${n} ${n === 1 ? singular : pluralText}`;
 }
 
+// Human label for a broker invoice's furthest-progressed status — drives the
+// "Stage" column in the Document reconciliation assistant's broker list.
+const BROKER_STAGE_LABEL: Record<string, string> = {
+  draft: "Draft",
+  dispatched: "Draft",
+  invoiced: "Invoiced",
+  grn: "At GRN",
+  catalogued: "Acknowledged",
+  valued: "Valued",
+  sold: "Sold",
+  settled: "Settled",
+  broker_statement: "Broker statement",
+};
+
 function lotCount(lots: LotRow[], states: readonly string[]) {
   const wanted = new Set(states);
   return lots.filter((lot) => wanted.has(lot.state ?? "")).length;
+}
+
+// A valuation confirm only ever updates auction_lots.state — auction_sales.status
+// never advances past "catalogued" — so lot state, not dispatch status, is the
+// only real signal that a broker's valuation (or sale) has been recorded.
+const VALUED_LOT_STATES = new Set(["valued", "sold", "settled", "withdrawn", "re-print"]);
+
+function lotIsValued(lot: LotRow) {
+  return VALUED_LOT_STATES.has(lot.state ?? "");
 }
 
 function lotIsSold(lot: LotRow) {
@@ -87,11 +124,14 @@ function statusBreakdown(lots: LotRow[]) {
 
 export default async function SaleDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ saleNo: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { supabase, profile } = await requirePageAccess("auction-sale-detail");
   const { saleNo: rawSaleNo } = await params;
+  const { tab } = await searchParams;
   const saleNo = decodeURIComponent(rawSaleNo);
   const displaySaleNo = formatSaleNo(saleNo);
 
@@ -130,6 +170,46 @@ export default async function SaleDetailPage({
 
   if (dispatches.length === 0 && lotRows.length === 0) notFound();
   const saleLineResourceId = dispatches[0]?.id ?? lotRows[0]?.sale_id;
+
+  const { data: docImports, error: docImportsError } = dispatchIds.size > 0
+    ? await supabase
+        .from("doc_imports")
+        .select("id, doc_type, source_filename, status, parsed_at, confirmed_at, sale_id, parsed_json")
+        .in("sale_id", [...dispatchIds])
+        .neq("doc_type", "bank_csv")
+        .order("parsed_at", { ascending: false })
+    : { data: [], error: null };
+  if (docImportsError) throw new Error(`Could not load sale documents: ${docImportsError.message}`);
+  const docImportRows = (docImports ?? []) as unknown as DocImportRow[];
+  const brokerNameByDispatchId = new Map(
+    dispatches.map((dispatch) => [dispatch.id, (dispatch.brokers as { name: string } | null)?.name ?? "—"]),
+  );
+  const brokerIdByDispatchId = new Map(dispatches.map((dispatch) => [dispatch.id, dispatch.broker_id]));
+
+  // A sale can have multiple brokers, each submitting their own acknowledgement/
+  // valuation/contract (see saleGroupIds — reconciliation is scoped per broker
+  // within the sale). So "active" tracks the latest confirmed import per
+  // (doc type, broker), not per doc type across the whole sale — otherwise one
+  // broker's confirmed report would wrongly supersede another broker's.
+  const activeDocIds = computeActiveDocumentIds(
+    docImportRows,
+    (doc) => (doc.sale_id ? brokerIdByDispatchId.get(doc.sale_id) : null) ?? doc.sale_id ?? "",
+  );
+  const documentRows: SaleDocumentRow[] = docImportRows.map((doc) => {
+    const { status, label } = docStatus(doc);
+    return {
+      id: doc.id,
+      docType: doc.doc_type,
+      docTypeLabel: DOC_TYPE_LABELS[doc.doc_type],
+      filename: doc.source_filename ?? "document.pdf",
+      broker: doc.sale_id ? brokerNameByDispatchId.get(doc.sale_id) ?? "—" : "—",
+      status,
+      statusLabel: label,
+      active: activeDocIds.has(doc.id),
+      uploadedAt: doc.parsed_at,
+      href: `/dashboard/auction/documents/${doc.id}`,
+    };
+  });
   if (!saleLineResourceId) notFound();
 
   const { data: lines, error: linesError } = lotRows.length > 0
@@ -162,6 +242,17 @@ export default async function SaleDetailPage({
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
   const soldCount = soldLotIds.size;
+  // Weight offered in this sale, over the same lots the "Lots sold" ratio
+  // counts, so the two figures always describe one population.
+  const totalNetKg = lotRows.reduce((sum, lot) => sum + Number(lot.net_wt ?? 0), 0);
+  // One auction sale can span several broker invoices, and they need not share
+  // a sale date — show the span rather than silently picking the first.
+  const saleDates = [...new Set(dispatches.map((dispatch) => dispatch.sale_date).filter(Boolean))].sort();
+  const saleDateLabel = saleDates.length === 0
+    ? "—"
+    : saleDates.length === 1
+      ? saleDates[0]
+      : `${saleDates[0]} – ${saleDates[saleDates.length - 1]}`;
   const settledCount = dispatchCount(dispatches, ["settled"]);
   const invoiceEditingLocked = settledCount > 0;
   const currentStateKey =
@@ -218,7 +309,8 @@ export default async function SaleDetailPage({
     };
   });
 
-  const reconciliationGroupsByBroker = new Map<string, SalesReconciliationGroup>();
+  type ReconciliationGroupBuild = SalesReconciliationGroup & { dispatchRank: number; dispatchStageLabel: string };
+  const reconciliationGroupsByBroker = new Map<string, ReconciliationGroupBuild>();
   for (const dispatch of dispatches) {
     const broker = (dispatch.brokers as { name: string } | null)?.name ?? "—";
     const key = dispatch.broker_id ?? broker;
@@ -227,18 +319,41 @@ export default async function SaleDetailPage({
       broker,
       dispatchNos: [],
       lotCount: 0,
+      ackDone: false,
+      valuationDone: false,
+      soldDone: false,
+      stageLabel: "Draft",
+      dispatchRank: -1,
+      dispatchStageLabel: "Draft",
     };
     current.dispatchNos.push(formatFourDigitNo(dispatch.sale_no));
-    current.lotCount += (lotsByDispatch.get(dispatch.id) ?? []).length;
+    const dispatchLots = lotsByDispatch.get(dispatch.id) ?? [];
+    current.lotCount += dispatchLots.length;
+    // A single dispatch reaching "catalogued" means the broker's ack covers
+    // the whole group (it's uploaded once per broker, not once per dispatch).
+    // Ack confirmation is the only step that still moves auction_sales.status;
+    // valuation/sale progress only ever shows up on the lots themselves.
+    const dispatchRank = brokerInvoiceRank(dispatch.status);
+    if (dispatchRank >= brokerInvoiceRank("catalogued")) current.ackDone = true;
+    if (dispatchRank > current.dispatchRank) {
+      current.dispatchRank = dispatchRank;
+      current.dispatchStageLabel = BROKER_STAGE_LABEL[dispatch.status] ?? dispatch.status;
+    }
+    if (dispatchLots.some(lotIsValued)) current.valuationDone = true;
+    if (dispatchLots.some(lotIsSold)) current.soldDone = true;
     reconciliationGroupsByBroker.set(key, current);
+  }
+  for (const group of reconciliationGroupsByBroker.values()) {
+    group.stageLabel = group.soldDone ? "Sold" : group.valuationDone ? "Valued" : group.ackDone ? "Acknowledged" : group.dispatchStageLabel;
   }
   const reconciliationGroups = [...reconciliationGroupsByBroker.values()].sort((a, b) => a.broker.localeCompare(b.broker));
 
   const saleLineTableRows = saleLines.rows;
 
-  const [visibleSaleListRows, visibleDispatchTableRows] = await Promise.all([
+  const [visibleSaleListRows, visibleDispatchTableRows, visibleDocumentRows] = await Promise.all([
     applyServerListSearch(supabase, profile, "auction-sales-side-list", saleListRows),
     applyServerListSearch(supabase, profile, "dispatches-in-sale", dispatchTableRows),
+    applyServerListSearch(supabase, profile, "auction-sale-documents", documentRows),
   ]);
 
   return (
@@ -287,6 +402,8 @@ export default async function SaleDetailPage({
           ) : undefined
         }
       >
+        <DetailField label="Sale date" value={saleDateLabel} />
+        <DetailField label="Total kg to sale" value={`${totalNetKg.toFixed(2)} kg`} />
         <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
         <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
         <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
@@ -294,6 +411,7 @@ export default async function SaleDetailPage({
       </DetailRecordPanel>
       <EntityListTabs
         label="Sale lists"
+        defaultTab={tab === "documents" ? "documents" : undefined}
         tabs={[
           {
             id: "lots",
@@ -308,6 +426,7 @@ export default async function SaleDetailPage({
             ),
           },
           { id: "dispatches", label: "Broker invoices", count: `${visibleDispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
+          { id: "documents", label: "Documents", count: `${visibleDocumentRows.length} documents`, content: <SaleDocumentsTable rows={visibleDocumentRows} /> },
         ]}
       />
     </SaleDetailWorkspace>

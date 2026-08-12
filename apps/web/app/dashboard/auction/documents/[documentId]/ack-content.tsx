@@ -1,6 +1,3 @@
-import Link from "next/link";
-import { requirePageAccess } from "@/lib/profile";
-import { applyServerListSearch } from "@/lib/list-search-state";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
@@ -9,41 +6,37 @@ import {
   type ParsedAcknowledgement,
   type ReconStatus,
 } from "@tea/api";
-import { confirmAcknowledgement, rejectImport } from "../../../actions";
-import { buildInvoicedLots } from "../../../recon-helpers";
-import { canonicalGrade, gradeAliasMap, saleGroupIds } from "../../../_actions/_shared";
-import { formatSaleNo, saleNoKey } from "../../../sale-number";
+import { confirmAcknowledgement, rejectImport } from "@/app/dashboard/auction/actions";
+import { buildInvoicedLots } from "@/app/dashboard/auction/recon-helpers";
+import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { applyServerListSearch } from "@/lib/list-search-state";
+import type { requirePageAccess } from "@/lib/profile";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
 import { ReconTable } from "./recon-table";
 
-export default async function AckReviewPage({
-  params,
-}: {
-  params: Promise<{ saleId: string; importId: string }>;
-}) {
-  const { supabase, profile } = await requirePageAccess("auction-acknowledgement");
-  const { saleId, importId } = await params;
-  const fallback = "/dashboard/auction/sales";
+type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
 
+export async function AckContent({
+  supabase,
+  profile,
+  saleId,
+  importId,
+}: {
+  supabase: Ctx["supabase"];
+  profile: Ctx["profile"];
+  saleId: string;
+  importId: string;
+}) {
   const { data: imp } = await supabase
     .from("doc_imports")
-    .select("id, parsed_json, status, source_filename, sale_id, doc_type")
+    .select("id, parsed_json, status, source_filename")
     .eq("id", importId)
     .single();
 
-  if (!imp || imp.sale_id !== saleId || imp.doc_type !== "acknowledgement" || !imp.parsed_json) {
-    return (
-      <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
-        Staged import not found.{" "}
-        <Link href={fallback} className="text-green-700 dark:text-green-400 hover:underline">
-          Back to sales
-        </Link>
-      </div>
-    );
+  if (!imp?.parsed_json) {
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Staged import not found.</p>;
   }
 
-  const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no, brokers(name)").eq("id", saleId).single();
-  const detail = `/dashboard/auction/sales/${encodeURIComponent(saleNoKey((sale?.target_sale_no as string | null) || (sale?.sale_no as string | null)) || saleId)}`;
   // The ack is the broker's statement for the WHOLE sale — reconcile against
   // every dispatch in this sale's group, not just the one being reviewed.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
@@ -136,13 +129,9 @@ export default async function AckReviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href={detail} className="text-sm text-green-700 dark:text-green-400 hover:underline">
-          ← Sale {formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null))}
-        </Link>
-        <h2 className="mt-1 text-xl font-semibold">Reconciliation ① — invoice ↔ acknowledgement</h2>
+        <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ① — invoice ↔ acknowledgement</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {imp.source_filename ?? "acknowledgement.pdf"} · sale {parsed.saleNo ?? "—"} · sale date{" "}
-          {parsed.saleDate ?? "—"}
+          sale {parsed.saleNo ?? "—"} · sale date {parsed.saleDate ?? "—"}
         </p>
       </div>
 
@@ -199,7 +188,8 @@ export default async function AckReviewPage({
           <form action={confirmAcknowledgement.bind(null, importId, saleId)}>
             <SubmitButton
               pendingText="Acknowledging..."
-              className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
+              variant="primary"
+              className="rounded-md px-4 py-2 text-sm"
             >
               Confirm — acknowledge {s.catalogued} lot(s)
             </SubmitButton>

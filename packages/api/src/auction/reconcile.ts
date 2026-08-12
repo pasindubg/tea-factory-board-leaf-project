@@ -2,6 +2,7 @@
 // Pure: compares the factory's invoiced lots against a parsed Acknowledgement and
 // classifies every lot. The web review screen renders this; confirm persists it.
 import type { ParsedAcknowledgement } from "./parse-acknowledgement";
+import { invoiceMatchKey } from "./invoice-key";
 
 export type InvoicedLot = { id: string; invoiceNo: string; grade: string; netWt: number };
 
@@ -96,17 +97,22 @@ export function reconcileAcknowledgement(
   invoiced: InvoicedLot[],
   ack: ParsedAcknowledgement,
 ): Reconciliation {
-  const byInvoice = new Map(invoiced.map((l) => [l.invoiceNo, l]));
+  // Keyed on the bare sequence, not the stored string: the factory's numbers
+  // carry an index-cycle prefix ("26I01-0001") that a broker document never
+  // prints. Matching verbatim would make every line unexpected.
+  const byInvoice = new Map(invoiced.map((l) => [invoiceMatchKey(l.invoiceNo), l]));
   const matched = new Set<string>();
   const rows: ReconRow[] = [];
 
   for (const lot of ack.lots) {
-    const inv = byInvoice.get(lot.invoiceNo);
+    const inv = byInvoice.get(invoiceMatchKey(lot.invoiceNo));
     const ackSide = { lotNo: lot.lotNo, markCode: lot.markCode, grade: lot.grade, netWt: lot.netWt };
     if (inv) {
-      matched.add(inv.invoiceNo);
+      matched.add(invoiceMatchKey(inv.invoiceNo));
       rows.push({
-        invoiceNo: lot.invoiceNo,
+        // Show the factory's own full number on a matched row; the broker's
+        // bare one is only ever a lookup key.
+        invoiceNo: inv.invoiceNo,
         status: lot.section, // "catalogued" | "shutout"
         invoiced: { id: inv.id, grade: inv.grade, netWt: inv.netWt },
         ack: ackSide,
@@ -126,7 +132,7 @@ export function reconcileAcknowledgement(
   }
 
   for (const inv of invoiced) {
-    if (matched.has(inv.invoiceNo)) continue;
+    if (matched.has(invoiceMatchKey(inv.invoiceNo))) continue;
     rows.push({
       invoiceNo: inv.invoiceNo,
       status: "pending",

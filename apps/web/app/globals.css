@@ -308,3 +308,84 @@ body {
     overflow-x: visible;
   }
 }
+
+/*
+ * Framework list view modes (see components/list-view-mode.tsx).
+ *
+ * Both modes lay the table out with `table-layout: fixed`. That is what makes
+ * `text-overflow: ellipsis` work on a cell at all — with the default `auto`
+ * layout a table widens to fit its content instead of clipping it — and it is
+ * also what guarantees a row can never grow to a second line, including the
+ * create and edit rows whose cells hold inputs.
+ */
+.list-fixed-layout {
+  table-layout: fixed;
+}
+
+/* Applies to every cell, including ones a page renders itself (create rows,
+ * footers), so a list cannot opt half of its table out of the contract. */
+.list-single-line th,
+.list-single-line td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The checkbox column holds a control, not text. `text-overflow` still paints
+ * an ellipsis when that control overflows by even a pixel, which reads as a
+ * truncated value at the start of every row — so it is excluded outright. */
+.list-single-line th[data-list-selection],
+.list-single-line td[data-list-selection] {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* An input inside a cell must fill the column, never force it wider. */
+.list-single-line td input:not([type="checkbox"]):not([type="radio"]),
+.list-single-line td select,
+.list-single-line td textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* List mode fits the viewport, so it must not scroll sideways. */
+.list-scroll-none {
+  overflow-x: hidden;
+}
+
+/* Table mode: the drag target that resizes a column. It sits inside the
+ * header cell's padding so it never adds width of its own. */
+.list-col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: transparent;
+  border: 0;
+}
+
+.list-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  right: 4px;
+  height: 60%;
+  width: 1px;
+  background: color-mix(in srgb, var(--md-outline) 55%, transparent);
+}
+
+.list-col-resize:hover::after,
+.list-col-resize[data-resizing="true"]::after {
+  background: var(--md-primary, #15803d);
+  width: 2px;
+}
+
+/* While dragging, suppress text selection across the whole document. */
+body[data-list-resizing="true"] {
+  user-select: none;
+  cursor: col-resize;
+}

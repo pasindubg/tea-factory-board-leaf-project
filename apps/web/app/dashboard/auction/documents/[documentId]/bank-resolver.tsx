@@ -21,7 +21,7 @@ import {
   type WorkflowAuditRow,
 } from "@/app/dashboard/auction/_components/workflow-audit-list";
 import { WorkflowDecisionDialog } from "@/app/dashboard/auction/_components/workflow-decision-dialog";
-import { linkBankCredit } from "../../../actions";
+import { linkBankCredit } from "@/app/dashboard/auction/actions";
 
 // Bank resolver (#20): unattributed credits and their ranked settlement matches
 // are ordinary framework lists. Matching remains a deliberate human-confirmed

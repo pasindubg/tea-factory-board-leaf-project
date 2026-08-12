@@ -5,7 +5,7 @@ import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
 import { createDispatchWithId } from "./actions";
 import { formatSaleNo } from "./sale-number";
-import { stateBucket } from "./state-buckets";
+import { BROKER_INVOICE_STATUSES, stateBucket, stateBucketOptions } from "./state-buckets";
 
 export type DispatchListItem = AuctionDispatchListRow;
 
@@ -22,7 +22,7 @@ const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
   { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
   { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
-  { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select" },
+  { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select", filterOptions: stateBucketOptions(BROKER_INVOICE_STATUSES.map(cappedDispatchStatus)) },
 ];
 
 const DISPATCH_LIST = {

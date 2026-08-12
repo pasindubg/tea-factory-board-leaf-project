@@ -36,12 +36,20 @@ describe("sidebar highlighting", () => {
     expect(matching("/dashboard/auction/new")).toEqual(["auction-dispatch-detail"]);
   });
 
-  it("still highlights Broker Invoice Details on a real invoice and its sub-routes", () => {
+  it("still highlights Broker Invoice Details on a real invoice", () => {
     const detail = moduleFor("auction-dispatch-detail");
     const id = "3f7c1a92-5b2e-4d18-9a63-0c8e4f1b7d55";
     expect(moduleMatchesPath(detail, `/dashboard/auction/${id}`)).toBe(true);
-    expect(moduleMatchesPath(detail, `/dashboard/auction/${id}/ack/${id}`)).toBe(true);
-    expect(moduleMatchesPath(detail, `/dashboard/auction/${id}/valuation/${id}`)).toBe(true);
+  });
+
+  it("keeps Document Details separate from Broker Invoice Details", () => {
+    const documents = moduleFor("auction-documents");
+    const dispatchDetail = moduleFor("auction-dispatch-detail");
+    const id = "3f7c1a92-5b2e-4d18-9a63-0c8e4f1b7d55";
+    expect(moduleMatchesPath(documents, "/dashboard/auction/documents")).toBe(true);
+    expect(moduleMatchesPath(documents, `/dashboard/auction/documents/${id}`)).toBe(true);
+    expect(moduleMatchesPath(dispatchDetail, "/dashboard/auction/documents")).toBe(false);
+    expect(moduleMatchesPath(dispatchDetail, `/dashboard/auction/documents/${id}`)).toBe(false);
   });
 
   it("does not treat a new static auction page as a broker invoice id", () => {

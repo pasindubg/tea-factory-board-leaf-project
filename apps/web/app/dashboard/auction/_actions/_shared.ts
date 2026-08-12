@@ -12,9 +12,30 @@ import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 
 export const AUC = "/dashboard/auction";
-export const REP = "/dashboard/auction/reports";
 export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 export const num = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * True when a LOV field holding a record id actually holds one. A picker
+ * submits whatever was typed (so the database can be the authority), but an
+ * id-typed column cannot report a useful error about free text: Postgres
+ * rejects it as `22P02 invalid input syntax for type uuid`, which names
+ * neither the column nor the table it belonged to. Only the caller knows the
+ * field, so id-backed LOVs are checked here and reported with `notAnExisting`.
+ * Code-backed LOVs (e.g. auction_lots.grade) need none of this — their foreign
+ * key names the value and the table on its own.
+ */
+export const isRecordId = (value: string) => UUID_PATTERN.test(value);
+
+/**
+ * The one wording for "you typed something that isn't in the list", matching
+ * what friendlyError produces for a real foreign-key violation so the two
+ * paths are indistinguishable to the user.
+ */
+export const notAnExisting = (value: string, label: string) =>
+  `“${value}” is not an existing ${label}. Choose one from the list.`;
 export const back = (path: string, error: string): never => redirect(`${path}?error=${encodeURIComponent(error)}`);
 
 /** Today's calendar date at the factory, independent of the browser's timezone. */
@@ -67,6 +88,43 @@ export async function gradeAliasMap(supabase: Supa, factoryId: string): Promise<
 
 export function canonicalGrade(value: string, aliases: Map<string, string>): string {
   return aliases.get(gradeAliasKey(value)) ?? value;
+}
+
+/** `minKgPerBag` is null when the factory set no minimum for that grade. */
+export type GradeRule = { minKgPerBag: number | null };
+
+/**
+ * The factory's rules for each requested grade CODE, keyed by code. A code
+ * absent from the returned map does not exist for this factory.
+ *
+ * Membership is the point as much as the rule: `auction_lots.grade` is
+ * foreign-keyed to `auction_grades`, but the app connects as `authenticated`,
+ * and Postgres REDACTS the offending column and value from a constraint
+ * violation for a role without privileges on the referenced table — the app
+ * only ever receives `Key is not present in table "auction_grades"`. So the
+ * database can prove a grade is wrong but cannot say WHICH value was wrong;
+ * only the caller knows that. Callers therefore check membership here to
+ * report the typed value, and the foreign key remains the backstop that makes
+ * the rule impossible to bypass (including from paths that skip this check,
+ * such as broker-document ingestion).
+ */
+export async function gradeRulesByCode(
+  supabase: Supa,
+  factoryId: string,
+  grades: (string | null | undefined)[],
+): Promise<Map<string, GradeRule>> {
+  const codes = [...new Set(grades.filter((g): g is string => Boolean(g)))];
+  const map = new Map<string, GradeRule>();
+  if (codes.length === 0) return map;
+  const { data } = await supabase
+    .from("auction_grades")
+    .select("code, default_kg_per_bag")
+    .eq("factory_id", factoryId)
+    .in("code", codes);
+  for (const row of (data ?? []) as { code: string; default_kg_per_bag: string | number | null }[]) {
+    map.set(row.code, { minKgPerBag: row.default_kg_per_bag == null ? null : Number(row.default_kg_per_bag) });
+  }
+  return map;
 }
 
 // Extract the merged text of an uploaded PDF, or null if it's missing/unreadable.

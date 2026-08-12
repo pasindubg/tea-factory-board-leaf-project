@@ -249,10 +249,20 @@ once in `apps/web/lib/roles.ts`.**
   - auction sale / target sale numbers are 4 digits (`0019`);
   - use `formatSaleNo` for `target_sale_no`, and `formatFourDigitNo` for dispatch,
     invoice, and lot numbers.
+- **A field that picks an existing record is enforced by a foreign key, not by
+  app code.** Id columns reference the owner's primary key; a code/text column
+  takes a composite `(factory_id, code)` reference so the value is proven to
+  exist AND to belong to the same tenant. `auction_lots.grade` ->
+  `auction_grades(factory_id, code)` (`fk_auction_lots_grade`) is the pattern to
+  copy. `friendlyError` reports violations generically, naming the bad value;
+  register a new referenced table's noun in `REFERENCED_ENTITY_LABELS`. Details
+  and the UI contract live in the `list-framework` skill.
 - Auction grades are owner-editable and can have aliases in `auction_grade_aliases`.
   Broker documents may spell a factory grade differently (`PEK` vs `PEKO`), so ACK,
   valuation, and sellers contract import/review paths must canonicalize through the
-  alias map before reconciliation or persistence.
+  alias map before reconciliation or persistence. Since `auction_lots.grade` is now
+  foreign-keyed, an unknown broker grade is REJECTED at write time rather than
+  stored — the owner must add that grade or an alias first.
 - Valuation parsing is broker-format aware. Preserve both BPML `Valuation Report`
   and ASIA SIYAKA `VALUATION & MUSTER REPORT` support. ASIA SIYAKA rows are lot,
   invoice, grade, net weight, last-sale average, value/kg and value/lot; reconcile

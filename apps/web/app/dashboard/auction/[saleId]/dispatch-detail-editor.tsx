@@ -6,6 +6,7 @@ import { Pencil, Printer } from "lucide-react";
 import {
   DetailEmptyPanel,
   DetailField,
+  DetailLovField,
   DetailRecordPanel,
   DetailWorkspace,
 } from "@/components/detail-workspace";
@@ -417,7 +418,6 @@ export function DispatchDetailEditor({
                 value={sale.dispatch_date ?? "—"}
               />
               <SellingMarkField
-                marks={marks}
                 defaultValue={sale.selling_mark_id ?? ""}
                 displayValue={sale.selling_mark ?? "—"}
                 disabled={!isEditing}
@@ -578,12 +578,10 @@ function CompactField({
 }
 
 function SellingMarkField({
-  marks,
   defaultValue,
   displayValue,
   disabled,
 }: {
-  marks: MarkOption[];
   defaultValue: string;
   displayValue: string;
   disabled: boolean;
@@ -592,12 +590,15 @@ function SellingMarkField({
     return <DetailField label="Selling mark" value={displayValue} />;
   }
   return (
-    <div className="grid min-w-0 gap-1.5">
-      <label className="text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">Selling mark</label>
-      <select name="selling_mark_id" required defaultValue={defaultValue} className="h-9 min-w-0 w-full rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100">
-        <option value="" disabled>Select selling mark</option>
-        {marks.map((mark) => <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>)}
-      </select>
-    </div>
+    <DetailLovField
+      label="Selling mark"
+      source="auction.marks"
+      name="selling_mark_id"
+      required
+      defaultValue={defaultValue}
+      // The record already reads as "MF1530 — KUMUDU"; keep that showing until
+      // the user picks a different mark.
+      defaultLabel={displayValue === "—" ? "" : displayValue}
+    />
   );
 }

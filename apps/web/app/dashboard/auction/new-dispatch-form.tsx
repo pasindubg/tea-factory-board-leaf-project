@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { DetailLovField } from "@/components/detail-workspace";
 import { SubmitButton } from "@/components/submit-button";
 import { formatSaleNo, saleNoMatches } from "./sale-number";
 import type { InvoicePrefixOption } from "./invoice-number";
@@ -92,24 +93,8 @@ export function NewDispatchFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div>
-          <label className={label}>Broker <span className="text-red-500">*</span></label>
-          <select name="broker_id" required defaultValue="" className={input}>
-            <option value="" disabled>Select broker</option>
-            {brokers.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={label}>Selling mark <span className="text-red-500">*</span></label>
-          <select name="selling_mark_id" required defaultValue="" className={input}>
-            <option value="" disabled>Select selling mark</option>
-            {marks.map((mark) => (
-              <option key={mark.id} value={mark.id}>{mark.code}{mark.name ? ` — ${mark.name}` : ""}</option>
-            ))}
-          </select>
-        </div>
+        <DetailLovField label="Broker" source="auction.brokers" name="broker_id" required />
+        <DetailLovField label="Selling mark" source="auction.marks" name="selling_mark_id" required />
         <div>
           <label className={label}>Broker lorry no.</label>
           <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />

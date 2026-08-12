@@ -7,10 +7,11 @@ import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/pr
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyDeleteError, friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit } from "./_shared";
+import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit, gradeRulesByCode, isRecordId, notAnExisting } from "./_shared";
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
 import { isOpenDraft } from "../state-buckets";
 import { resolveInvoicePrefix } from "../invoice-number";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
   const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
@@ -155,7 +156,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
       const { error: exceptionError } = await supabase.from("invoice_prefix_exceptions").insert({
         factory_id: profile.factory_id,
         category: "broker_invoice",
-        requested_prefix_id: prefixResult.requestedPrefixId,
+        requested_prefix_id: prefixResult.prefix.id,
         context_id: null,
         payload,
         requested_by: profile.id,
@@ -178,12 +179,16 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
   if (!saleDate) return { ok: false, error: "Sale date is required." };
   if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
   if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
+  // Typed-but-not-picked text must be rejected BEFORE it reaches a uuid
+  // column, or Postgres fails it as unreadable 22P02 syntax instead.
+  if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
   const [{ data: broker }, { data: mark }] = await Promise.all([
     supabase.from("brokers").select("id").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle(),
     supabase.from("marks").select("id").eq("id", sellingMarkId).eq("factory_id", profile.factory_id).maybeSingle(),
   ]);
-  if (!broker) return { ok: false, error: "Unknown broker." };
-  if (!mark) return { ok: false, error: "Unknown selling mark." };
+  if (!broker) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!mark) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
   try {
     const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
     if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
@@ -282,12 +287,18 @@ export async function resolveBrokerInvoiceForLot(formData: FormData): Promise<Re
   if (!brokerId) return { ok: false, error: "Pick a broker." };
   if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
   if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
+  // This runs before insertDispatch's own checks, and findOpenDraftInvoice
+  // below filters uuid columns by these values — so free text has to be caught
+  // here too, or it surfaces as a raw driver message rather than this one.
+  if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
+  if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
 
   try {
     const existing = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
     if (existing) return { ok: true, saleId: existing.id, created: false };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
+    // Never surface the driver's own text: it leaks column and type names.
+    return { ok: false, error: friendlyError(error) };
   }
 
   const created = await insertDispatch(formData);
@@ -444,6 +455,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   if (formData.has("selling_mark_id")) {
     const sellingMarkId = str(formData.get("selling_mark_id"));
     if (!sellingMarkId) return { ok: false, error: "Selling mark is required." };
+    if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
     const { data: mark, error: markError } = await supabase
       .from("marks")
       .select("id")
@@ -451,7 +463,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
       .eq("factory_id", profile.factory_id)
       .maybeSingle();
     if (markError) return { ok: false, error: friendlyError(markError) };
-    if (!mark) return { ok: false, error: "Unknown selling mark." };
+    if (!mark) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
     if (currentSale.sale_kind === "dispatch" && isOpenDraft(currentSale.status as string | null)) {
       try {
         const existingDraft = await findOpenDraftInvoice(
@@ -519,6 +531,8 @@ export async function confirmDispatchDraft(id: string): Promise<ListMutationResu
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
   if (!confirmed) return { ok: false, error: "This broker invoice was not found or is no longer a draft." };
+  // The dispatch holding this invoice may now qualify for a later stage.
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/${id}`);
   return { ok: true, notice: "Broker invoice confirmed." };
@@ -588,6 +602,8 @@ export async function completeGrn(id: string, formData: FormData) {
     .select("id")
     .maybeSingle();
   if (grnError || !grnInvoice) back(detail, grnError ? friendlyError(grnError) : "This broker invoice changed before GRN could be completed.");
+  // Every invoice reaching GRN is what moves its dispatch to "received".
+  await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(detail);
   redirect(`${detail}?notice=${encodeURIComponent(uploaded ? "GRN uploaded; Broker Invoice moved to GRN." : "Broker Invoice moved to GRN without a document.")}`);
@@ -676,6 +692,14 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
     .select("lot_id, buyer_id, price_per_kg, proceeds, vat_amount, on_guarantee")
     .in("lot_id", lotIds);
   const lineByLot = new Map((existingLines ?? []).map((line) => [line.lot_id as string, line]));
+  const gradeRules = await gradeRulesByCode(
+    supabase,
+    profile.factory_id,
+    [grade, ...lotRows.map((lot) => lot.grade)],
+  );
+  // Only a newly typed grade can be wrong here; grades already stored on the
+  // selected lots were validated when they were written.
+  if (hasGrade && !gradeRules.has(grade)) back(detail, notAnExisting(grade, "tea grade"));
 
   if (nextState === "sold") {
     const invalidLot = lotRows.find((lot) => {
@@ -723,6 +747,11 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
     if (hasBags || hasKgPerBag || hasSampleKg) {
       if (!(nextBags > 0) || !(nextKgPerBag > 0)) back(detail, "Bags and kg/bag must be positive.");
       if (nextSampleKg >= nextBags * nextKgPerBag) back(detail, "Sample weight must be less than the gross lot weight.");
+      const nextGrade = hasGrade ? grade : lot.grade;
+      const minKgPerBag = nextGrade ? gradeRules.get(nextGrade)?.minKgPerBag : undefined;
+      if (minKgPerBag != null && minKgPerBag > 0 && nextKgPerBag < minKgPerBag) {
+        back(detail, `kg/bag for grade ${nextGrade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).`);
+      }
       lotUpdates.net_wt = Number(Math.max(0, nextBags * nextKgPerBag - nextSampleKg).toFixed(2));
     }
     if (Object.keys(lotUpdates).length > 0) {
@@ -877,11 +906,19 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
     buyerByName.set(buyerName, (buyer as { id: string }).id);
   }
 
+  const gradeRules = await gradeRulesByCode(supabase, profile.factory_id, submittedRows.map((row) => row.grade));
   for (const row of submittedRows) {
     if (row.invoiceList.length === 0) return { ok: false, error: "Invoice number is required for every edited lot." };
     if (!row.grade) return { ok: false, error: "Grade is required for every edited lot." };
+    // The foreign key would reject this too, but only the caller knows which
+    // value was typed — see gradeRulesByCode.
+    if (!gradeRules.has(row.grade)) return { ok: false, error: notAnExisting(row.grade, "tea grade") };
     if (!(row.bags > 0) || !(row.kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
     if (row.sampleKg >= row.bags * row.kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
+    const minKgPerBag = gradeRules.get(row.grade)?.minKgPerBag;
+    if (minKgPerBag != null && minKgPerBag > 0 && row.kgPerBag < minKgPerBag) {
+      return { ok: false, error: `kg/bag for grade ${row.grade} must be at least ${minKgPerBag.toFixed(2)} kg (factory minimum).` };
+    }
     if (row.state === "sold" && (!(Number(row.pricePerKg) > 0) || !(Number(row.proceeds) > 0) || row.vatAmount == null || Number.isNaN(Number(row.vatAmount)))) {
       return { ok: false, error: "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT." };
     }

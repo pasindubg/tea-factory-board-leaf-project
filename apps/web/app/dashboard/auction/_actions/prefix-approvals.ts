@@ -5,6 +5,7 @@ import { requirePagePermission } from "@/lib/profile";
 import type { Role } from "@/lib/roles";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
+import { deleteTenantRow } from "@/lib/tenant-data";
 import { AUC, str } from "./_shared";
 import { createDispatchFromApprovedException } from "./sales";
 import { createLotFromApprovedException } from "./lots";
@@ -29,10 +30,20 @@ export async function approveInvoicePrefixException(formData: FormData): Promise
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .eq("status", "pending")
-    .select("id, category, context_id, payload, requested_prefix_id")
+    .select("id, category, context_id, payload, requested_prefix_id, created_record_id")
     .maybeSingle();
   if (fetchError) return { ok: false, error: friendlyError(fetchError) };
   if (!exception) return { ok: false, error: "This request is no longer pending. Refresh and try again." };
+
+  // The record is created up front now, so an approval that already has one
+  // has nothing left to do — replaying the creation would duplicate the lot.
+  if (exception.created_record_id) {
+    revalidatePath(`${AUC}/prefix-approvals`);
+    return { ok: true, notice: "Approved.", invalidate: [
+      { kind: "all", key: "auction.invoice-overview" },
+      { kind: "exact", resource: { key: "auction.prefix-approvals" } },
+    ] };
+  }
 
   const payload = (exception.payload ?? {}) as Record<string, unknown>;
   const category = exception.category as string;
@@ -75,11 +86,25 @@ export async function declineInvoicePrefixException(formData: FormData): Promise
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .eq("status", "pending")
-    .select("id")
+    .select("id, created_record_id")
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
   if (!data) return { ok: false, error: "This request is no longer pending. Refresh and try again." };
 
+  // The lot was shown while the decision was outstanding, so declining has to
+  // take it away again — leaving it would mean a rejected number stayed in the
+  // books with nothing marking it as refused.
+  const createdRecordId = (data as { created_record_id: string | null }).created_record_id;
+  if (createdRecordId) {
+    const { error: deleteError } = await deleteTenantRow(supabase, "auction_lots", createdRecordId);
+    if (deleteError) {
+      return { ok: false, error: `Declined, but the invoice could not be removed: ${deleteError}` };
+    }
+  }
+
   revalidatePath(`${AUC}/prefix-approvals`);
-  return { ok: true, notice: "Request declined." };
+  return { ok: true, notice: createdRecordId ? "Request declined and the invoice removed." : "Request declined.", invalidate: [
+    { kind: "all", key: "auction.invoice-overview" },
+    { kind: "all", key: "auction.dispatches" },
+  ] };
 }

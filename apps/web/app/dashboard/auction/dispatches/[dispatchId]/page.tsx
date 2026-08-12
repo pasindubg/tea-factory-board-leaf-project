@@ -6,6 +6,7 @@ import { formatFourDigitNo } from "../../sale-number";
 import { DispatchDetailLists, type DispatchInvoiceRow, type DispatchLotRow } from "../dispatch-detail-lists";
 import { DispatchDetailView } from "../dispatch-detail-view";
 import { type PhysicalDispatchListRow } from "../dispatch-list";
+import { DISPATCH_STATUSES, type DispatchStatus } from "../../dispatch-status";
 
 type Invoice = { id: string; sale_no: string; dispatch_date: string | null; sale_date: string | null; status: string; brokers: { name: string } | null; marks: { code: string; name: string | null } | null; auction_lots: Lot[] | null };
 type Lot = {
@@ -72,6 +73,16 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
     state: lot.state ?? "—",
   })));
 
+  // Deliberately built from the FULL sets, before the search below narrows
+  // them: this summarises the dispatch record itself, so it must not shrink
+  // because the reader has a saved filter or a role-locked one.
+  const summary = {
+    invoices: lots.length,
+    brokerInvoices: invoices.length,
+    totalBags: lots.reduce((sum, lot) => sum + (lot.bags ?? 0), 0),
+    totalNetKg: lots.reduce((sum, lot) => sum + Number(lot.netWt ?? 0), 0),
+  };
+
   const [visibleInvoices, visibleLots] = await Promise.all([
     applyServerListSearch(supabase, profile, "dispatch-detail-invoices", invoices),
     applyServerListSearch(supabase, profile, "dispatch-detail-lots", lots),
@@ -84,10 +95,15 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
       dateFrom: dispatch.dispatch_date_from as string,
       dateTo: dispatch.dispatch_date_to as string,
       warehouse: dispatch.warehouse as string,
-      status: dispatch.status as string,
+      // Narrowed at the boundary: the column is plain text, so an unexpected
+      // value falls back to draft rather than rendering an unknown stage.
+      status: DISPATCH_STATUSES.includes(dispatch.status as DispatchStatus)
+        ? (dispatch.status as DispatchStatus)
+        : "draft",
       createdAt: (dispatch.created_at as string | null) ?? null,
     }}
     dispatches={dispatchRows}
+    summary={summary}
     invoices={visibleInvoices}
     lots={visibleLots}
     eligibleInvoices={eligibleInvoicesResource.rows}

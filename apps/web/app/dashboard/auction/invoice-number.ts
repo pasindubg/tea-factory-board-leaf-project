@@ -49,16 +49,28 @@ export function invoiceSeqOf(value: string | null | undefined): string {
   return parseCompositeInvoiceNo(value)?.seq ?? String(value ?? "").trim();
 }
 
+/**
+ * The prefix is returned even when approval is pending, because the record is
+ * now created immediately and shown while the request is outstanding — the
+ * caller needs the prefix to compose its number. `needsApproval` says only
+ * whether an exception must be raised alongside it.
+ */
 export type ResolveInvoicePrefixResult =
-  | { ok: true; needsApproval: false; prefix: { id: string; prefix: string } }
-  | { ok: true; needsApproval: true; requestedPrefixId: string }
+  | { ok: true; needsApproval: boolean; prefix: { id: string; prefix: string } }
   | { ok: false; error: string };
 
 /**
  * Resolves which prefix a new broker/regular invoice should use.
- * - No requestedPrefixId (or it matches the active one) → the active prefix, no approval.
+ * - No request (or it matches the active one) → the active prefix, no approval.
  * - A different, existing prefix requested by owner/manager/supervisor → allowed directly (bypass).
  * - The same, requested by anyone else → needs supervisor approval instead of creating the record.
+ *
+ * A prefix may be asked for two ways, and BOTH must be honoured: `prefix_id`
+ * from a picker, or `requestedPrefix` — the literal prefix a user typed into
+ * the number itself ("26I02-0001"). Most screens have no picker, so without
+ * the second the typed prefix was silently replaced by the active one and the
+ * number the user entered was not the number that got stored. An id wins when
+ * both are given, since a picker is an explicit choice.
  */
 export async function resolveInvoicePrefix({
   supabase,
@@ -66,12 +78,15 @@ export async function resolveInvoicePrefix({
   category,
   role,
   requestedPrefixId,
+  requestedPrefix,
 }: {
   supabase: Supa;
   factoryId: string;
   category: InvoiceCategory;
   role: Role;
   requestedPrefixId?: string | null;
+  /** Literal prefix string, e.g. the "26I02" of a typed "26I02-0001". */
+  requestedPrefix?: string | null;
 }): Promise<ResolveInvoicePrefixResult> {
   const { data: active, error: activeError } = await supabase
     .from("invoice_number_prefixes")
@@ -88,21 +103,48 @@ export async function resolveInvoicePrefix({
     };
   }
   const active_ = active as { id: string; prefix: string };
-  if (!requestedPrefixId || requestedPrefixId === active_.id) {
+  const typedPrefix = String(requestedPrefix ?? "").trim();
+  // A typed prefix equal to the active one is not a request for anything else.
+  const wantsTyped = Boolean(typedPrefix) && typedPrefix !== active_.prefix;
+  if (!requestedPrefixId && !wantsTyped) {
     return { ok: true, needsApproval: false, prefix: active_ };
   }
-  const { data: requested, error: requestedError } = await supabase
+  if (requestedPrefixId && requestedPrefixId === active_.id) {
+    return { ok: true, needsApproval: false, prefix: active_ };
+  }
+
+  const lookup = supabase
     .from("invoice_number_prefixes")
     .select("id, prefix")
-    .eq("id", requestedPrefixId)
     .eq("factory_id", factoryId)
-    .eq("category", category)
-    .maybeSingle();
+    .eq("category", category);
+  const { data: requested, error: requestedError } = await (requestedPrefixId
+    ? lookup.eq("id", requestedPrefixId)
+    : lookup.eq("prefix", typedPrefix)).maybeSingle();
   if (requestedError) return { ok: false, error: friendlyError(requestedError) };
-  if (!requested) return { ok: false, error: "Unknown invoice number prefix." };
-  const requested_ = requested as { id: string; prefix: string };
-  if (role === "owner" || role === "manager" || role === "supervisor") {
-    return { ok: true, needsApproval: false, prefix: requested_ };
+
+  let requested_ = requested as { id: string; prefix: string } | null;
+  if (!requested_) {
+    // A picker can only offer prefixes that exist, so a missing id is a stale
+    // form rather than a new series.
+    if (requestedPrefixId) return { ok: false, error: "Unknown invoice number prefix." };
+    // A TYPED prefix that does not exist yet is a request to open that series
+    // — a re-print or a roll-forward can legitimately need one nobody has
+    // registered. It is created INACTIVE, so it changes nothing until the
+    // approval below is granted, and the entry is not blocked by an error.
+    const { data: created, error: createError } = await supabase
+      .from("invoice_number_prefixes")
+      .insert({ factory_id: factoryId, category, prefix: typedPrefix, active: false })
+      .select("id, prefix")
+      .single();
+    if (createError) return { ok: false, error: friendlyError(createError) };
+    requested_ = created as { id: string; prefix: string };
   }
-  return { ok: true, needsApproval: true, requestedPrefixId: requested_.id };
+
+  // Every non-active prefix goes to approval, whoever asked for it. Roles that
+  // may DECIDE an exception previously bypassed the queue entirely, so an
+  // owner's abnormal number was written straight through with no record that
+  // it had ever been abnormal — which is the whole point of the queue.
+  void role;
+  return { ok: true, needsApproval: true, prefix: requested_ };
 }

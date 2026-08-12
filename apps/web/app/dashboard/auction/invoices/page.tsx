@@ -5,11 +5,12 @@ import { InvoiceOverviewTable } from "./invoice-overview-table";
 
 export default async function InvoiceOverviewPage() {
   const { supabase, profile } = await requirePageAccess("auction-invoice-overview");
-  const [invoicesResult, { data: brokers, error: brokerError }, { data: marks, error: markError }, { data: grades, error: gradeError }, { data: latest }] =
+  // Broker and mark are picked through server-querying LOV comboboxes, so this
+  // page no longer preloads their full option lists — only grades, whose
+  // sample weight the draft row auto-fills locally.
+  const [invoicesResult, { data: grades, error: gradeError }, { data: latest }] =
     await Promise.all([
       loadListResource({ key: "auction.invoice-overview" }),
-      supabase.from("brokers").select("id, name").order("name"),
-      supabase.from("marks").select("id, code, name").order("code"),
       supabase
         .from("auction_grades")
         .select("code, name, sample_weight, default_kg_per_bag")
@@ -28,8 +29,7 @@ export default async function InvoiceOverviewPage() {
         .maybeSingle(),
     ]);
   if (!invoicesResult.ok) throw new Error(invoicesResult.error);
-  const error = brokerError ?? markError ?? gradeError;
-  if (error) throw new Error(`Could not load invoice reference data: ${error.message}`);
+  if (gradeError) throw new Error(`Could not load invoice reference data: ${gradeError.message}`);
 
   const isOwner = profile.role === "owner";
   const latestInvoice = latest as { dispatch_date: string | null; sale_date: string | null; target_sale_no: string | null } | null;
@@ -54,8 +54,6 @@ export default async function InvoiceOverviewPage() {
         canEdit
         canCreate
         defaults={defaults}
-        brokers={(brokers ?? []).map((broker) => ({ id: broker.id as string, name: broker.name as string }))}
-        marks={(marks ?? []).map((mark) => ({ id: mark.id as string, code: mark.code as string, name: mark.name as string | null }))}
         grades={(grades ?? []).map((grade) => {
           const row = grade as { sample_weight?: string | number | null; default_kg_per_bag?: string | number | null };
           return {

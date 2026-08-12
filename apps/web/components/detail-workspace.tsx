@@ -18,6 +18,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { LovCombobox } from "@/components/lov-combobox";
+import type { LovOption, LovSourceKey } from "@/lib/list-lov";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { AppButton } from "@/components/ui/button";
@@ -568,6 +570,68 @@ export function DetailField({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+/** Shared look for an editable control inside a detail panel. */
+export const DETAIL_FIELD_INPUT_CLASS =
+  "mt-1 w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-900";
+const DETAIL_FIELD_LABEL_CLASS = "block text-sm font-medium text-stone-600 dark:text-stone-400";
+
+/**
+ * A record-picking field inside a detail panel — the detail-page counterpart
+ * of a list column's `lovSource`.
+ *
+ * Detail forms are hand-written markup rather than a column definition, so
+ * they cannot inherit the picker the way a list does. Declaring the field
+ * through this component is what gives a detail page the same behaviour a list
+ * gets for free: typeahead, server-side search, secondary description lines,
+ * and validation left to the database. Never drop a bare `<select>` of records
+ * into a detail panel — it cannot scale past a dropdown's worth of rows, and
+ * it diverges from every list in the app.
+ */
+export function DetailLovField({
+  label,
+  source,
+  name,
+  required = false,
+  defaultValue = "",
+  defaultLabel = "",
+  placeholder,
+  disabled = false,
+  onSelect,
+}: {
+  label: string;
+  source: LovSourceKey;
+  name: string;
+  required?: boolean;
+  /** Stored value (a record id, or a code for code-valued sources). */
+  defaultValue?: string;
+  /** What that value reads as, shown until the user picks something else. */
+  defaultLabel?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onSelect?: (option: LovOption | null) => void;
+}) {
+  return (
+    <div className="min-w-0">
+      <span className={DETAIL_FIELD_LABEL_CLASS}>
+        {label}
+        {required && <span className="text-red-500"> *</span>}
+      </span>
+      <LovCombobox
+        source={source}
+        name={name}
+        required={required}
+        disabled={disabled}
+        defaultValue={defaultValue}
+        defaultLabel={defaultLabel}
+        placeholder={placeholder ?? `Select ${label.toLowerCase()}`}
+        ariaLabel={label}
+        onSelect={onSelect}
+        className={DETAIL_FIELD_INPUT_CLASS}
+      />
     </div>
   );
 }

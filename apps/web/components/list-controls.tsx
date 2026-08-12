@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
 import { showAppToast } from "@/components/action-feedback";
+import { LovCombobox } from "@/components/lov-combobox";
+import type { LovSourceKey } from "@/lib/list-lov";
 import { refreshListResource } from "@/lib/list-resource-action";
 import { listLockableRoles, removeListSearchLock, saveListSearchLock, saveListSearchState } from "@/lib/list-search-actions";
 import type { Role } from "@/lib/roles";
@@ -32,12 +34,71 @@ export type ColumnDef<T> = {
   // column populated from the data. Set to false for free-text/numeric
   // columns — they'll render as a text/date/number <input> instead.
   lov?: boolean;
+  /**
+   * Opts this column's search field into the server-querying LOV combobox
+   * instead of the data-derived datalist. Prefer it for any column whose
+   * values live in a growing reference table: the datalist can only offer
+   * values present in the rows already loaded, so on a paginated list it
+   * silently omits everything past the current page.
+   */
+  lovSource?: LovSourceKey;
+  /**
+   * Form field name an inline LOV editor submits. Defaults to the column key,
+   * which is right whenever the column already IS the stored field (`grade`).
+   * Declare it when they differ (`sellingMark` displayed, `selling_mark_id`
+   * stored).
+   */
+  lovName?: string;
+  /**
+   * Opts this column into the framework's inline LOV editor.
+   *
+   * Separate from `lovSource` on purpose: a column often declares a source
+   * purely so its SEARCH field offers the full set, while the value itself is
+   * not editable on that list — the broker and selling mark shown against a
+   * lot belong to its parent broker invoice, not the lot. Rendering an editor
+   * for those produced a field name the save action does not read, so the
+   * typed value was silently dropped and the cell snapped back on refresh.
+   * Set this only when the list's own save action consumes `lovName`/`key`.
+   */
+  lovEdit?: boolean;
+  /**
+   * Marks a column as showing composite invoice numbers. The framework then
+   * offers "Show/Hide invoice prefix" on right-click and strips the prefix
+   * when hidden. Display only — the stored and submitted value never changes.
+   */
+  prefixColumn?: boolean;
+  /**
+   * The STORED value behind the displayed label, for LOVs holding a record id
+   * (the accessor shows "MF1530 — KUMUDU"; the field must submit its uuid).
+   * Omit for code-valued LOVs, where the label is the value.
+   */
+  lovValue?: (row: T) => string | null | undefined;
+  /**
+   * Narrowest width (px) this column is still readable at. List mode drops
+   * columns that no longer fit within it, and table mode uses it as the
+   * starting width and the floor when dragging. Defaults to
+   * DEFAULT_COLUMN_MIN_WIDTH; give a number column a smaller one so it does
+   * not push a more important column off screen.
+   */
+  minWidth?: number;
   searchInput?: "text" | "date" | "number";
   // Fixed list of options for a "select" filter (label may differ from the
   // raw value, e.g. status codes). If omitted, options are derived from the
   // unique values `accessor` returns across the current rows (the "LOV").
   filterOptions?: { value: string; label: string }[];
 };
+
+/**
+ * `filterOptions` for a column that shows a fixed set of raw values.
+ *
+ * Always declare these on a state/status column. A select column with no
+ * declared options can only offer the values found in the rows already
+ * loaded, so any state nobody currently sits in silently becomes
+ * unsearchable — the bug this exists to prevent.
+ */
+export function enumFilterOptions(values: readonly string[]): { value: string; label: string }[] {
+  return values.map((value) => ({ value, label: value }));
+}
 
 export type ListSelectionMode = "multi" | "single";
 
@@ -146,7 +207,22 @@ export function useFrameworkListData<Key extends ListResourceKey>(
   const lastSearchRef = useRef<ListResourceSearch | undefined>(undefined);
   resourceRef.current = resource;
 
-  useEffect(() => setRows(initialRows), [initialRows]);
+  // Re-seed `rows` from the server-rendered `initialRows` only when this is
+  // genuinely a different resource (identity changed) — not on every parent
+  // re-render that merely hands down a new `initialRows` array reference (an
+  // unrelated revalidatePath elsewhere on the page, a Fast Refresh, etc.).
+  // Once mounted for a given identity, `refresh()` below is the sole source
+  // of truth for this list; re-syncing from server props on every render
+  // would otherwise let an unrelated re-render blank out fields whenever it
+  // lands after a failed mutation, since a failed mutation deliberately does
+  // not call refresh() itself (see `mutate`).
+  const seededIdentity = useRef<string | null>(null);
+  useEffect(() => {
+    if (seededIdentity.current === identity) return;
+    seededIdentity.current = identity;
+    setRows(initialRows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity]);
 
   const applyResult = useCallback((result: Extract<ListRefreshResult<ListResourceRow<Key>>, { ok: true }>) => {
     setRows(result.rows);
@@ -256,12 +332,14 @@ export function TabbedListSurface({ tabs, children, defaultTab }: { tabs: ListTa
 
 export function ListSelectionHeader({ mode, scope, checked, onChange, disabled = false }: { mode: ListSelectionMode; scope: string; checked?: boolean; onChange?: () => void; disabled?: boolean }) {
   if (mode === "single") return null;
-  return <th className="w-12 px-4 py-3"><input type="checkbox" data-select-all={scope} aria-label={`Select all visible ${scope}`} className="list-checkbox" checked={checked} onChange={onChange} disabled={disabled} /></th>;
+  // data-list-selection opts this cell out of the single-line truncation rule:
+  // it holds a control, not text, and clipping it renders a stray ellipsis.
+  return <th data-list-selection className="w-12 px-3 py-3"><input type="checkbox" data-select-all={scope} aria-label={`Select all visible ${scope}`} className="list-checkbox" checked={checked} onChange={onChange} disabled={disabled} /></th>;
 }
 
 export function ListSelectionCell({ mode, scope, id, label, checked, onChange, disabled = false, name = "selected_ids" }: { mode: ListSelectionMode; scope: string; id: string; label: string; checked?: boolean; onChange?: () => void; disabled?: boolean; name?: string }) {
   if (mode === "single") return null;
-  return <td className="w-12 px-4 py-3"><input type="checkbox" name={name} value={id} data-select-row={scope} aria-label={`Select ${label}`} className="list-checkbox" checked={checked} onChange={onChange} disabled={disabled} /></td>;
+  return <td data-list-selection className="w-12 px-3 py-3"><input type="checkbox" name={name} value={id} data-select-row={scope} aria-label={`Select ${label}`} className="list-checkbox" checked={checked} onChange={onChange} disabled={disabled} /></td>;
 }
 
 /** Shared controlled selection model. List rows must use `rowProps(id)` so a
@@ -1037,6 +1115,42 @@ function ColumnSearchInput<T>({ col, controls }: { col: ColumnDef<T>; controls: 
         title={locked ? "Locked by your role — not editable" : undefined}
         onChange={(event) => controls.setColumnSearch(col.key, event.target.value)}
         className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 disabled:opacity-60 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
+      />
+    );
+  }
+  const searchFieldClass = "min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 disabled:opacity-60 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100";
+  // A server-backed LOV searches the whole reference table, so it still offers
+  // every value once the list itself is paginated.
+  if (col.lovSource && !locked) {
+    return (
+      <LovCombobox
+        source={col.lovSource}
+        defaultValue={value}
+        defaultLabel={value}
+        placeholder={`Search ${col.label.toLowerCase()}`}
+        ariaLabel={col.label}
+        className={searchFieldClass}
+        onSelect={(option) => controls.setColumnSearch(col.key, option?.label ?? "")}
+      />
+    );
+  }
+  // A fixed-choice column (a status, a state, a yes/no) is a LOV too: its
+  // whole option set is known up front, so it is presented as a picker rather
+  // than a text box with suggestions. Declaring `filterOptions` on the column
+  // is what makes every possible value offered — without it the set can only
+  // be derived from the rows already loaded, which silently hides any state
+  // that happens not to be on screen.
+  if (col.filter === "select" && !locked) {
+    const options = controls.optionsFor(col);
+    return (
+      <LovCombobox
+        options={options}
+        defaultValue={value}
+        defaultLabel={value}
+        placeholder={`Search ${col.label.toLowerCase()}`}
+        ariaLabel={col.label}
+        className={searchFieldClass}
+        onSelect={(option) => controls.setColumnSearch(col.key, option?.label ?? "")}
       />
     );
   }

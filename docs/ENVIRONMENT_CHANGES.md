@@ -2,6 +2,10 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-08-03 - Physical Dispatch Status Lifecycle
+
+- Added migration `0046_blue_rocket_raccoon.sql`: a nullable `dispatched_at` timestamp on `auction_bundled_dispatches`, a widened `auction_bundled_dispatches_status_check` accepting `received` and `catalogued` alongside `draft`/`dispatched`, and a backfill setting `dispatched_at` for any row already sitting in `dispatched`. The CHECK was hand-written in an earlier migration, so drizzle-kit does not widen it when the TypeScript enum gains values — the two new statuses would otherwise be rejected at write time. A dispatch now runs draft -> dispatched -> received -> catalogued, where only `dispatched` is a user action (`markDispatchDispatched`); `received` and `catalogued` are derived from the broker invoices inside the dispatch reaching GRN and acknowledgement respectively. The derivation lives in `apps/web/app/dashboard/auction/dispatch-status.ts` and is re-applied by `syncDispatchForBrokerInvoice` after each broker-invoice transition (confirm, GRN, ingest acknowledgement). `dispatched_at` is stored separately from `status` so a dispatch that gains a new draft invoice falls back to `dispatched` rather than `draft`. No RLS change. Apply migrations through `0046`.
+
 ## 2026-08-02 - Broker Invoice Uniqueness Now Includes Dispatch Date
 
 - Added migration `0045_flippant_mojo.sql`: rebuilds the partial unique index `uq_auction_sales_open_broker_mark` on `auction_sales` to key on `(factory_id, broker_id, selling_mark_id, dispatch_date)` instead of `(factory_id, broker_id, selling_mark_id)`. The old key allowed only one open (`draft`/`dispatched`) Broker Invoice per broker + selling mark ever, which blocked creating the next dispatch day's invoice for the same broker and mark. Each dispatch day is separate work, so the date now belongs in the key; same-day duplicates are still rejected (and independently by `uq_auction_sales_bundle_broker_mark`, since the auto-created bundle is one per dispatch date). The matching app-layer pre-check `findOpenDraftInvoice` (`apps/web/app/dashboard/auction/_actions/sales.ts`) filters on the dispatch date too and short-circuits on a null date, mirroring Postgres treating nulls as distinct in a unique index. No RLS change. Apply migrations through `0045`.
@@ -173,3 +177,37 @@ Use this file to track changes that matter when hosting or rebuilding the projec
   - apply all committed Drizzle migrations in order;
   - run `db:verify-rls` and `db:verify-auth`;
   - run `tsc --noEmit` or the repo typecheck command.
+
+## 2026-08-11 - Framework LOV Pickers And DB-Level Reference Validation
+
+- New migration `0048_salty_spencer_smythe.sql` adds `fk_auction_lots_grade`:
+  `auction_lots(factory_id, grade)` -> `auction_grades(factory_id, code)`,
+  `ON UPDATE CASCADE`, `ON DELETE NO ACTION`. It references the existing
+  `uq_auction_grades_factory_code` unique index, so no new index is required.
+- Behaviour change: a lot may no longer carry a grade code its factory has not
+  defined. This applies to broker-document ingestion too — an acknowledgement,
+  valuation, or sellers contract naming an unknown grade is now REJECTED at
+  write time instead of silently stored. Add the grade, or an
+  `auction_grade_aliases` row for the broker's spelling, before re-importing.
+- Before applying to an environment with existing data, check for rows the
+  constraint would reject:
+
+  ```sql
+  SELECT DISTINCT l.factory_id, l.grade
+  FROM auction_lots l
+  WHERE l.grade IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM auction_grades g
+      WHERE g.factory_id = l.factory_id AND g.code = l.grade
+    );
+  ```
+
+  Any row returned must be corrected (or its grade registered) first, or the
+  migration will fail. The local stack returned zero rows.
+- No package dependency was added or intentionally changed.
+- Verification checklist for this change:
+  - apply migrations through `0048_salty_spencer_smythe.sql`;
+  - confirm saving a lot with an unknown grade is refused and reports the value;
+  - confirm saving a lot with a known grade still succeeds;
+  - run `db:verify-rls` and `db:verify-auth`;
+  - run the repo lint and typecheck commands.
