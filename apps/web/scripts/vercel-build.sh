@@ -31,7 +31,16 @@ if [ "$VERCEL_ENV" = "production" ]; then
   MIGRATE_STATUS=$?
   set -e
 
-  grep -v 'applying migrations' /tmp/migrate.log | tail -60
+  # The spinner never emits a newline, so drizzle-kit's failure is appended to
+  # the same physical line as the last spinner frame. Dropping lines that say
+  # "applying migrations" — what this did before — therefore deleted the error
+  # along with the frame, which is why a failed deploy printed NOTICEs and no
+  # cause. So: split on \r, strip the spinner text off whatever line carries it
+  # (keeping anything printed after it), then drop the now-blank frames.
+  tr '\r' '\n' < /tmp/migrate.log \
+    | sed 's/.*applying migrations\.*//' \
+    | grep -v '^[[:space:]]*$' \
+    | tail -100
 
   if [ "$MIGRATE_STATUS" -ne 0 ]; then
     echo "Migration failed (exit $MIGRATE_STATUS) — see the lines above."
