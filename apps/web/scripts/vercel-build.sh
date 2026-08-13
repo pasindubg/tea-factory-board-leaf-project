@@ -6,6 +6,11 @@
 # past it once it captured migration output. A script also means the logic is
 # reviewable and testable like any other code.
 #
+# It sits beside vercel.json, NOT at the repo root: Vercel's Root Directory for
+# this project is apps/web, so the build's working directory is apps/web and a
+# root-level path resolves to nothing (exit 127). The pnpm commands below are
+# workspace-wide and work from here regardless.
+#
 # Migrations run here, inside the production build, on purpose: a failed
 # migration then fails the build and Vercel never activates the deploy. See
 # the header of .github/workflows/release.yml for why that beat running them
