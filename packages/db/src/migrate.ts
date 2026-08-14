@@ -23,29 +23,32 @@ const sql = postgres(url, { max: 1, prepare: false });
 
 const journal = JSON.parse(
   readFileSync("./drizzle/meta/_journal.json", "utf8"),
-) as { entries: { tag: string }[] };
+) as { entries: { tag: string; when: number }[] };
 
-// Which migrations are already recorded. The table is absent on a first run.
-let applied = 0;
-try {
-  const [row] = await sql`select count(*)::int as n from drizzle.__drizzle_migrations`;
-  applied = row.n;
-} catch {
-  console.log("No drizzle.__drizzle_migrations table yet — first run.");
+// drizzle selects migrations by timestamp, not by position: it applies every
+// journal entry whose `when` is greater than the newest created_at recorded in
+// __drizzle_migrations, and reads that ceiling once, before the loop. So an
+// entry timestamped below one that precedes it can never be selected — it is
+// skipped in silence, forever. That is how 0040 was passed over on production
+// while 0041 onwards applied, leaving 0044 to fail on a table 0040 was
+// supposed to create. Refuse to run rather than let it happen again.
+for (let i = 1; i < journal.entries.length; i++) {
+  const prev = journal.entries[i - 1];
+  const curr = journal.entries[i];
+  if (curr.when <= prev.when) {
+    throw new Error(
+      `Journal out of order: ${curr.tag} (when=${curr.when}) is not after ` +
+        `${prev.tag} (when=${prev.when}), so drizzle will silently skip it. ` +
+        `Raise ${curr.tag}'s "when" in drizzle/meta/_journal.json above ${prev.when}.`,
+    );
+  }
 }
 
-const pending = journal.entries.slice(applied).map((e) => e.tag);
-console.log(`${applied} migration(s) applied, ${pending.length} pending.`);
-for (const tag of pending) console.log(`  pending: ${tag}`);
-
-try {
-  await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
-  console.log(`Migrations applied (${pending.length} new).`);
-} catch (err) {
-  // drizzle wraps the driver error, and postgres.js hangs the useful parts
-  // (which constraint, which table, where in the statement) off the error
-  // object rather than putting them in the message.
-  console.error("\nMIGRATION FAILED\n");
+// drizzle wraps the driver error, and postgres.js hangs the useful parts
+// (which constraint, which table, where in the statement) off the error object
+// rather than putting them in the message.
+function report(label: string, err: unknown) {
+  console.error(`\n${label}\n`);
   for (const e of [err, (err as { cause?: unknown }).cause]) {
     if (!e) continue;
     console.error(e instanceof Error ? `${e.name}: ${e.message}` : String(e));
@@ -53,8 +56,44 @@ try {
       if (key !== "stack" && value != null) console.error(`  ${key}: ${String(value)}`);
     }
   }
+}
+
+// The same cut drizzle makes, so what is reported is what will actually run.
+// A count of recorded rows would not be the same thing and would mislead.
+let lastApplied = -1;
+try {
+  const [row] = await sql`
+    select coalesce(max(created_at), -1)::bigint as last
+    from drizzle.__drizzle_migrations`;
+  lastApplied = Number(row.last);
+} catch (err) {
+  // Only "the bookkeeping table is not there yet" means a first run. Swallowing
+  // everything else reported a bad password as an empty database and then
+  // listed all 49 migrations as pending, which is alarming and wrong.
+  const code = (err as { code?: string }).code;
+  if (code !== "42P01" && code !== "3F000") {
+    report("CANNOT READ MIGRATION STATE", err);
+    await sql.end();
+    process.exit(1);
+  }
+  console.log("No drizzle.__drizzle_migrations table yet — first run.");
+}
+
+const pending = journal.entries.filter((e) => e.when > lastApplied);
+console.log(
+  `Newest applied migration timestamp: ${lastApplied}. ${pending.length} pending.`,
+);
+for (const e of pending) console.log(`  pending: ${e.tag} (when=${e.when})`);
+
+try {
+  await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
+  console.log(`Migrations applied (${pending.length} new).`);
+} catch (err) {
+  report("MIGRATION FAILED", err);
   console.error(
-    `\nThe failing migration is one of: ${pending.join(", ") || "(none pending)"}`,
+    `\nThe failing migration is one of: ${
+      pending.map((e) => e.tag).join(", ") || "(none pending)"
+    }`,
   );
   await sql.end();
   process.exit(1);
