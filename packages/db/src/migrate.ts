@@ -23,20 +23,44 @@ const sql = postgres(url, { max: 1, prepare: false });
 
 const journal = JSON.parse(
   readFileSync("./drizzle/meta/_journal.json", "utf8"),
-) as { entries: { tag: string }[] };
+) as { entries: { tag: string; when: number }[] };
 
-// Which migrations are already recorded. The table is absent on a first run.
-let applied = 0;
+// drizzle selects migrations by timestamp, not by position: it applies every
+// journal entry whose `when` is greater than the newest created_at recorded in
+// __drizzle_migrations, and reads that ceiling once, before the loop. So an
+// entry timestamped below one that precedes it can never be selected — it is
+// skipped in silence, forever. That is how 0040 was passed over on production
+// while 0041 onwards applied, leaving 0044 to fail on a table 0040 was
+// supposed to create. Refuse to run rather than let it happen again.
+for (let i = 1; i < journal.entries.length; i++) {
+  const prev = journal.entries[i - 1];
+  const curr = journal.entries[i];
+  if (curr.when <= prev.when) {
+    throw new Error(
+      `Journal out of order: ${curr.tag} (when=${curr.when}) is not after ` +
+        `${prev.tag} (when=${prev.when}), so drizzle will silently skip it. ` +
+        `Raise ${curr.tag}'s "when" in drizzle/meta/_journal.json above ${prev.when}.`,
+    );
+  }
+}
+
+// The same cut drizzle makes, so what is reported is what will actually run.
+// A count of recorded rows would not be the same thing and would mislead.
+let lastApplied = -1;
 try {
-  const [row] = await sql`select count(*)::int as n from drizzle.__drizzle_migrations`;
-  applied = row.n;
+  const [row] = await sql`
+    select coalesce(max(created_at), -1)::bigint as last
+    from drizzle.__drizzle_migrations`;
+  lastApplied = Number(row.last);
 } catch {
   console.log("No drizzle.__drizzle_migrations table yet — first run.");
 }
 
-const pending = journal.entries.slice(applied).map((e) => e.tag);
-console.log(`${applied} migration(s) applied, ${pending.length} pending.`);
-for (const tag of pending) console.log(`  pending: ${tag}`);
+const pending = journal.entries.filter((e) => e.when > lastApplied);
+console.log(
+  `Newest applied migration timestamp: ${lastApplied}. ${pending.length} pending.`,
+);
+for (const e of pending) console.log(`  pending: ${e.tag} (when=${e.when})`);
 
 try {
   await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
@@ -54,7 +78,9 @@ try {
     }
   }
   console.error(
-    `\nThe failing migration is one of: ${pending.join(", ") || "(none pending)"}`,
+    `\nThe failing migration is one of: ${
+      pending.map((e) => e.tag).join(", ") || "(none pending)"
+    }`,
   );
   await sql.end();
   process.exit(1);
