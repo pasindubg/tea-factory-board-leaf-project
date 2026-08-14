@@ -1,0 +1,61 @@
+name: Release — sync blm-cloud-release from main
+
+# The only way blm-cloud-release is allowed to move: a fast-forward onto main,
+# run by hand. Nothing merges into it, and no branch other than main can reach
+# it.
+#
+# Two things follow from fast-forwarding rather than merging. There is no merge
+# commit, so the release branch stops reading as "1 commit ahead of main" —
+# the two refs are now either identical or the release is strictly behind, and
+# "ahead" becomes a real signal that something was pushed to it directly.
+# And because a fast-forward is impossible when the release carries commits of
+# its own, divergence is caught here instead of surfacing as a conflict later.
+#
+# This only governs what this workflow does. Add a ruleset on
+# blm-cloud-release with "Restrict updates" enabled, and the GitHub Actions
+# bypass, or nothing prevents someone pushing or merging into it directly.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-sync
+  cancel-in-progress: false
+
+jobs:
+  fast-forward:
+    name: Fast-forward blm-cloud-release to main
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward blm-cloud-release to main
+        run: |
+          set -e
+          git fetch origin main blm-cloud-release
+
+          if git merge-base --is-ancestor origin/main origin/blm-cloud-release; then
+            echo "blm-cloud-release already contains main — nothing to release."
+            exit 0
+          fi
+
+          if ! git merge-base --is-ancestor origin/blm-cloud-release origin/main; then
+            echo "blm-cloud-release has commits that main does not:"
+            git log --oneline origin/main..origin/blm-cloud-release
+            echo
+            echo "Fast-forwarding would discard them. Get them onto main first."
+            exit 1
+          fi
+
+          echo "Releasing to production:"
+          git log --oneline origin/blm-cloud-release..origin/main
+
+          # Deliberately not --force. git refuses anything that is not a
+          # fast-forward, which is the guarantee this whole workflow rests on.
+          git push origin origin/main:refs/heads/blm-cloud-release
