@@ -22,25 +22,16 @@ if [ "$VERCEL_ENV" = "production" ]; then
   # password never reaches the log.
   echo "Production build — applying pending Drizzle migrations against ${DATABASE_URL##*@}"
 
-  # drizzle-kit renders a spinner that overwrites its own error, so the output
-  # is captured and replayed with the spinner frames filtered out. Kept off a
-  # pipeline on purpose: `cmd | grep` would report grep's exit status and let a
-  # failed migration deploy.
+  # Straight through to the build log, no capture and no filtering. Earlier
+  # revisions of this file buffered the output to /tmp and stripped spinner
+  # frames back out of it, because `drizzle-kit migrate` printed a spinner and
+  # nothing else — including on failure, where it exited 1 having written no
+  # error at all. db:migrate now runs packages/db/src/migrate.ts, which prints
+  # plain lines and the actual Postgres error, so none of that is needed.
   set +e
-  pnpm --filter @tea/db db:migrate > /tmp/migrate.log 2>&1
+  pnpm --filter @tea/db db:migrate 2>&1
   MIGRATE_STATUS=$?
   set -e
-
-  # The spinner never emits a newline, so drizzle-kit's failure is appended to
-  # the same physical line as the last spinner frame. Dropping lines that say
-  # "applying migrations" — what this did before — therefore deleted the error
-  # along with the frame, which is why a failed deploy printed NOTICEs and no
-  # cause. So: split on \r, strip the spinner text off whatever line carries it
-  # (keeping anything printed after it), then drop the now-blank frames.
-  tr '\r' '\n' < /tmp/migrate.log \
-    | sed 's/.*applying migrations\.*//' \
-    | grep -v '^[[:space:]]*$' \
-    | tail -100
 
   if [ "$MIGRATE_STATUS" -ne 0 ]; then
     echo "Migration failed (exit $MIGRATE_STATUS) — see the lines above."
