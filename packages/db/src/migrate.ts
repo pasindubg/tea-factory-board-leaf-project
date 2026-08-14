@@ -44,6 +44,20 @@ for (let i = 1; i < journal.entries.length; i++) {
   }
 }
 
+// drizzle wraps the driver error, and postgres.js hangs the useful parts
+// (which constraint, which table, where in the statement) off the error object
+// rather than putting them in the message.
+function report(label: string, err: unknown) {
+  console.error(`\n${label}\n`);
+  for (const e of [err, (err as { cause?: unknown }).cause]) {
+    if (!e) continue;
+    console.error(e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+    for (const [key, value] of Object.entries(e as Record<string, unknown>)) {
+      if (key !== "stack" && value != null) console.error(`  ${key}: ${String(value)}`);
+    }
+  }
+}
+
 // The same cut drizzle makes, so what is reported is what will actually run.
 // A count of recorded rows would not be the same thing and would mislead.
 let lastApplied = -1;
@@ -52,7 +66,16 @@ try {
     select coalesce(max(created_at), -1)::bigint as last
     from drizzle.__drizzle_migrations`;
   lastApplied = Number(row.last);
-} catch {
+} catch (err) {
+  // Only "the bookkeeping table is not there yet" means a first run. Swallowing
+  // everything else reported a bad password as an empty database and then
+  // listed all 49 migrations as pending, which is alarming and wrong.
+  const code = (err as { code?: string }).code;
+  if (code !== "42P01" && code !== "3F000") {
+    report("CANNOT READ MIGRATION STATE", err);
+    await sql.end();
+    process.exit(1);
+  }
   console.log("No drizzle.__drizzle_migrations table yet — first run.");
 }
 
@@ -66,17 +89,7 @@ try {
   await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
   console.log(`Migrations applied (${pending.length} new).`);
 } catch (err) {
-  // drizzle wraps the driver error, and postgres.js hangs the useful parts
-  // (which constraint, which table, where in the statement) off the error
-  // object rather than putting them in the message.
-  console.error("\nMIGRATION FAILED\n");
-  for (const e of [err, (err as { cause?: unknown }).cause]) {
-    if (!e) continue;
-    console.error(e instanceof Error ? `${e.name}: ${e.message}` : String(e));
-    for (const [key, value] of Object.entries(e as Record<string, unknown>)) {
-      if (key !== "stack" && value != null) console.error(`  ${key}: ${String(value)}`);
-    }
-  }
+  report("MIGRATION FAILED", err);
   console.error(
     `\nThe failing migration is one of: ${
       pending.map((e) => e.tag).join(", ") || "(none pending)"
