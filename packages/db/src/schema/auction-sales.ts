@@ -35,6 +35,16 @@ export const auctionSales = pgTable(
       { onDelete: "cascade" },
     ),
     reprintNo: text("reprint_no"),
+    // Which screen opened this Broker Invoice. `invoice` is the ordinary
+    // dispatch entry flow. `reprint-register` means its first lot was entered
+    // on the Re-prints page as a re-print the factory already had outstanding
+    // when it started using this system — nothing was physically dispatched
+    // for it. It is a real Broker Invoice either way and follows the same
+    // broker/sale flow; the value only badges where it came from, so an
+    // operator does not read a cutover entry as a real dispatch.
+    entrySource: text("entry_source", { enum: ["invoice", "reprint-register"] })
+      .default("invoice")
+      .notNull(),
     saleNo: text("sale_no").notNull(), // broker invoice number, e.g. 0001
     dispatchDate: date("dispatch_date").notNull().default("now()"), // broker invoice date (physical dispatch date)
     targetSaleNo: text("target_sale_no"), // the auction sale this broker invoice targets (e.g. 2026-023)
@@ -71,8 +81,13 @@ export const auctionSales = pgTable(
     // rejected here (and again by uq_auction_sales_bundle_broker_mark, since
     // the auto-created bundle is per dispatch date).
     // `dispatched` is retained here as the legacy name for an open draft.
+    //
+    // entry_source is part of the key so a cutover re-print entry never joins
+    // (or blocks) an open dispatch invoice for the same broker, mark and date.
+    // Merging the two would put un-dispatched re-prints inside a real dispatch
+    // and make the badge on that invoice a lie.
     uniqueIndex("uq_auction_sales_open_broker_mark")
-      .on(t.factoryId, t.brokerId, t.sellingMarkId, t.dispatchDate)
+      .on(t.factoryId, t.brokerId, t.sellingMarkId, t.dispatchDate, t.entrySource)
       .where(sql`"sale_kind" = 'dispatch' AND "status" IN ('draft', 'dispatched') AND "selling_mark_id" IS NOT NULL`),
   ],
 );

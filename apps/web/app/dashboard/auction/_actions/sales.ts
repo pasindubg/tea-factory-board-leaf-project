@@ -78,10 +78,22 @@ async function ensureDailyBundledDispatch(
 type OpenDraftInvoice = { id: string; sale_no: string; dispatch_date: string | null };
 
 /**
+ * Which screen a Broker Invoice is being opened from. Ordinary dispatch entry
+ * is `invoice`; `reprint-register` is the Re-prints page entering a re-print
+ * the factory already had outstanding before it started using this system.
+ */
+export type BrokerInvoiceEntrySource = "invoice" | "reprint-register";
+
+/**
  * There must be one and only one open Broker Invoice for a broker + selling
  * mark ON A GIVEN DISPATCH DATE. A later dispatch day is separate work and
  * gets its own invoice, so the date is part of the key — mirroring the
  * uq_auction_sales_open_broker_mark index that backs this check.
+ *
+ * `entry_source` is part of that key too, so a cutover re-print entry gets its
+ * own open invoice rather than joining an open dispatch for the same broker,
+ * mark and date — which would file un-dispatched re-prints inside a real
+ * physical dispatch.
  *
  * A null dispatch date can never collide (Postgres treats nulls as distinct in
  * a unique index), so it short-circuits rather than matching other null-dated
@@ -93,6 +105,7 @@ async function findOpenDraftInvoice(
   brokerId: string,
   sellingMarkId: string,
   dispatchDate: string | null,
+  entrySource: BrokerInvoiceEntrySource,
   excludingId?: string,
 ): Promise<OpenDraftInvoice | null> {
   if (!dispatchDate) return null;
@@ -104,6 +117,7 @@ async function findOpenDraftInvoice(
     .eq("selling_mark_id", sellingMarkId)
     .eq("dispatch_date", dispatchDate)
     .eq("sale_kind", "dispatch")
+    .eq("entry_source", entrySource)
     .in("status", ["draft", "dispatched"])
     .order("created_at", { ascending: true })
     .limit(1);
@@ -130,8 +144,12 @@ type InsertDispatchResult =
   | { ok: true; pending: true }
   | { ok: false; error: string };
 
-async function insertDispatch(formData: FormData, options: { bypassPrefixId?: string } = {}): Promise<InsertDispatchResult> {
+async function insertDispatch(
+  formData: FormData,
+  options: { bypassPrefixId?: string; entrySource?: BrokerInvoiceEntrySource } = {},
+): Promise<InsertDispatchResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
+  const entrySource: BrokerInvoiceEntrySource = options.entrySource ?? "invoice";
   const brokerId = str(formData.get("broker_id"));
 
   let saleNoPrefix: string;
@@ -190,7 +208,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
   if (!broker) return { ok: false, error: notAnExisting(brokerId, "broker") };
   if (!mark) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
   try {
-    const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
+    const existingDraft = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate, entrySource);
     if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
@@ -216,6 +234,7 @@ async function insertDispatch(formData: FormData, options: { bypassPrefixId?: st
       driver_name: driverName || null,
       transporter: transporter || null,
       bundled_dispatch_id: bundleId,
+      entry_source: entrySource,
       status: "draft",
     })
     .select("id")
@@ -279,8 +298,12 @@ export type ResolvedBrokerInvoice =
  * one-open-invoice-per broker+mark+dispatch-date rule stay identical whichever
  * page the user starts from.
  */
-export async function resolveBrokerInvoiceForLot(formData: FormData): Promise<ResolvedBrokerInvoice> {
+export async function resolveBrokerInvoiceForLot(
+  formData: FormData,
+  options: { entrySource?: BrokerInvoiceEntrySource } = {},
+): Promise<ResolvedBrokerInvoice> {
   const { supabase, profile } = await requireModuleAccess("auction");
+  const entrySource: BrokerInvoiceEntrySource = options.entrySource ?? "invoice";
   const brokerId = str(formData.get("broker_id"));
   const sellingMarkId = str(formData.get("selling_mark_id"));
   const dispatchDate = str(formData.get("dispatch_date"));
@@ -294,14 +317,14 @@ export async function resolveBrokerInvoiceForLot(formData: FormData): Promise<Re
   if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
 
   try {
-    const existing = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate);
+    const existing = await findOpenDraftInvoice(supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate, entrySource);
     if (existing) return { ok: true, saleId: existing.id, created: false };
   } catch (error) {
     // Never surface the driver's own text: it leaks column and type names.
     return { ok: false, error: friendlyError(error) };
   }
 
-  const created = await insertDispatch(formData);
+  const created = await insertDispatch(formData, { entrySource });
   if (!created.ok) return created;
   if ("pending" in created) return { ok: true, pending: true };
   return { ok: true, saleId: created.id, created: true };
@@ -435,7 +458,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   // selling-mark branch below reuses this row rather than re-reading it.
   const { data: currentSale, error: currentSaleError } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_kind, status, dispatch_date")
+    .select("id, broker_id, sale_kind, status, dispatch_date, entry_source")
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
@@ -472,6 +495,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
           currentSale.broker_id as string,
           sellingMarkId,
           (currentSale as { dispatch_date?: string | null }).dispatch_date ?? null,
+          ((currentSale as { entry_source?: string | null }).entry_source as BrokerInvoiceEntrySource | null) ?? "invoice",
           id,
         );
         if (existingDraft) return { ok: false, error: duplicateDraftInvoiceError(existingDraft) };

@@ -16,8 +16,10 @@
     "test:auction2": "tsx src/auction/parse-valuation.test.ts",
     "test:settlement": "tsx src/auction/compute-settlement.test.ts",
     "test:match": "tsx src/auction/match-orphans.test.ts",
+    "test:carry-forward": "tsx src/auction/match-carry-forward.test.ts",
     "test:bank": "tsx src/auction/match-bank.test.ts",
-    "test:invoice-key": "tsx src/auction/invoice-key.test.ts"
+    "test:invoice-key": "tsx src/auction/invoice-key.test.ts",
+    "test:broker-format": "tsx src/auction/broker-format.test.ts"
   },
   "dependencies": {
     "@tea/db": "workspace:*"

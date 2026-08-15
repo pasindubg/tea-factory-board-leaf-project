@@ -1,5 +1,6 @@
 import "server-only";
 
+import { invoiceMatchKey } from "@tea/api";
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
@@ -147,6 +148,7 @@ type RefreshReprintLot = RefreshLotRow & {
     target_sale_no: string | null;
     dispatch_date: string | null;
     sale_date: string | null;
+    entry_source: string | null;
     brokers: { name: string } | null;
   } | null;
 };
@@ -204,7 +206,24 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
     const chain = [...unsortedChain].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
     const lot = lotById.get(rootId) ?? chain[0];
     const terminal = [...chain].reverse().find((node) => node.state === "sold" || node.state === "settled" || (node.sale_lines?.length ?? 0) > 0);
-    const invoices = [...new Set(chain.flatMap((node) => (node.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no))).filter(Boolean))];
+    // One invoice, one entry. A re-print chain holds the SAME invoice number in
+    // two notations: the factory stores its index-cycle prefix ("26I02-0909")
+    // while the ACK-created child takes the bare number the broker printed
+    // ("0909"). Deduping on the literal string let both survive, so a single
+    // invoice read as two ("26I02-0909, 0909"). invoiceMatchKey is the same
+    // prefix-blind key reconciliation matches on; the fullest spelling wins so
+    // the factory's own reference is what stays on screen.
+    const invoiceByKey = new Map<string, string>();
+    for (const node of chain) {
+      for (const invoice of node.lot_invoices ?? []) {
+        const display = formatFourDigitNo(invoice.invoice_no);
+        if (!display) continue;
+        const key = invoiceMatchKey(invoice.invoice_no) || display;
+        const existing = invoiceByKey.get(key);
+        if (!existing || display.length > existing.length) invoiceByKey.set(key, display);
+      }
+    }
+    const invoices = [...invoiceByKey.values()];
     const reprintNodes = chain.filter((node) => node.state === "re-print");
     const saleLabel = (node: RefreshReprintLot) => formatSaleNo(node.auction_sales?.target_sale_no ?? node.auction_sales?.sale_no ?? null) || "—";
     const state = stateBucket(terminal?.state ?? chain[chain.length - 1]?.state);
@@ -230,6 +249,10 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
       soldSale: terminal ? saleLabel(terminal) : null,
       history: chain.map((node) => `${saleLabel(node)} ${stateBucket(node.state).label}`).join(" → "),
       source: lot.lot_source,
+      // Taken from the chain ROOT: it says how this re-print first entered the
+      // system, which is exactly what distinguishes a cutover entry from a
+      // lot that was really dispatched and then failed to sell.
+      entrySource: lot.auction_sales?.entry_source ?? null,
       stateLabel: state.label,
       stateStyle: state.style,
       reprintCount: reprintNodes.length,
@@ -757,7 +780,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         search.apply(
           supabase
             .from("auction_sales")
-            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)", embeds))
+            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, entry_source, created_date, brokers(name)", embeds))
             .eq("sale_kind", "dispatch"),
         ).order("created_at", { ascending: false }),
         supabase.from("marks").select("id, code, name").order("code"),
@@ -784,6 +807,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
           transporter: (sale as { transporter?: string | null }).transporter ?? null,
           bundle_dispatch_no: bundleNoById.get((sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id ?? "") ?? null,
+          entry_source: (sale as { entry_source?: string | null }).entry_source ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
           brokers: (sale.brokers as unknown as { name: string } | null) ?? null,
         })),
@@ -1082,7 +1106,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         .select(
           "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, lot_source, reprint_source_lot_id, created_at, " +
             "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
-            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, brokers(name))",
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, entry_source, brokers(name))",
         )
         .or("state.eq.re-print,reprint_source_lot_id.not.is.null")
         .order("created_at");

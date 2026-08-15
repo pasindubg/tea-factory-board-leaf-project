@@ -499,6 +499,132 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
   };
 }
 
+/**
+ * Registers a re-print the factory already had outstanding when it started
+ * using this system — a lot from a sale that predates every record here.
+ *
+ * It creates a REAL lot under a REAL Broker Invoice, entered exactly the way
+ * an ordinary lot invoice is (same prefix resolution, same grade and kg/bag
+ * rules, same numbering), and only then moves it to `re-print`. That is the
+ * whole point: once the lot exists in `re-print`, the acknowledgement
+ * carry-forward resolver already links a later broker catalogue row to it as a
+ * re-print child through `reprint_source_lot_id`, so nothing in the ACK,
+ * valuation, contract, or settlement path needs to know this register exists.
+ * A parallel "outstanding re-prints" table would have needed exactly that.
+ *
+ * Its Broker Invoice is stamped `entry_source = 'reprint-register'` so the
+ * operator can see it was entered here rather than dispatched.
+ */
+export async function registerOutstandingReprint(formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (profile.role !== "owner") return { ok: false, error: "Only the owner can register an outstanding re-print." };
+
+  const resolved = await resolveBrokerInvoiceForLot(formData, { entrySource: "reprint-register" });
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  if ("pending" in resolved) {
+    return { ok: true, notice: "Sent for supervisor approval — this prefix isn't the active one." };
+  }
+
+  const created = await createDispatchedLotForList(resolved.saleId, formData);
+  if (!created.ok) {
+    // Same cleanup contract as the Invoice Overview create: a lot can only be
+    // validated once its parent exists, so a rejected entry would otherwise
+    // strand the broker invoice this call just opened.
+    if (resolved.created) {
+      const discarded = await discardEmptyBrokerInvoice(resolved.saleId);
+      if (!discarded) {
+        return {
+          ok: false,
+          error: `${created.error} An empty broker invoice was left open — remove it from the broker invoice list.`,
+        };
+      }
+    }
+    return { ok: false, error: created.error };
+  }
+  if ("pending" in created) return { ok: true, notice: created.notice };
+
+  const lotId = created.row.id;
+  const invoiceNo = created.row.invoice_no ?? formatFourDigitNo(str(formData.get("invoice_no")));
+  const reason = str(formData.get("reason")) || "Outstanding re-print entered at cutover.";
+  // The broker invoice's target sale is the sale this re-print came out of —
+  // that is what the operator enters on the form for a cutover entry.
+  const originalSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
+
+  // The lot is born `invoiced` (or `shutout` when it is under the broker's
+  // grade minimum). Neither is true of a re-print that is already sitting at
+  // the broker, so it is moved on immediately, and any shutout reason the
+  // threshold check attached goes with it. No extra sample is deducted here:
+  // the sample weight entered on the form is what has ALREADY been taken, and
+  // createDispatchedLotForList has applied it to net weight.
+  const { data: updatedLot, error: updateError } = await supabase
+    .from("auction_lots")
+    .update({ state: "re-print", shutout_reason: null })
+    .eq("id", lotId)
+    .eq("factory_id", profile.factory_id)
+    .select("id, state")
+    .maybeSingle();
+  if (updateError || !updatedLot) {
+    const rollback = await deleteTenantRow(supabase, "auction_lots", lotId);
+    if (rollback.error) {
+      return { ok: false, error: "The lot was created but could not be marked as a re-print, and could not be removed. Review the broker invoice before retrying." };
+    }
+    if (resolved.created) await discardEmptyBrokerInvoice(resolved.saleId);
+    return { ok: false, error: updateError ? friendlyError(updateError) : "The lot could not be marked as a re-print." };
+  }
+
+  const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
+    saleId: resolved.saleId,
+    lotId,
+    action: "Outstanding re-print registered",
+    detail: `Invoice ${invoiceNo} was registered as a re-print outstanding from before this system${originalSaleNo ? `, originally sale ${originalSaleNo}` : ""}. A later acknowledgement listing this invoice will link to it as a re-print child.`,
+    reason,
+    actor: profile.name,
+  });
+  if (auditError) {
+    const rollback = await deleteTenantRow(supabase, "auction_lots", lotId);
+    if (rollback.error) {
+      return { ok: false, error: "The re-print was registered but its audit entry could not be saved, and the lot could not be removed. Review the broker invoice before retrying." };
+    }
+    if (resolved.created) await discardEmptyBrokerInvoice(resolved.saleId);
+    return { ok: false, error: friendlyError(auditError) };
+  }
+
+  // Re-run now that the lot is `re-print`: createDispatchedLotForList synced
+  // the Broker Invoice while the lot was still `invoiced`, so without this the
+  // invoice would keep a status its own lot contradicts — and, being left
+  // open, would quietly absorb the next unrelated register entry.
+  const synced = await syncDispatchStatusFromLots(supabase, resolved.saleId, profile.factory_id);
+  if (!synced.ok) return synced;
+
+  revalidatePath(`${AUC}/reprints`);
+  return {
+    ok: true,
+    notice: `Invoice ${invoiceNo} registered as an outstanding re-print.`,
+    invalidate: [
+      { kind: "all", key: "auction.reprint-overview" },
+      { kind: "all", key: "auction.invoice-overview" },
+      { kind: "all", key: "auction.dispatches" },
+      { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId: resolved.saleId } } },
+    ],
+  };
+}
+
+/**
+ * The Re-prints list's single `+ New` action. Both ways of getting a lot into
+ * the re-print chain are entered from the same create panel, so the list keeps
+ * exactly one creation control:
+ *
+ * - `outstanding` — the lot does not exist here at all (a re-print left over
+ *   from before go-live). Enters it, then moves it to `re-print`.
+ * - `historic` — the lot is already in the system and should become the ROOT
+ *   of a re-print chain.
+ */
+export async function registerReprintEntry(formData: FormData): Promise<ListMutationResult> {
+  return str(formData.get("mode")) === "historic"
+    ? registerHistoricReprint(formData)
+    : registerOutstandingReprint(formData);
+}
+
 export type CreateDispatchedLotResult =
   | { ok: true; row: LotRow; notice: string }
   | { ok: true; pending: true; notice: string }

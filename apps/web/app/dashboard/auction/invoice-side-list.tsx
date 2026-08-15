@@ -4,6 +4,7 @@ import { EntityList } from "@/components/entity-list";
 import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
 import { createDispatchWithId } from "./actions";
+import { entrySourceChip, entrySourceOptions } from "./entry-source";
 import { formatSaleNo } from "./sale-number";
 import { BROKER_INVOICE_STATUSES, stateBucket, stateBucketOptions } from "./state-buckets";
 
@@ -23,6 +24,7 @@ const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
   { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
   { key: "sale_date", label: "Sale date", accessor: (row) => row.sale_date ?? null, sortable: true, searchInput: "date" },
   { key: "status", label: "Status", accessor: (row) => stateBucket(cappedDispatchStatus(row.status)).label, sortable: true, filter: "select", filterOptions: stateBucketOptions(BROKER_INVOICE_STATUSES.map(cappedDispatchStatus)) },
+  { key: "entry_source", label: "Origin", accessor: (row) => entrySourceChip(row.entry_source).label, sortable: true, filter: "select", filterOptions: entrySourceOptions() },
 ];
 
 const DISPATCH_LIST = {
@@ -78,12 +80,19 @@ export function InvoiceSideList({
         showSelectionSummary: false,
         content: (dispatch, { active }) => {
           const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
+          // Nothing was physically dispatched for a re-print register invoice,
+          // so it is called out on the rail rather than reading as a dispatch.
+          const isRegister = dispatch.entry_source === "reprint-register";
+          const origin = entrySourceChip(dispatch.entry_source);
           return (
             <>
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
                 {active && <span className="text-stone-400">‹</span>}
               </div>
+              {isRegister && (
+                <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs ${origin.style}`}>{origin.label}</span>
+              )}
               <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
               {dispatch.selling_mark && (
                 <p className="mt-0.5 truncate text-xs text-stone-400 dark:text-stone-500">{dispatch.selling_mark}</p>

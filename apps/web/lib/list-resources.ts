@@ -125,6 +125,8 @@ export type AuctionDispatchListRow = {
   driver_name: string | null;
   transporter: string | null;
   bundle_dispatch_no: string | null;
+  /** `invoice` | `reprint-register` — which screen opened this Broker Invoice. */
+  entry_source: string | null;
   created_date: string | null;
   status: string;
   brokers: { name: string } | null;
@@ -248,6 +250,12 @@ export type AuctionReprintOverviewListRow = {
   soldSale: string | null;
   history: string;
   source: string | null;
+  /**
+   * `auction_sales.entry_source` of the chain ROOT: `reprint-register` means
+   * the chain began as a re-print already outstanding at cutover rather than
+   * as a lot this system dispatched.
+   */
+  entrySource: string | null;
   stateLabel: string;
   stateStyle: string;
   reprintCount: number;

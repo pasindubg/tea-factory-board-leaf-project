@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { reconcileValuation } from "@tea/api";
 import {
   DetailField,
   DetailRecordPanel,
@@ -52,9 +53,17 @@ type LotRow = {
 
 type LineRow = {
   lot_id: string | null;
+  price_per_kg: number | string | null;
   proceeds: number | string | null;
   vat_amount: number | string | null;
   on_guarantee: boolean | null;
+};
+
+type ValuationRow = {
+  lot_id: string;
+  price_min: number | string | null;
+  price_max: number | string | null;
+  projected_proceeds: number | string | null;
 };
 
 type DocImportRow = {
@@ -215,11 +224,22 @@ export default async function SaleDetailPage({
   const { data: lines, error: linesError } = lotRows.length > 0
     ? await supabase
         .from("sale_lines")
-        .select("lot_id, proceeds, vat_amount, on_guarantee")
+        .select("lot_id, price_per_kg, proceeds, vat_amount, on_guarantee")
         .in("lot_id", lotRows.map((lot) => lot.id))
         .order("created_at", { ascending: false })
     : { data: [], error: null };
   if (linesError) throw new Error(`Could not load auction sale lines: ${linesError.message}`);
+
+  // Recon ② inputs (docs/AUCTION.md §4②). projected_proceeds is the broker's
+  // LOW-end estimate × net weight, so a positive variance is the sale beating
+  // the bottom of the valuation range.
+  const { data: valuationRows, error: valuationsError } = lotRows.length > 0
+    ? await supabase
+        .from("valuations")
+        .select("lot_id, price_min, price_max, projected_proceeds")
+        .in("lot_id", lotRows.map((lot) => lot.id))
+    : { data: [], error: null };
+  if (valuationsError) throw new Error(`Could not load auction valuations: ${valuationsError.message}`);
 
   const lineRows = (lines ?? []) as unknown as LineRow[];
   const saleLines = await loadListResource({ key: "auction.sale-lines", params: { saleId: saleLineResourceId } });
@@ -238,6 +258,46 @@ export default async function SaleDetailPage({
   const totalProceeds = lineRows.reduce((s, line) => s + Number(line.proceeds ?? 0), 0);
   const totalVat = lineRows.reduce((s, line) => s + Number(line.vat_amount ?? 0), 0);
   const guaranteeLots = lineRows.filter((line) => line.on_guarantee).length;
+
+  // Valuation vs realised (recon ②).
+  //
+  // "Total valuation" is the whole sale's expectation — every lot the broker
+  // has valued, whether or not it has sold yet. That is the figure that means
+  // something before the sellers contract arrives.
+  const valuationInputs = ((valuationRows ?? []) as ValuationRow[]).map((row) => {
+    const lot = lotRows.find((candidate) => candidate.id === row.lot_id);
+    return {
+      lotId: row.lot_id,
+      invoiceNo: lot?.invoice_no ?? "",
+      grade: lot?.grade ?? "",
+      netWt: Number(lot?.net_wt ?? 0),
+      priceMin: row.price_min == null ? null : Number(row.price_min),
+      priceMax: row.price_max == null ? null : Number(row.price_max),
+      projectedProceeds: row.projected_proceeds == null ? null : Number(row.projected_proceeds),
+    };
+  });
+  const totalValuation = valuationInputs.reduce((sum, row) => sum + (row.projectedProceeds ?? 0), 0);
+
+  // The VARIANCE is like-for-like: reconcileValuation walks the sold lots and
+  // totals only those, so proceeds are compared against the valuation of the
+  // same lots. Measuring them against a valuation that also covers unsold lots
+  // would report the whole unsold balance as a shortfall, which says nothing
+  // about how the sale performed.
+  const valuationRecon = reconcileValuation(
+    valuationInputs,
+    lineRows
+      .filter((line): line is LineRow & { lot_id: string } => Boolean(line.lot_id))
+      .map((line) => ({
+        lotId: line.lot_id,
+        pricePerKg: Number(line.price_per_kg ?? 0),
+        proceeds: Number(line.proceeds ?? 0),
+      })),
+  );
+  const soldValuation = valuationRecon.summary.totalProjected;
+  const variance = valuationRecon.summary.totalProceeds - soldValuation;
+  const varianceLabel = soldValuation === 0
+    ? "—"
+    : `${variance >= 0 ? "+" : "−"}LKR ${money(Math.abs(variance))} (${valuationRecon.summary.premiumPct >= 0 ? "+" : "−"}${Math.abs(valuationRecon.summary.premiumPct).toFixed(1)}%)`;
   const reprintCount = lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
@@ -405,7 +465,13 @@ export default async function SaleDetailPage({
         <DetailField label="Sale date" value={saleDateLabel} />
         <DetailField label="Total kg to sale" value={`${totalNetKg.toFixed(2)} kg`} />
         <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
+        <DetailField
+          label="Total valuation"
+          value={valuationInputs.length === 0 ? "—" : `LKR ${money(totalValuation)}`}
+        />
         <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
+        {/* Sold lots vs their own valuation — see the variance note above. */}
+        <DetailField label="Valuation variance" value={varianceLabel} />
         <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
         <DetailField label="Guarantee lots" value={guaranteeLots} />
       </DetailRecordPanel>
