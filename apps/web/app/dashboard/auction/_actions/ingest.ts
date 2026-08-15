@@ -2,13 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { brokerDocumentMismatch, computeSettlement, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
+import { brokerDocumentMismatch, computeSettlement, hasContractRates, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import {
   AUC,
   back,
   canonicalGrade,
+  colomboToday,
   extractPdf,
   gradeAliasMap,
   stageImport,
@@ -575,7 +576,50 @@ export async function confirmContract(importId: string, saleId: string) {
       .eq("broker_id", brokerId)
       .order("effective_from", { ascending: false })
       .limit(1);
-    const rateCard = ratesRows?.[0];
+    let rateCard = ratesRows?.[0];
+
+    // The contract IS the rate card. It prints the rate beside every line of
+    // the Account Sales stack, so a broker's first confirmed contract can
+    // establish the card rather than the owner transcribing it by hand — and
+    // until one exists no settlement can be computed at all, which is why
+    // Total revenue reads "—".
+    //
+    // An EXISTING card is never silently overwritten: a broker changing its
+    // rates is a real commercial event, and quietly rewriting history would
+    // restate every settlement already computed from the old card. The
+    // difference is reported on the contract review screen instead
+    // (contractRateDifferences), for a human to act on.
+    if (!rateCard && hasContractRates(parsed.rates)) {
+      const effectiveFrom = toISODate(parsed.saleDate) ?? colomboToday();
+      const { data: createdRate } = await supabase
+        .from("broker_rates")
+        .insert({
+          factory_id: profile.factory_id,
+          broker_id: brokerId,
+          effective_from: effectiveFrom,
+          insurance_per_kg: parsed.rates.insurancePerKg ?? 0,
+          public_sale_ex_per_lot: parsed.rates.publicSaleExPerLot ?? 0,
+          brokerage_pct: parsed.rates.brokeragePct ?? 0,
+          handling_per_kg: parsed.rates.handlingPerKg ?? 0,
+          documentation_per_lot: parsed.rates.documentationPerLot ?? 0,
+          eplatform_per_kg: parsed.rates.eplatformPerKg ?? 0,
+          govt_relief_loan: 0,
+          charges_vat_pct: parsed.rates.chargesVatPct ?? 18,
+          proceeds_vat_pct: parsed.rates.proceedsVatPct ?? 18,
+        })
+        .select("*")
+        .maybeSingle();
+      if (createdRate) {
+        rateCard = createdRate;
+        await writeAudit(supabase, profile.factory_id, {
+          saleId,
+          action: "Broker rate card created",
+          detail: `Deduction rates were taken from the Sellers Contract: brokerage ${(parsed.rates.brokeragePct ?? 0).toFixed(2)}%, insurance Rs.${(parsed.rates.insurancePerKg ?? 0)}/kg, handling Rs.${(parsed.rates.handlingPerKg ?? 0)}/kg, public sale expenses Rs.${(parsed.rates.publicSaleExPerLot ?? 0)}/lot, documentation Rs.${(parsed.rates.documentationPerLot ?? 0)}/lot, e-platform Rs.${(parsed.rates.eplatformPerKg ?? 0)}/kg, charges VAT ${(parsed.rates.chargesVatPct ?? 18)}%.`,
+          reason: "No rate card existed for this broker; the contract is the source of truth for its charges.",
+          actor: profile.name,
+        });
+      }
+    }
 
     // Fetch existing sale lines we just upserted (with their ids) for VAT ledger
     const { data: saleLines } = await supabase

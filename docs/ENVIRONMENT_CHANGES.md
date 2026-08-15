@@ -2,6 +2,15 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-08-15 - Broker Rate Card Read From The Sellers Contract
+
+- No schema change. `packages/api/src/auction/parse-contract-rates.ts` reads the broker's deduction rate card off the Account Sales block of a Tea Sellers Contract, and `ParsedContract` now carries a `rates` object. The contract is the source of truth for what a broker charges.
+- Only the RATES are parsed, never the amounts printed beside them. PDF text extraction returns the page in drawing order, so those figures arrive detached from their labels and cannot be attributed reliably; the rates live inside the label text (`Brokerage @ 1.00%`, `Handling Charge @ Rs.3.58 Per Kg`) and survive intact. Every amount is then derived by the existing `computeSettlement`.
+- `confirmContract` creates a `broker_rates` row from those rates when the broker has none, and writes an audit entry. Previously `broker_rates` was empty with no UI to fill it, so `if (rateCard)` never ran and **no settlement was ever computed** — which is why Total revenue / Bank credit read `—`. An EXISTING card is never silently overwritten: a rate change is a real commercial event and rewriting it would restate settlements already computed.
+- The contract review screen shows two callouts: an amber one listing every rate where the saved card disagrees with the contract (`contractRateDifferences`), and a sky one naming the card that confirming will create when none exists.
+- Verify with `pnpm --dir packages/api test:contract-rates`. It parses all five real contracts (both brokers, sales 19/20/23 — BPML writes `Rs.0.06`/`VAT 18%`, ASIA SIYAKA writes `Rs. 0.060`/`VAT 18 %`) and recomputes SLC-S20-BL's own printed Account Sales totals from the parsed card, matching to within one cent.
+- New fixtures: `contract-charges-bpml-sale-020.txt`, `contract-charges-asia-sale-020.txt`.
+
 ## 2026-08-15 - Broker Document Format Guard At Upload
 
 - No schema or dependency change. `packages/api/src/auction/broker-format.ts` adds `detectBrokerFormat` / `brokerDocumentMismatch`, wired into `ingestAcknowledgement`, `ingestValuation` and `ingestContract` (`apps/web/app/dashboard/auction/_actions/ingest.ts`). A document uploaded against the wrong broker is now refused with an error toast before it is staged, instead of staging cleanly and failing later as an invoice-matching error.

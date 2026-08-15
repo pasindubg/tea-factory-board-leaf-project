@@ -10,6 +10,7 @@ export * from "./auction/parse-acknowledgement";
 export * from "./auction/reconcile";
 export * from "./auction/parse-valuation";
 export * from "./auction/parse-contract";
+export * from "./auction/parse-contract-rates";
 export * from "./auction/reconcile-valuation";
 export * from "./auction/compute-settlement";
 export * from "./auction/reconcile-vat";

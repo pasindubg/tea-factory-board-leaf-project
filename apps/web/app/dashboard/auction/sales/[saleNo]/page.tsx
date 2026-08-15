@@ -241,6 +241,19 @@ export default async function SaleDetailPage({
     : { data: [], error: null };
   if (valuationsError) throw new Error(`Could not load auction valuations: ${valuationsError.message}`);
 
+  // The broker's Account Sales stack (recon ③). `net_proceeds` is proceeds
+  // minus every broker charge; `total_net_proceeds` adds the output VAT the
+  // broker collected from the buyer and is the figure actually credited to the
+  // factory's bank on prompt date — but that VAT is then remitted to the
+  // government, so it is not money the factory keeps.
+  const { data: settlementRows, error: settlementsError } = dispatchIds.size > 0
+    ? await supabase
+        .from("settlements")
+        .select("net_proceeds, total_deductions, total_net_proceeds")
+        .in("sale_id", [...dispatchIds])
+    : { data: [], error: null };
+  if (settlementsError) throw new Error(`Could not load auction settlements: ${settlementsError.message}`);
+
   const lineRows = (lines ?? []) as unknown as LineRow[];
   const saleLines = await loadListResource({ key: "auction.sale-lines", params: { saleId: saleLineResourceId } });
   if (!saleLines.ok) throw new Error(saleLines.error);
@@ -298,6 +311,28 @@ export default async function SaleDetailPage({
   const varianceLabel = soldValuation === 0
     ? "—"
     : `${variance >= 0 ? "+" : "−"}LKR ${money(Math.abs(variance))} (${valuationRecon.summary.premiumPct >= 0 ? "+" : "−"}${Math.abs(valuationRecon.summary.premiumPct).toFixed(1)}%)`;
+  // The two money figures are counted over DIFFERENT populations, and without
+  // saying so on the field they look like they contradict each other: a sale
+  // can beat its valuation on everything that sold while the whole-sale
+  // valuation still exceeds proceeds, purely because some lots did not sell.
+  const valuedLotsWithSale = valuationRecon.summary.lots - valuationRecon.summary.noValuation;
+
+  // Settlements only exist once the broker's rate card has been entered, so
+  // this is "—" rather than a misleading zero until then.
+  const settlements = (settlementRows ?? []) as { net_proceeds: number | string | null; total_deductions: number | string | null; total_net_proceeds: number | string | null }[];
+  // The factory's revenue from this sale: proceeds less the broker's whole
+  // deduction stack (brokerage, insurance, handling, public sale expenses,
+  // documentation, e-platform, relief loan and the VAT on those charges).
+  // This is the settlement's `net_proceeds` — VAT is excluded because the
+  // broker passes it through and the factory remits it to the government, so
+  // it is never revenue.
+  // Every charge the broker took: brokerage, insurance, public sale expenses,
+  // handling, documentation, e-platform, the government relief loan, and the
+  // VAT the broker charges on those charges. The rates come from the Sellers
+  // Contract itself (see parseContractRates).
+  const totalDeductions = settlements.reduce((sum, row) => sum + Number(row.total_deductions ?? 0), 0);
+  const totalRevenue = settlements.reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0);
+  const bankCredit = settlements.reduce((sum, row) => sum + Number(row.total_net_proceeds ?? 0), 0);
   const reprintCount = lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
@@ -466,12 +501,46 @@ export default async function SaleDetailPage({
         <DetailField label="Total kg to sale" value={`${totalNetKg.toFixed(2)} kg`} />
         <DetailField label="Lots sold" value={`${soldCount}/${lotRows.length}`} />
         <DetailField
-          label="Total valuation"
+          label={valuationInputs.length === 0 ? "Total valuation" : `Total valuation (${valuationInputs.length} valued)`}
           value={valuationInputs.length === 0 ? "—" : `LKR ${money(totalValuation)}`}
         />
-        <DetailField label="Total proceeds" value={`LKR ${money(totalProceeds)}`} />
-        {/* Sold lots vs their own valuation — see the variance note above. */}
-        <DetailField label="Valuation variance" value={varianceLabel} />
+        {/* The valuation of the SOLD lots only — the figure "Total proceeds"
+            is actually measured against, and the basis of the variance. */}
+        <DetailField
+          label="Sales valuation"
+          value={valuedLotsWithSale === 0 ? "—" : `LKR ${money(soldValuation)}`}
+        />
+        {/* Proceeds are the hammer value: net kg x price/kg, BEFORE VAT and
+            the broker's deductions. VAT is charged to the buyer on top of
+            this, never taken out of it (docs/AUCTION.md section 1). */}
+        <DetailField label="Total proceeds (before VAT)" value={`LKR ${money(totalProceeds)}`} />
+        {/* Sold lots against their OWN valuation — the counts are on both
+            labels because the two populations differ whenever a lot is
+            unsold, which otherwise reads as a contradiction. */}
+        <DetailField
+          label={valuedLotsWithSale === 0 ? "Valuation variance" : `Valuation variance (${valuedLotsWithSale} sold)`}
+          value={varianceLabel}
+        />
+        {/* The broker's complete deduction stack, so the panel reads as the
+            arithmetic it is: proceeds − deductions = revenue. */}
+        <DetailField
+          label="Total deductions"
+          value={settlements.length === 0 ? "—" : `LKR ${money(totalDeductions)}`}
+        />
+        {/* Revenue earned from this sale: proceeds less every broker charge.
+            VAT is excluded on purpose — the broker credits it with the payment
+            but it is the government's, remitted on return. */}
+        <DetailField
+          label="Total revenue"
+          value={settlements.length === 0 ? "—" : `LKR ${money(totalRevenue)}`}
+        />
+        {/* The literal credit on prompt date. It is net proceeds PLUS the
+            output VAT the broker collected, so it is larger than what the
+            factory keeps once that VAT is remitted. */}
+        <DetailField
+          label="Bank credit (prompt)"
+          value={settlements.length === 0 ? "—" : `LKR ${money(bankCredit)}`}
+        />
         <DetailField label="Total VAT" value={`LKR ${money(totalVat)}`} />
         <DetailField label="Guarantee lots" value={guaranteeLots} />
       </DetailRecordPanel>

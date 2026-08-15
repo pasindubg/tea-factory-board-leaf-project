@@ -1,7 +1,9 @@
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
+  contractRateDifferences,
   contractValidationIssues,
+  hasContractRates,
   invoiceMatchKey,
   reconcileValuation,
   repairLegacyContractLines,
@@ -12,6 +14,12 @@ import {
 } from "@tea/api";
 import { confirmContract, rejectImport } from "@/app/dashboard/auction/actions";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+
+/** A contract staged before rate parsing existed has no `rates` block. */
+const EMPTY_RATES = {
+  insurancePerKg: null, publicSaleExPerLot: null, brokeragePct: null, handlingPerKg: null,
+  documentationPerLot: null, eplatformPerKg: null, chargesVatPct: null, proceedsVatPct: null,
+};
 import { formatFourDigitNo } from "@/app/dashboard/auction/sale-number";
 import { applyServerListSearch } from "@/lib/list-search-state";
 import type { requirePageAccess } from "@/lib/profile";
@@ -60,6 +68,42 @@ export async function ContractContent({
     lines: repairedLines.map((line) => ({ ...line, grade: canonicalGrade(line.grade, aliases) })),
   };
   const reviewIssues = [...new Set([...parsed.issues, ...contractValidationIssues(parsed.lines)])];
+
+  // The contract is the SOURCE OF TRUTH for what the broker charges: it prints
+  // the rate beside every line of the Account Sales stack. If the stored rate
+  // card disagrees, every settlement computed from it is wrong — so the
+  // difference is put in front of the operator rather than silently applied.
+  const { data: saleBroker } = await supabase
+    .from("auction_sales")
+    .select("broker_id, brokers(name)")
+    .eq("id", saleId)
+    .maybeSingle();
+  const contractBrokerId = saleBroker?.broker_id as string | undefined;
+  const contractBrokerName = (saleBroker?.brokers as unknown as { name: string } | null)?.name ?? "this broker";
+  const { data: storedRateRows } = contractBrokerId
+    ? await supabase
+        .from("broker_rates")
+        .select("insurance_per_kg, public_sale_ex_per_lot, brokerage_pct, handling_per_kg, documentation_per_lot, eplatform_per_kg, charges_vat_pct, proceeds_vat_pct, effective_from")
+        .eq("broker_id", contractBrokerId)
+        .order("effective_from", { ascending: false })
+        .limit(1)
+    : { data: [] };
+  const storedRate = (storedRateRows ?? [])[0] as Record<string, string | number | null> | undefined;
+  const parsedRates = parsed.rates ?? EMPTY_RATES;
+  const rateDifferences = storedRate
+    ? contractRateDifferences(parsedRates, {
+        insurancePerKg: storedRate.insurance_per_kg,
+        publicSaleExPerLot: storedRate.public_sale_ex_per_lot,
+        brokeragePct: storedRate.brokerage_pct,
+        handlingPerKg: storedRate.handling_per_kg,
+        documentationPerLot: storedRate.documentation_per_lot,
+        eplatformPerKg: storedRate.eplatform_per_kg,
+        chargesVatPct: storedRate.charges_vat_pct,
+        proceedsVatPct: storedRate.proceeds_vat_pct,
+      })
+    : [];
+  // No card yet: confirming this contract will create one from these rates.
+  const willCreateRateCard = !storedRate && hasContractRates(parsedRates);
   const confirmed = imp.status === "confirmed";
 
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
@@ -164,6 +208,38 @@ export async function ContractContent({
               <li key={idx}>{i}</li>
             ))}
           </ul>
+        </div>
+      )}
+      {rateDifferences.length > 0 && (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          <p className="font-medium">
+            Broker charges differ from the saved rate card for {contractBrokerName}:
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {rateDifferences.map((difference) => (
+              <li key={difference.field}>
+                {difference.label} — this contract says <strong>{difference.contract}</strong>, the saved card says{" "}
+                <strong>{difference.stored}</strong>.
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">
+            The contract is the source of truth. Update the rate card to match, then re-confirm, or every settlement
+            computed for {contractBrokerName} will use the wrong charges.
+          </p>
+        </div>
+      )}
+      {willCreateRateCard && (
+        <div className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:bg-sky-950 dark:text-sky-300">
+          <p className="font-medium">
+            {contractBrokerName} has no saved rate card — confirming will create one from this contract:
+          </p>
+          <p className="mt-1">
+            brokerage {parsedRates.brokeragePct ?? 0}%, insurance Rs.{parsedRates.insurancePerKg ?? 0}/kg, handling
+            Rs.{parsedRates.handlingPerKg ?? 0}/kg, public sale expenses Rs.{parsedRates.publicSaleExPerLot ?? 0}/lot,
+            documentation Rs.{parsedRates.documentationPerLot ?? 0}/lot, e-platform Rs.{parsedRates.eplatformPerKg ?? 0}/kg,
+            VAT on charges {parsedRates.chargesVatPct ?? 18}%.
+          </p>
         </div>
       )}
       {unmatchedLines.length > 0 && (

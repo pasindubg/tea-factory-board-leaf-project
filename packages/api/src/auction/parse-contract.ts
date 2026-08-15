@@ -6,6 +6,8 @@
 // the lot and is bounded on the left by the "Bank Guarantee" header label. A1's
 // deduction stack (insurance, brokerage, …) is deferred to A3. Feeds recon ② / ③.
 
+import { parseContractRates, type ContractRates } from "./parse-contract-rates";
+
 export type ContractLine = {
   sold: boolean;
   contractNo: string;
@@ -34,6 +36,12 @@ export type ParsedContract = {
   promptDate: string | null;
   contracts: { contractNo: string; markCode: string; markName: string }[];
   lines: ContractLine[];
+  /**
+   * The broker's deduction rate card as this contract states it. The contract
+   * is the source of truth for what the broker charges, so these drive the
+   * settlement rates and are compared against the stored card on review.
+   */
+  rates: ContractRates;
   issues: string[];
 };
 
@@ -134,6 +142,7 @@ function parseAsiaSiyakaContract(text: string): ParsedContract {
     promptDate: headers[0]?.promptDate ?? null,
     contracts,
     lines,
+    rates: parseContractRates(text),
     issues,
   };
 }
@@ -204,7 +213,7 @@ export function parseContract(rawText: string): ParsedContract {
 
   const issues = validateContractLines(lines, "No contract lines could be parsed.");
 
-  return { docType: "contract", saleNo, saleDate, promptDate, contracts, lines, issues };
+  return { docType: "contract", saleNo, saleDate, promptDate, contracts, lines, rates: parseContractRates(text), issues };
 }
 
 function validateContractLines(lines: ContractLine[], emptyMessage: string): string[] {
