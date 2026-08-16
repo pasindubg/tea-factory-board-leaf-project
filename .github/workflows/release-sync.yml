@@ -11,15 +11,23 @@ name: Release — sync blm-cloud-release from main
 # And because a fast-forward is impossible when the release carries commits of
 # its own, divergence is caught here instead of surfacing as a conflict later.
 #
-# This only governs what this workflow does. Add a ruleset on
-# blm-cloud-release with "Restrict updates" enabled, and the GitHub Actions
-# bypass, or nothing prevents someone pushing or merging into it directly.
+# This only governs what this workflow does. The branch is held shut by a
+# ruleset on blm-cloud-release with "Restrict updates" enabled, bypassed by
+# the Repository admin role.
+#
+# Which is why the push needs RELEASE_SYNC_TOKEN rather than the built-in
+# GITHUB_TOKEN. A ruleset bypass is granted to roles, teams, apps and users;
+# GITHUB_TOKEN acts as github-actions[bot], which is none of those and cannot
+# be added to the list, so its push is refused. A fine-grained PAT owned by an
+# admin — Contents: read and write, this repository only — is attributed to
+# that admin instead, and the Repository admin bypass covers it.
 
 on:
   workflow_dispatch:
 
+# Nothing here uses GITHUB_TOKEN to write; the PAT below does the pushing.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-sync
@@ -31,9 +39,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checked before anything else, because the failure it prevents is a
+      # confusing one: without the token, checkout silently falls back to
+      # GITHUB_TOKEN and the job gets all the way to a rejected push.
+      - name: Require the release token
+        env:
+          TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "RELEASE_SYNC_TOKEN is not set."
+            echo "Add a fine-grained PAT owned by a repository admin, with"
+            echo "Contents: read and write on this repository, as an Actions"
+            echo "secret named RELEASE_SYNC_TOKEN."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # persist-credentials leaves this token configured for the push below.
+          token: ${{ secrets.RELEASE_SYNC_TOKEN }}
 
       - name: Fast-forward blm-cloud-release to main
         run: |
