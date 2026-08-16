@@ -21,13 +21,7 @@ export default async function BackgroundJobsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold">Background jobs</h2>
-        <p className="mt-1 max-w-3xl text-sm text-stone-500 dark:text-stone-400">
-          Long-running work continues on the server after the page that started it is closed or
-          refreshed. Each run is recorded here with its progress and outcome.
-        </p>
-      </div>
+      <h2 className="text-xl font-semibold">Background jobs</h2>
       {/* `?run=` deep-links the run a toast just announced. */}
       <BackgroundJobsTable rows={jobs.rows} highlightRunId={run ?? null} />
     </div>

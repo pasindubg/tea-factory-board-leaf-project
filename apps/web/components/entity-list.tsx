@@ -55,6 +55,13 @@ export type EntityListMutationOptions = {
 export type EntityListDataContext<Row> = {
   rows: Row[];
   refreshing: boolean;
+  /**
+   * Re-reads the list on demand, keeping whatever search is applied. Present
+   * for resource-backed lists, which is every ordinary CRUD list; absent for
+   * the locally-supplied variant, where the frame omits the control rather than
+   * showing a dead one.
+   */
+  reload?: () => Promise<unknown> | void;
   mutate: (action: () => Promise<ListMutationResult>, options?: EntityListMutationOptions) => Promise<boolean>;
   mutationAction: (
     action: (formData: FormData) => Promise<ListMutationResult>,
@@ -550,6 +557,7 @@ function EntityListPanel<Row>({
   render,
   rows,
   refreshing,
+  reload,
   mutate,
   mutationAction,
   searchState,
@@ -790,6 +798,8 @@ function EntityListPanel<Row>({
           mode={selectionMode}
           count={selection.selectedCount}
           showSelectionSummary={sideList?.showSelectionSummary}
+          onRefresh={reload}
+          refreshing={refreshing}
           enableCreate={Boolean(supportsCreate && createPlacement === "toolbar" && !adding)}
           onCreate={{
             label: create?.label,

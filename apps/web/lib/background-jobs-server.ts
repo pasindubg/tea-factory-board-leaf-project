@@ -19,9 +19,6 @@ import type { requireProfile } from "@/lib/profile";
 
 type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
 
-/** A run whose heartbeat has stopped for this long was interrupted rather than
- * still working. */
-const STALE_AFTER_MS = 2 * 60 * 1000;
 
 // Upper case, and PostgREST matches it exactly — do not lower-case this.
 const TABLE = "BACKGROUND_JOB_RUNS";
@@ -104,13 +101,19 @@ export async function finishJobRun(
 }
 
 function toRunState(row: Record<string, unknown>): JobRunState {
-  const status = row.status as "running" | "completed" | "failed";
-  const updatedAt = row.updated_at ? new Date(row.updated_at as string).getTime() : 0;
-  const interrupted = status === "running" && Date.now() - updatedAt > STALE_AFTER_MS;
+  const status = row.status as "queued" | "running" | "completed" | "failed" | "cancelled";
   return {
     id: row.id as string,
     jobKey: row.job_key as JobKey,
-    status: interrupted ? "interrupted" : status,
+    // No clock. A run used to be relabelled "interrupted" once its heartbeat
+    // had been quiet for two minutes, which was a guess, and a wrong one for
+    // any job whose units are slow — a single invoice chain can outlast it, and
+    // the page then reported work as dead while it was still writing rows.
+    //
+    // A run is now exactly what it says it is. The one that really did die is
+    // resolved by a person: it is visible on the overview and Cancel ends it,
+    // which is the trade that made removing every time limit here possible.
+    status: status === "cancelled" ? "interrupted" : status,
     label: (row.label as string | null) ?? null,
     totalUnits: Number(row.total_units ?? 0),
     processedUnits: Number(row.processed_units ?? 0),

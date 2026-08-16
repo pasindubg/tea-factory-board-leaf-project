@@ -4,7 +4,7 @@ import { invoiceMatchKey } from "@tea/api";
 import { JOB_DEFINITIONS, JOB_STATE_CHIPS, isJobKey, type JobKey, type JobRunStatus } from "@/lib/background-jobs";
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
-import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
+import { isListResourceKey, type BackgroundJobListRow, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
 import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
@@ -326,12 +326,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await search.apply(
         supabase
           .from("BACKGROUND_JOB_RUNS")
-          .select("id, job_key, label, status, total_units, processed_units, metrics, error, started_at, updated_at, finished_at, users(name)")
+          // `users!started_by`, not plain `users`: the run now points at users
+          // twice — who started it and who cancelled it — and PostgREST refuses
+          // an embed it cannot attribute to one foreign key.
+          .select("id, job_key, label, status, total_units, processed_units, metrics, error, started_at, updated_at, finished_at, users!started_by(name)")
           .eq("factory_id", profile.factory_id),
       ).order("started_at", { ascending: false }).limit(200);
       if (error) return { ok: false, error: friendlyError(error) };
 
-      const STALE_AFTER_MS = 2 * 60 * 1000;
       return {
         ok: true,
         rows: ((data ?? []) as unknown as {
@@ -340,10 +342,15 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           error: string | null; started_at: string | null; updated_at: string | null; finished_at: string | null;
           users: { name: string } | null;
         }[]).map((run) => {
-          // A run claiming to be running whose heartbeat stopped was
-          // interrupted — the action that owned it is gone.
-          const stale = run.status === "running" && Date.now() - new Date(run.updated_at ?? 0).getTime() > STALE_AFTER_MS;
-          const state = (stale ? "interrupted" : run.status) as JobRunStatus;
+          // No staleness guess. A quiet heartbeat used to relabel a run as
+          // interrupted after two minutes, which reported live work as dead
+          // whenever a single unit took longer than that. A run whose worker
+          // really is gone is ended by a person from this very page.
+          //
+          // Cancelled is the one status that reads as something else: to the
+          // operator, work they stopped and work that died are the same event,
+          // and the stored value keeps them apart for diagnosis.
+          const state = (run.status === "cancelled" ? "interrupted" : run.status) as JobRunStatus;
           const chip = JOB_STATE_CHIPS[state] ?? JOB_STATE_CHIPS.failed;
           const definition = isJobKey(run.job_key) ? JOB_DEFINITIONS[run.job_key as JobKey] : null;
           const total = Number(run.total_units ?? 0);
@@ -359,6 +366,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             jobKey: run.job_key,
             jobTitle: definition?.title ?? run.job_key,
             label: run.label,
+            state: run.status as BackgroundJobListRow["state"],
             stateLabel: chip.label,
             stateStyle: chip.style,
             percent: total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0,

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import { EntityList, type EntityListColumn, type EntityListCommand, type EntityListDelete } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import type { BackgroundJobListRow } from "@/lib/list-resources";
 import { jobStateOptions } from "@/lib/background-jobs";
+import { cancelBackgroundJobs, deleteBackgroundJobs, executeBackgroundJobs } from "./_actions/commands";
 
 const COLUMNS: EntityListColumn<BackgroundJobListRow>[] = [
   { key: "jobTitle", label: "Job", accessor: (row) => row.jobTitle, sortable: true, filter: "select", cellClassName: "font-medium" },
@@ -53,10 +53,96 @@ const COLUMNS: EntityListColumn<BackgroundJobListRow>[] = [
   { key: "error", label: "Error", accessor: (row) => row.error ?? null, filter: "text", cellClassName: "text-xs text-red-700 dark:text-red-400", render: (row) => row.error ?? "—" },
 ];
 
-const LIST: ListDefinition<BackgroundJobListRow> = { columns: COLUMNS, selectionMode: "single" };
+/**
+ * What the operator can do to a run, and why these three are enough.
+ *
+ * Between them they replace every clock this page used to need. Nothing is
+ * abandoned after N minutes and nothing is failed for taking too long, because
+ * a run that has gone wrong is visible here and can be stopped here.
+ *
+ * All three take a selection rather than a row, so a page full of runs from a
+ * bad afternoon can be cleared in one go.
+ */
+const COMMANDS: EntityListCommand<BackgroundJobListRow>[] = [
+  {
+    id: "execute",
+    label: "Execute",
+    pendingLabel: "Starting…",
+    disabled: ({ selectedRows }) =>
+      selectedRows.length === 0 || selectedRows.some((row) => row.state === "running"),
+    disabledReason: ({ selectedRows }) =>
+      selectedRows.length === 0
+        ? "Select a job to run."
+        : selectedRows.some((row) => row.state === "running")
+          ? "A job already in progress must be cancelled before it can be run again."
+          : undefined,
+    confirm: {
+      title: "Run from the beginning?",
+      description: ({ selectedRows }) =>
+        `${selectedRows.length} job${selectedRows.length === 1 ? "" : "s"} will start again from the beginning. Any progress already recorded is cleared.`,
+      confirmLabel: "Run",
+    },
+    run: ({ selectedRows, clearSelection }) =>
+      executeBackgroundJobs(selectedRows.map((row) => row.id)).then((result) => {
+        if (result.ok) clearSelection();
+        return result;
+      }),
+  },
+  {
+    id: "cancel",
+    label: "Cancel",
+    pendingLabel: "Cancelling…",
+    destructive: true,
+    disabled: ({ selectedRows }) =>
+      selectedRows.length === 0 || !selectedRows.some((row) => row.state === "running" || row.state === "queued"),
+    disabledReason: ({ selectedRows }) =>
+      selectedRows.length === 0 ? "Select a job to cancel." : "Those jobs have already finished.",
+    confirm: {
+      title: "Stop these jobs?",
+      description: ({ selectedRows }) =>
+        `${selectedRows.length} job${selectedRows.length === 1 ? "" : "s"} will stop where they are and show as Interrupted. Work already applied is not undone.`,
+      confirmLabel: "Stop",
+    },
+    run: ({ selectedRows, clearSelection }) =>
+      cancelBackgroundJobs(selectedRows.map((row) => row.id)).then((result) => {
+        if (result.ok) clearSelection();
+        return result;
+      }),
+  },
+];
 
-const REFRESH_MS = 5000;
+/**
+ * Delete is the framework's own, not a command of ours: `delete: true` puts the
+ * standard bin in the toolbar where it sits on every other list, with the same
+ * confirmation and the same permission check. A hand-rolled Delete button would
+ * have looked and behaved almost like it, which is worse than not having one.
+ */
+const DELETE: EntityListDelete<BackgroundJobListRow> = {
+  action: (ids) => deleteBackgroundJobs(ids),
+  disabled: (rows) => rows.some((row) => row.state === "running" || row.state === "queued"),
+  disabledReason: (rows) =>
+    rows.some((row) => row.state === "running" || row.state === "queued")
+      ? "Cancel a job before removing it from the history."
+      : undefined,
+  title: (count) => `Delete ${count} run${count === 1 ? "" : "s"}?`,
+  description: (rows) =>
+    `${rows.length} run${rows.length === 1 ? "" : "s"} will be removed from the history, along with their per-item reports. What each run did is not undone.`,
+  confirmLabel: "Delete",
+};
 
+// `selectionMode` defaults to "single", so multi-select has to be asked for.
+// Runs are exactly the case the framework's default multi-select is meant for:
+// a page full of them from one bad afternoon, cleared in a single action.
+const LIST: ListDefinition<BackgroundJobListRow> = {
+  columns: COLUMNS,
+  selectionMode: "multi",
+  delete: true,
+};
+
+// No polling. The list used to re-read itself every few seconds while anything
+// was running, which moved rows and cleared selections under whoever was
+// reading them. Re-reading is now the operator's decision, taken with the
+// refresh control the frame gives every list.
 export function BackgroundJobsTable({
   rows,
   highlightRunId,
@@ -64,23 +150,15 @@ export function BackgroundJobsTable({
   rows: BackgroundJobListRow[];
   highlightRunId: string | null;
 }) {
-  const [tick, setTick] = useState(0);
-  const anyRunning = rows.some((row) => row.stateLabel === "In progress");
-
-  // A running job's row is stale the moment it renders, so the list re-reads
-  // itself while anything is in flight — and stops entirely once nothing is.
-  useEffect(() => {
-    if (!anyRunning) return;
-    const timer = setInterval(() => setTick((value) => value + 1), REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [anyRunning]);
-
   return (
     <EntityList
-      key={tick}
       initialRows={rows}
       resource={{ key: "framework.background-jobs" }}
+      title=""
+      description=""
       definition={LIST}
+      commands={COMMANDS}
+      deleteAction={DELETE}
       getId={(row) => row.id}
       rowLabel={(row) => `${row.jobTitle}${row.label ? ` — ${row.label}` : ""}`}
       // The run a toast linked to is pulled out of a long history.

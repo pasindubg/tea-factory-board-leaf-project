@@ -319,7 +319,11 @@ export function useFrameworkListData<Key extends ListResourceKey>(
     await mutate(() => action(formData), options);
   }, [mutate]);
 
-  return { rows, refreshing, refresh, mutate, mutationAction, searchState, hasMore, loadingMore, loadMore, applySearch, serverDriven: true as const };
+  // `reload` is the one to hand to a control: it takes no arguments and keeps
+  // the search that is currently applied. `refresh` takes a search and REPLACES
+  // it, so wiring that straight to a click handler both passes the click event
+  // in as the search and then remembers it — breaking every later refresh too.
+  return { rows, refreshing, refresh, reload: refreshWithLastSearch, mutate, mutationAction, searchState, hasMore, loadingMore, loadMore, applySearch, serverDriven: true as const };
 }
 
 /** A reusable top-navigation tab bar for related list work surfaces. The
@@ -439,6 +443,8 @@ export function ListCommandToolbar({
   onCreate,
   onEdit,
   onDelete,
+  onRefresh,
+  refreshing = false,
   children,
 }: {
   mode: ListSelectionMode;
@@ -450,6 +456,9 @@ export function ListCommandToolbar({
   onCreate?: ListHeaderAction;
   onEdit?: ListHeaderAction;
   onDelete?: ListHeaderAction;
+  /** Re-reads the list. Lives on the frame so every list has the same one. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   children?: React.ReactNode;
 }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -479,6 +488,24 @@ export function ListCommandToolbar({
           {onCreate.busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <span aria-hidden="true">+</span>}
         </button>
       )}
+      {/* Beside the create control, at the head of the frame, so it is in the
+          same place on every list. Lists do not poll themselves — re-reading is
+          the operator's decision, and this is how they say so. */}
+      {onRefresh && (
+        <button
+          type="button"
+          // Wrapped, not passed by reference: a click handler is called with
+          // the MouseEvent, and any refresh that takes an argument would
+          // receive it.
+          onClick={() => { void onRefresh(); }}
+          disabled={refreshing}
+          aria-label="Refresh list"
+          title="Refresh list"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-green-950 dark:hover:text-green-300"
+        >
+          <RefreshGlyph spinning={refreshing} />
+        </button>
+      )}
       {showSelectionSummary ? <ListSelectionSummary count={count} /> : null}
       <div className="ml-auto flex flex-wrap justify-end gap-2">
         {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
@@ -487,6 +514,24 @@ export function ListCommandToolbar({
         {children}
       </div>
     </div>
+  );
+}
+
+function RefreshGlyph({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      className={`h-4 w-4 ${spinning ? "animate-spin" : ""}`}
+    >
+      {/* An open circle with an arrowhead — the gap is what reads as "again". */}
+      <path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6" />
+      <path d="M16.5 2.5V6h-3.5" strokeLinejoin="round" />
+    </svg>
   );
 }
 

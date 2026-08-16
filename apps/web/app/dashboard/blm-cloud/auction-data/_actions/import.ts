@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import {
   carryForwardInvoiceFilters,
   parseDispatchSheet,
@@ -259,6 +260,25 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
   if (!started.ok) return { ok: false, error: started.error };
   const handle = started.handle;
 
+  // Everything from here on runs AFTER the response has been sent.
+  //
+  // It used to run before it, so the action did not return until the last
+  // invoice was written — and since the run id comes back with that return, the
+  // page had nothing to poll and nothing to announce until the import was
+  // already over. The progress bar appeared at the end, and the toast saying
+  // the job had been created arrived after it had finished.
+  //
+  // after() also detaches the work from the client: the response is complete,
+  // so closing the tab or navigating away no longer aborts it. It does not
+  // survive the function's own lifetime, which is what the queue and worker are
+  // for; this makes the page honest in the meantime.
+  after(async () => {
+    await applyRows();
+  });
+
+  return { ok: true, runId: handle.runId };
+
+  async function applyRows() {
   const count = (status: string) => outcomes.filter((row) => row.status === status).length;
   const tallies = () => ({
     imported: count("imported"),
@@ -332,5 +352,5 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
 
   revalidatePath("/dashboard/auction");
   revalidatePath("/dashboard/blm-cloud/auction-data");
-  return { ok: true, runId: handle.runId };
+  }
 }
