@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { resetAuctionData, type ResetEntityCount } from "./_actions/reset";
 import { importDispatchSheet } from "./_actions/import";
 import { announceJobStarted, BackgroundJobProgress, useJobRun } from "@/components/background-job-progress";
+import { showAppToast } from "@/components/action-feedback";
 import type { JobRunState } from "@/lib/background-jobs";
 
 /** This page's job in the background-job framework. */
@@ -76,6 +77,17 @@ function ResetStage({ entities, total }: { entities: ResetEntityCount[]; total: 
           const outcome = await resetAuctionData(formData);
           setResult(outcome.ok ? { deleted: outcome.deleted } : { deleted: outcome.deleted, error: outcome.error });
           setConfirmation("");
+          // Reported as well as shown. The table below is the detail, but a
+          // destructive action has to announce itself, and the toast is also
+          // what tells the page the work is over — this form never changes
+          // route, and its button stays disabled afterwards (nothing left to
+          // delete), so nothing else would release the click.
+          if (outcome.ok) {
+            const rows = outcome.deleted.reduce((sum, entity) => sum + entity.count, 0);
+            showAppToast(`Auction data deleted — ${rows.toLocaleString()} rows removed.`);
+          } else {
+            showAppToast(outcome.error ?? "Could not delete the auction data.", "error");
+          }
         })}
       >
         <label className="block text-sm font-medium text-stone-700 dark:text-stone-200">
@@ -145,8 +157,13 @@ function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
           const ticker = setInterval(() => { void refresh(); }, 2000);
           const result = await importDispatchSheet(formData);
           clearInterval(ticker);
-          if (!result.ok) setStartError(result.error);
-          else announceJobStarted(result.runId);
+          // Both outcomes report. Success already toasted through
+          // announceJobStarted; a failure that only set startError left the
+          // click with nothing to end it.
+          if (!result.ok) {
+            setStartError(result.error);
+            showAppToast(result.error, "error");
+          } else announceJobStarted(result.runId);
           await refresh();
         })}
       >

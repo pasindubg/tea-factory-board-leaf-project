@@ -178,23 +178,23 @@ body {
    the .dark override is gone. */
 .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
   background-image: none !important;
-  background-color: var(--md-surface-container-high) !important;
-  border-color: var(--md-outline-variant) !important;
-  color: var(--md-on-surface-variant) !important;
+  background-color: color-mix(in srgb, var(--md-primary-container) 60%, var(--md-surface-container)) !important;
+  border-color: color-mix(in srgb, var(--md-primary) 40%, transparent) !important;
+  color: var(--md-on-primary-container) !important;
   box-shadow: none !important;
   animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
-/* The click lock's cover. Tinted from the theme rather than a neutral grey for
-   the same reason. Light mode darkens with the on-surface green; dark mode
-   deepens with the surface green, which is what keeps it from looking like a
-   grey slab dropped on top. */
+/* The click lock's cover, tinted from the same primary green. --md-surface-
+   container-high was tried first and is too close to neutral to read as part
+   of this palette — the green has to come from the primary tokens, which are
+   the only ones that are actually green in both themes. */
 .action-lock-cover {
-  background: color-mix(in srgb, var(--md-on-surface) 7%, transparent);
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
 }
 
 .dark .action-lock-cover {
-  background: color-mix(in srgb, var(--md-surface) 55%, transparent);
+  background: color-mix(in srgb, var(--md-surface) 62%, transparent);
 }
 .dashboard-content input[type="radio"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);

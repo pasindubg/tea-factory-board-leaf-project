@@ -29,27 +29,72 @@ export function showAppToast(
 const TOAST_DURATION_MS = 4000;
 
 /**
- * How long the page may stay locked with no completion signal at all. Long
- * enough that real work — an import walking hundreds of rows — finishes inside
- * it, since the lock expiring early is exactly the bug it would reintroduce.
- * Escape lifts it by hand, so a genuinely stuck lock is not a dead end.
+ * Whether a click is starting work the page should be held for.
+ *
+ * This used to ask the opposite question — lock everything, then exempt the
+ * controls guessed to be harmless — and the guessing could not be made to
+ * work. A dashboard is mostly buttons that rearrange the screen: opening a new
+ * row, a search panel, a dialog, and the Cancel and Close inside it. Each one
+ * locked the page against work that was never started, and with the expiry
+ * timers gone there was nothing to end a lock nothing would ever report on.
+ *
+ * So only three things qualify, each with a release that actually arrives:
+ *
+ *   a link          — the route change that follows lifts it
+ *   a form submit   — the submission navigates, reports, or ends its busy state
+ *   data-action-lock — opt in for work driven by onClick instead of a form
+ *
+ * Everything else is left alone, which is why Cancel, Close and the popover
+ * triggers need no exemption: they were never candidates to begin with.
+ *
+ * This decides the DIM only. Whether the page is also sealed is a separate and
+ * much narrower question — see locksPage().
  */
-const MAX_BLOCK_MS = 60000;
-
-/** A click on something that starts no work still deserves a visible flash. */
-const ACKNOWLEDGE_MS = 1400;
-
 /**
- * True for controls that only rearrange what is already on screen — a
- * disclosure, a menu, a popover trigger. They start no work, so nothing would
- * ever arrive to lift the lock and it would sit there until its cap.
+ * Whether a click should also seal the page behind it.
+ *
+ * Kept much narrower than the dim, because the two answer different questions
+ * and merging them was the mistake. A dim left on the wrong control is
+ * cosmetic; a lock left on the wrong click makes the application unusable, and
+ * every form that reported its result on the page instead of navigating did
+ * exactly that — delete, import, save.
+ *
+ * So a lock is only for a navigation, where the arriving route is a release
+ * that cannot fail to come, or where a caller has explicitly asked for one.
+ * A long import is the clearest case AGAINST locking: the whole point of
+ * running it in the background is being able to walk away from it.
  */
-function rearrangesUiOnly(control: Element) {
+function locksPage(control: Element) {
+  return control.hasAttribute("data-action-lock") || control instanceof HTMLAnchorElement;
+}
+
+/** A held control, and whether it has been seen in its own busy state yet. */
+type PendingControl = { observer: MutationObserver; sawBusy: boolean };
+
+/** The two ways this codebase says "this control's action is running". */
+function isBusy(control: HTMLElement) {
   return (
-    control.tagName === "SUMMARY" ||
-    control.hasAttribute("aria-expanded") ||
-    control.hasAttribute("aria-haspopup")
+    (control as HTMLButtonElement | HTMLInputElement).disabled === true ||
+    control.getAttribute("aria-busy") === "true"
   );
+}
+
+function startsWork(control: Element) {
+  if (control.hasAttribute("data-action-lock")) return true;
+
+  if (control instanceof HTMLAnchorElement) {
+    if (control.target || control.hasAttribute("download")) return false;
+    const target = new URL(control.href, window.location.href);
+    return target.origin === window.location.origin && target.href !== window.location.href;
+  }
+
+  // `.type` is "submit" by default even outside a form, so the owning form is
+  // what separates a real submission from an ordinary button.
+  if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement) {
+    return control.type === "submit" && control.form !== null;
+  }
+
+  return false;
 }
 
 export function ActionFeedback() {
@@ -58,8 +103,8 @@ export function ActionFeedback() {
   const clearTimer = useRef<number | null>(null);
   const remainingMs = useRef(TOAST_DURATION_MS);
   const timerStartedAt = useRef(0);
-  const pendingControlTimers = useRef(new Map<HTMLElement, number>());
-  const blockTimer = useRef<number | null>(null);
+  const pendingControls = useRef(new Map<HTMLElement, PendingControl>());
+  const lastRoute = useRef<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [blocking, setBlocking] = useState(false);
 
@@ -82,60 +127,71 @@ export function ActionFeedback() {
     startClearTimer(remainingMs.current);
   }, [startClearTimer]);
 
-  const stopBlocking = useCallback(() => {
-    if (blockTimer.current) window.clearTimeout(blockTimer.current);
-    blockTimer.current = null;
+  const clearPendingControls = useCallback(() => {
+    for (const [control, entry] of pendingControls.current) {
+      entry.observer.disconnect();
+      control.removeAttribute("data-action-pending");
+    }
+    pendingControls.current.clear();
     setBlocking(false);
   }, []);
 
-  const clearPendingControls = useCallback(() => {
-    for (const [control, timer] of pendingControlTimers.current) {
-      window.clearTimeout(timer);
-      control.removeAttribute("data-action-pending");
-    }
-    pendingControlTimers.current.clear();
-    stopBlocking();
-  }, [stopBlocking]);
+  const releaseControl = useCallback((control: HTMLElement) => {
+    const entry = pendingControls.current.get(control);
+    if (!entry) return;
+    entry.observer.disconnect();
+    control.removeAttribute("data-action-pending");
+    pendingControls.current.delete(control);
+    if (pendingControls.current.size === 0) setBlocking(false);
+  }, []);
 
+  // No timers. Earlier versions expired the dim after a fixed number of
+  // milliseconds, and every value chosen was wrong: whatever the number, work
+  // that ran longer left the control bright and the page unlocked while it was
+  // still going, which reads as finished when it is not. The dim now ends only
+  // when the work does — a route change, a toast carrying the result, the
+  // control's own busy state ending, or Escape.
   const markControlPending = useCallback(
-    (control: Element) => {
-    if (!(control instanceof HTMLElement)) return;
-    const existing = pendingControlTimers.current.get(control);
-    if (existing) window.clearTimeout(existing);
-    control.setAttribute("data-action-pending", "true");
+    (control: Element, force = false) => {
+      if (!(control instanceof HTMLElement)) return;
+      if (!force && !startsWork(control)) return;
+      if (pendingControls.current.has(control)) return;
+      control.setAttribute("data-action-pending", "true");
+      if (force || locksPage(control)) setBlocking(true);
 
-    // Lock the page behind the click, so a second click cannot land on work
-    // already in flight. Skipped for controls that only rearrange what is
-    // already on screen — a disclosure, a menu — because there is nothing in
-    // flight to wait for and the lock would have no end condition but its cap.
-    if (!rearrangesUiOnly(control)) {
-      setBlocking(true);
-      if (blockTimer.current) window.clearTimeout(blockTimer.current);
-      // Its own timer, but the same duration as the dim's: the two have to end
-      // together or the page reads as finished while it is still held.
-      blockTimer.current = window.setTimeout(stopBlocking, MAX_BLOCK_MS);
-    }
-
-    // A backstop, not the ordinary way out. The dim is cleared for real by the
-    // route changing, by a toast reporting the result, or by Escape; this only
-    // exists so a click that settles silently cannot dim a control forever.
-    //
-    // It runs as long as the lock, because they answer the same question and
-    // any gap between them shows the dim clearing while the page is still held
-    // — the false "finished" this keeps having to be pulled back from. The one
-    // exception is a control that merely rearranges the screen: it starts no
-    // work, so its dim is only an acknowledgement of the click and ends quickly.
-    const timer = window.setTimeout(() => {
-      control.removeAttribute("data-action-pending");
-      pendingControlTimers.current.delete(control);
-    }, rearrangesUiOnly(control) ? ACKNOWLEDGE_MS : MAX_BLOCK_MS);
-    pendingControlTimers.current.set(control, timer);
+      // The third release signal, and the one that covers the awkward case: a
+      // form whose action reports its result on the page never changes route
+      // and need not toast, so neither of the other two ever arrives. What it
+      // does do is disable its own control while the action runs — AppButton
+      // sets `disabled` and `aria-busy` from useFormStatus, and the hand-rolled
+      // forms pass `disabled={pending}` — so the return to enabled IS the work
+      // finishing. Observed, not timed.
+      //
+      // `sawBusy` is what stops a control that was never busy from releasing on
+      // an unrelated attribute change.
+      const observer = new MutationObserver(() => {
+        const entry = pendingControls.current.get(control);
+        if (!entry) return;
+        if (isBusy(control)) {
+          entry.sawBusy = true;
+          return;
+        }
+        if (entry.sawBusy) releaseControl(control);
+      });
+      observer.observe(control, { attributes: true, attributeFilter: ["disabled", "aria-busy"] });
+      pendingControls.current.set(control, { observer, sawBusy: isBusy(control) });
     },
-    [stopBlocking],
+    [releaseControl],
   );
 
+  // Only an actual change of route clears anything. This compared the effect's
+  // dependencies before, which fires again on any re-render that hands back a
+  // new searchParams object — a server action revalidating in place does
+  // exactly that, so the dim was being cleared by the work's own progress.
   useEffect(() => {
-    clearPendingControls();
+    const route = `${pathname}?${searchParams}`;
+    if (lastRoute.current !== null && lastRoute.current !== route) clearPendingControls();
+    lastRoute.current = route;
   }, [pathname, searchParams, clearPendingControls]);
 
   useEffect(() => () => clearPendingControls(), [clearPendingControls]);
@@ -149,9 +205,11 @@ export function ActionFeedback() {
       markControlPending(control);
     };
 
+    // Fired by code that is about to navigate, so the trigger is held whatever
+    // it is — often an ordinary button that startsWork() would decline.
     const onNavigationStart = (event: Event) => {
       const trigger = (event as CustomEvent<{ trigger?: Element }>).detail?.trigger;
-      if (trigger) markControlPending(trigger);
+      if (trigger) markControlPending(trigger, true);
     };
     const onToast = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string; tone?: "success" | "error"; action?: ToastAction }>).detail;
@@ -166,8 +224,9 @@ export function ActionFeedback() {
       clearPendingControls();
     };
 
-    // The way out when a click starts work that never reports back. Without it
-    // the only remedy for a mislocked page is waiting out MAX_BLOCK_MS.
+    // The way out when a click starts work that never reports back. With no
+    // timer left to expire, this is the only thing that can release such a
+    // click, so it is load-bearing rather than a convenience.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") clearPendingControls();
     };

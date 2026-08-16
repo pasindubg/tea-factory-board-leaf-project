@@ -25,7 +25,7 @@ export function isJobKey(value: unknown): value is JobKey {
  * a crash), and a progress bar that will never move again is worse than saying
  * so plainly.
  */
-export type JobRunStatus = "running" | "completed" | "failed" | "interrupted";
+export type JobRunStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 
 /** How a metric or item status is coloured. Presentation belongs to the job
  * definition, never to the stored row. */
@@ -107,6 +107,7 @@ export function jobUnitLabel(definition: JobDefinition, count: number): string {
 /** The four display states a run can be in, and how each is coloured. This is
  * the "is it working, did it fail, is it done" attribute the overview shows. */
 export const JOB_STATE_CHIPS: Record<JobRunStatus, { label: string; style: string }> = {
+  queued: { label: "Waiting to start", style: "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200" },
   running: { label: "In progress", style: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300" },
   completed: { label: "Completed", style: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" },
   failed: { label: "Error", style: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300" },

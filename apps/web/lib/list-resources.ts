@@ -276,7 +276,13 @@ export type BackgroundJobListRow = {
   jobKey: string;
   jobTitle: string;
   label: string | null;
-  /** `In progress` | `Completed` | `Error` | `Interrupted` — the display state. */
+  /**
+   * The stored status, before it is turned into something to read. The commands
+   * decide on this rather than on the label — `cancelled` and a dead worker
+   * both render as Interrupted, and only one of them is restartable in place.
+   */
+  state: "queued" | "running" | "completed" | "failed" | "cancelled";
+  /** `Waiting to start` | `In progress` | `Completed` | `Error` | `Interrupted`. */
   stateLabel: string;
   stateStyle: string;
   progressLabel: string;
