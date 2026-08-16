@@ -9,10 +9,12 @@ import {
 import { confirmAcknowledgement, rejectImport } from "@/app/dashboard/auction/actions";
 import { buildInvoicedLots } from "@/app/dashboard/auction/recon-helpers";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { formatFourDigitNo } from "@/app/dashboard/auction/sale-number";
+import { resolveAckCarryForward } from "@/app/dashboard/auction/_actions/carry-forward";
 import { applyServerListSearch } from "@/lib/list-search-state";
 import type { requirePageAccess } from "@/lib/profile";
 import { ComparePanel, type Orphan, type Candidate, type AuditRow } from "./compare-panel";
-import { ReconTable } from "./recon-table";
+import { ReconTable, type ReviewReconRow } from "./recon-table";
 
 type Ctx = Awaited<ReturnType<typeof requirePageAccess>>;
 
@@ -59,7 +61,49 @@ export async function AckContent({
   };
   const invoiced = buildInvoicedLots(lotRows ?? []);
   const recon = reconcileAcknowledgement(invoiced, parsed);
-  const order: Record<ReconStatus, number> = { pending: 0, unexpected: 1, shutout: 2, catalogued: 3 };
+
+  // reconcileAcknowledgement only knows the lots invoiced in THIS sale group,
+  // so a lot carried forward from an earlier broker invoice — including a
+  // re-print registered at cutover — necessarily lands in `unexpected` there.
+  // Resolving it here is what makes the count on screen mean what the operator
+  // thinks it means: `unexpected` = the broker catalogued something we have no
+  // record of anywhere, which is worth investigating. This is the same call
+  // confirmAcknowledgement makes, so the preview cannot promise one outcome
+  // and confirmation perform another.
+  const { data: groupSaleRows } = await supabase
+    .from("auction_sales")
+    .select("broker_id")
+    .in("id", groupIds)
+    .limit(1);
+  const unexpectedRows = recon.rows.filter((row) => row.status === "unexpected" && row.ack);
+  const carryForward = await resolveAckCarryForward(supabase, profile.factory_id, {
+    groupIds,
+    brokerId: (groupSaleRows ?? [])[0]?.broker_id as string | null ?? null,
+    rows: unexpectedRows.map((row) => ({ invoiceNo: row.invoiceNo, lotNo: row.ack?.lotNo ?? null })),
+  });
+
+  const reviewRows: ReviewReconRow[] = recon.rows.map((row) => {
+    const outcome = row.status === "unexpected" ? carryForward.get(row.invoiceNo) : undefined;
+    if (outcome?.status === "matched") {
+      const fromInvoice = formatFourDigitNo(outcome.lot.auction_sales?.sale_no ?? null) || "—";
+      return {
+        ...row,
+        display: outcome.isReprint ? "re-print" : "rolled forward",
+        carryForwardNote: outcome.isReprint
+          ? `Registered re-print on broker invoice ${fromInvoice} — links as a re-print child`
+          : `Rolls forward from broker invoice ${fromInvoice}`,
+      };
+    }
+    if (outcome?.status === "blocked") {
+      const fromInvoice = formatFourDigitNo(outcome.lot.auction_sales?.sale_no ?? null) || "—";
+      return { ...row, display: "unexpected", carryForwardNote: `Matches a sold/settled lot on broker invoice ${fromInvoice} — resolve by hand` };
+    }
+    return { ...row, display: row.status, carryForwardNote: null };
+  });
+
+  const order: Record<ReviewReconRow["display"], number> = {
+    pending: 0, unexpected: 1, "re-print": 2, "rolled forward": 3, shutout: 4, catalogued: 5,
+  };
 
   // ── Orphan-resolver inputs (#19) ──
   // Orphans = pending/invoiced lots still factory-side (drop ones already resolved
@@ -88,8 +132,10 @@ export async function AckContent({
       netWt: r.invoiced!.netWt,
       markCode: markOf(r.invoiced!.id),
     }));
-  const candidates: Candidate[] = recon.rows
-    .filter((r) => r.status === "unexpected" && r.ack && !cataloguedLotNos.has(r.ack.lotNo ?? ""))
+  // Only rows still genuinely unplaced are offered to the manual resolver — a
+  // row the register already answers must not be presented as needing a human.
+  const candidates: Candidate[] = reviewRows
+    .filter((r) => r.display === "unexpected" && r.ack && !cataloguedLotNos.has(r.ack.lotNo ?? ""))
     .map((r) => ({
       key: r.ack!.lotNo ?? r.invoiceNo,
       lotNo: r.ack!.lotNo,
@@ -105,18 +151,26 @@ export async function AckContent({
     confidenceShown: a.confidence_shown != null ? Number(a.confidence_shown) : null,
     createdAt: a.created_at as string,
   }));
-  const rows = [...recon.rows].sort(
-    (a, b) => order[a.status] - order[b.status] || a.invoiceNo.localeCompare(b.invoiceNo),
+  const rows = [...reviewRows].sort(
+    (a, b) => order[a.display] - order[b.display] || a.invoiceNo.localeCompare(b.invoiceNo),
   );
   const warningRelations = relateAcknowledgementParseWarnings(parsed.issues, rows);
   const warningInvoiceNos = [...new Set(warningRelations.flatMap((relation) => relation.rows.map((row) => row.invoiceNo)))];
   const confirmed = imp.status === "confirmed";
   const s = recon.summary;
+  const shown = (display: ReviewReconRow["display"]) => reviewRows.filter((row) => row.display === display).length;
+  const reprints = shown("re-print");
+  const rolledForward = shown("rolled forward");
+  // Counted off reviewRows, not recon.summary: the summary predates the
+  // carry-forward resolution above, so it would still report a registered
+  // re-print as unexpected while the table beneath it says otherwise.
   const chips: [string, number, string][] = [
     ["Acknowledged", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
     ["Shutout", s.shutout, "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"],
     ["Pending", s.pending, "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300"],
-    ["Unexpected", s.unexpected, "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400"],
+    ...(reprints > 0 ? [["Re-print", reprints, "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-300"] as [string, number, string]] : []),
+    ...(rolledForward > 0 ? [["Rolled forward", rolledForward, "bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-300"] as [string, number, string]] : []),
+    ["Unexpected", shown("unexpected"), "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-400"],
     ["Weight mismatches", s.weightMismatches, "bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300"],
   ];
 

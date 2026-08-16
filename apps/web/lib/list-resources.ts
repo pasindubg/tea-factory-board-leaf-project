@@ -110,6 +110,13 @@ export type AuctionSaleLineListRow = {
   vatAmount: number | null;
   onGuarantee: boolean | null;
   reprint: boolean;
+  /**
+   * Display labels for the two booleans above, carried on the row because the
+   * server-side row filter matches row PROPERTIES, not column accessors — a
+   * column keyed on the raw boolean cannot be searched by its label.
+   */
+  guaranteeLabel: string;
+  reprintLabel: string;
   reprintCount: number;
 };
 
@@ -125,6 +132,8 @@ export type AuctionDispatchListRow = {
   driver_name: string | null;
   transporter: string | null;
   bundle_dispatch_no: string | null;
+  /** `invoice` | `reprint-register` — which screen opened this Broker Invoice. */
+  entry_source: string | null;
   created_date: string | null;
   status: string;
   brokers: { name: string } | null;
@@ -139,6 +148,8 @@ export type AuctionPhysicalDispatchListRow = {
   warehouse: string;
   invoiceCount: number;
   status: string;
+  /** Server-side creation date in the factory's Asia/Colombo calendar. */
+  createdDate: string | null;
 };
 
 /** The Auction Sale side rail — a virtual grouping over auction_sales by target sale no. */
@@ -248,6 +259,12 @@ export type AuctionReprintOverviewListRow = {
   soldSale: string | null;
   history: string;
   source: string | null;
+  /**
+   * `auction_sales.entry_source` of the chain ROOT: `reprint-register` means
+   * the chain began as a re-print already outstanding at cutover rather than
+   * as a lot this system dispatched.
+   */
+  entrySource: string | null;
   stateLabel: string;
   stateStyle: string;
   reprintCount: number;

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { invoiceMatchKey } from "@tea/api";
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
@@ -140,6 +141,8 @@ type RefreshDispatchLotRow = RefreshLotRow & {
 type RefreshReprintLot = RefreshLotRow & {
   created_at: string | null;
   lot_source: string | null;
+  provisional_sale_no: string | null;
+  final_sale_no: string | null;
   sale_lines: { net_wt: number | string | null; price_per_kg: number | string | null }[] | null;
   auction_sales: {
     id: string;
@@ -147,6 +150,7 @@ type RefreshReprintLot = RefreshLotRow & {
     target_sale_no: string | null;
     dispatch_date: string | null;
     sale_date: string | null;
+    entry_source: string | null;
     brokers: { name: string } | null;
   } | null;
 };
@@ -204,7 +208,24 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
     const chain = [...unsortedChain].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
     const lot = lotById.get(rootId) ?? chain[0];
     const terminal = [...chain].reverse().find((node) => node.state === "sold" || node.state === "settled" || (node.sale_lines?.length ?? 0) > 0);
-    const invoices = [...new Set(chain.flatMap((node) => (node.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no))).filter(Boolean))];
+    // One invoice, one entry. A re-print chain holds the SAME invoice number in
+    // two notations: the factory stores its index-cycle prefix ("26I02-0909")
+    // while the ACK-created child takes the bare number the broker printed
+    // ("0909"). Deduping on the literal string let both survive, so a single
+    // invoice read as two ("26I02-0909, 0909"). invoiceMatchKey is the same
+    // prefix-blind key reconciliation matches on; the fullest spelling wins so
+    // the factory's own reference is what stays on screen.
+    const invoiceByKey = new Map<string, string>();
+    for (const node of chain) {
+      for (const invoice of node.lot_invoices ?? []) {
+        const display = formatFourDigitNo(invoice.invoice_no);
+        if (!display) continue;
+        const key = invoiceMatchKey(invoice.invoice_no) || display;
+        const existing = invoiceByKey.get(key);
+        if (!existing || display.length > existing.length) invoiceByKey.set(key, display);
+      }
+    }
+    const invoices = [...invoiceByKey.values()];
     const reprintNodes = chain.filter((node) => node.state === "re-print");
     const saleLabel = (node: RefreshReprintLot) => formatSaleNo(node.auction_sales?.target_sale_no ?? node.auction_sales?.sale_no ?? null) || "—";
     const state = stateBucket(terminal?.state ?? chain[chain.length - 1]?.state);
@@ -214,7 +235,10 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
       id: lot.id,
       dispatchId: lot.auction_sales?.id ?? lot.sale_id,
       dispatchNo: formatFourDigitNo(lot.auction_sales?.sale_no ?? null),
-      saleNo: formatSaleNo(lot.auction_sales?.target_sale_no ?? null),
+      // The sale this lot was FIRST offered in. The lot's own provisional sale
+      // wins over its broker invoice's target: a cutover register entry states
+      // the original sale on the lot itself.
+      saleNo: formatSaleNo(lot.provisional_sale_no ?? lot.auction_sales?.target_sale_no ?? null),
       broker: lot.auction_sales?.brokers?.name ?? "—",
       dispatchDate: lot.auction_sales?.dispatch_date ?? null,
       saleDate: lot.auction_sales?.sale_date ?? null,
@@ -227,9 +251,18 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
       remainingNetKg: Number(chain[chain.length - 1]?.net_wt ?? 0),
       actualSoldKg: terminal ? Number(soldLine?.net_wt ?? terminal.net_wt ?? 0) : null,
       reprintSales: reprintNodes.map(saleLabel).join(", ") || "—",
-      soldSale: terminal ? saleLabel(terminal) : null,
+      // Where it actually sold. Normally that is the chain's terminal lot, but
+      // a re-print registered at cutover may already know the sale it sold in
+      // before any child exists — that is what final_sale_no records.
+      soldSale: terminal
+        ? saleLabel(terminal)
+        : formatSaleNo(chain[chain.length - 1]?.final_sale_no ?? null) || null,
       history: chain.map((node) => `${saleLabel(node)} ${stateBucket(node.state).label}`).join(" → "),
       source: lot.lot_source,
+      // Taken from the chain ROOT: it says how this re-print first entered the
+      // system, which is exactly what distinguishes a cutover entry from a
+      // lot that was really dispatched and then failed to sell.
+      entrySource: lot.auction_sales?.entry_source ?? null,
       stateLabel: state.label,
       stateStyle: state.style,
       reprintCount: reprintNodes.length,
@@ -757,7 +790,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         search.apply(
           supabase
             .from("auction_sales")
-            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, created_date, brokers(name)", embeds))
+            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, entry_source, created_date, brokers(name)", embeds))
             .eq("sale_kind", "dispatch"),
         ).order("created_at", { ascending: false }),
         supabase.from("marks").select("id, code, name").order("code"),
@@ -784,6 +817,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
           transporter: (sale as { transporter?: string | null }).transporter ?? null,
           bundle_dispatch_no: bundleNoById.get((sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id ?? "") ?? null,
+          entry_source: (sale as { entry_source?: string | null }).entry_source ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
           brokers: (sale.brokers as unknown as { name: string } | null) ?? null,
         })),
@@ -798,6 +832,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         // Both are `date` columns — ilike would error on them.
         dispatchDateFrom: { column: "dispatch_date_from", mode: "equals" },
         dispatchDateTo: { column: "dispatch_date_to", mode: "equals" },
+        createdDate: { column: "created_date", mode: "equals" },
       },
       // Derived from the count of joined invoice rows; no column to filter on.
       computed: ["invoiceCount"],
@@ -805,7 +840,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     async load({ supabase }, _params, search) {
       let query = supabase
         .from("auction_bundled_dispatches")
-        .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, auction_bundled_dispatch_invoices(id)");
+        .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, created_date, auction_bundled_dispatch_invoices(id)");
       query = search.apply(query);
       const { data, error } = await applyListPage(
         query.order("dispatch_date_from", { ascending: false }).order("dispatch_no", { ascending: false }).order("id"),
@@ -819,6 +854,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         dispatch_date_to: string;
         warehouse: string;
         status: string;
+        created_date: string | null;
         auction_bundled_dispatch_invoices: { id: string }[] | null;
       }[], search.page.limit);
       return {
@@ -832,6 +868,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           warehouse: dispatch.warehouse,
           invoiceCount: dispatch.auction_bundled_dispatch_invoices?.length ?? 0,
           status: dispatch.status,
+          createdDate: dispatch.created_date ?? null,
         })),
       };
     },
@@ -1080,9 +1117,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, lot_source, reprint_source_lot_id, created_at, " +
+          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, lot_source, reprint_source_lot_id, provisional_sale_no, final_sale_no, created_at, " +
             "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
-            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, brokers(name))",
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, entry_source, brokers(name))",
         )
         .or("state.eq.re-print,reprint_source_lot_id.not.is.null")
         .order("created_at");
@@ -1435,6 +1472,18 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
             onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
             reprint: Boolean(lot.reprint_source_lot_id) || lot.state === "re-print",
+            // The SEARCHABLE forms of the two booleans above.
+            //
+            // A list without a `search` config is filtered row-level on the
+            // server, and that filter compares a criterion against the row's
+            // own property — it cannot see the column's accessor. So a column
+            // whose accessor derives a label ("Guarantee" from `true`) matched
+            // in the browser and then matched NOTHING once the same search
+            // went through the server, because "true" does not contain
+            // "guarantee". Carrying the label on the row is what keeps the two
+            // sides filtering the same value.
+            guaranteeLabel: line?.on_guarantee == null ? "Not sold" : line.on_guarantee ? "Guarantee" : "Cash",
+            reprintLabel: (Boolean(lot.reprint_source_lot_id) || lot.state === "re-print") ? "Yes" : "No",
             reprintCount: reprintCountByLotId.get(lot.id) ?? 0,
           };
         }),

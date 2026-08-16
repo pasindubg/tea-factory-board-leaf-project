@@ -82,6 +82,18 @@ The three broker documents arrive **by email as PDFs with a clean text layer**
 (parse directly, **no OCR**). The bank statement is a **CSV** downloaded from the
 factory's bank.
 
+**Broker-format guard (upload time).** Every broker document is uploaded against
+a broker, so the PDF must be that broker's. `detectBrokerFormat` attributes the
+file to a house using the same markers the parsers branch on — the trading name,
+VAT number, or office address where present, and the layout alone where it is
+not (the BPML acknowledgement names no house anywhere on the page). A file that
+is demonstrably a different known house, or that matches no supported format, is
+rejected with a message naming both, before anything is staged. Without this a
+wrong-broker upload staged cleanly and surfaced much later as "N contract lines
+could not be matched to a lot in this broker sale" — an invoice-matching error
+for what is really a wrong-file mistake. A broker with no format registered here
+is not blocked, since it cannot be checked either way.
+
 ---
 
 ## 3. Lifecycle & state transitions
@@ -162,6 +174,47 @@ allowance, remaining net kg, and actual sold kg from `sale_lines`. A later ACK o
 manual dispatch entry creates the child; valuation and contract processing apply
 to that child in its own sale. Document-driven and manual state changes preserve
 the same chain rules.
+
+### Outstanding re-prints at cutover
+
+At go-live a factory has re-prints outstanding from sales that happened before
+this system existed, and historical invoices are **not** imported. Without a
+record of them, the first acknowledgement listing one of those invoices has no
+local counterpart and is classified `unexpected` — indistinguishable from a
+broker cataloguing something the factory never sent. For months that noise
+makes the `unexpected` count untrustworthy, which is the signal recon ① exists
+to give.
+
+Such a re-print is entered on the **Re-prints** page (owner only) as a **real
+lot**, through the ordinary lot-invoice path: same invoice numbering and prefix
+resolution, same grade and kg/bag rules, same `auction_lots` row. It is created
+under a real Broker Invoice and then moved straight to `re-print`. From that
+point the normal chain applies — a later ACK matches it through the carry-forward
+resolver and creates the linked `reprint_source_lot_id` child, and valuation,
+contract and settlement run unchanged.
+
+Deliberately **not** a separate `outstanding_reprints` table: that would create
+a second matching mechanism to keep in step with carry-forward forever. The
+register is the existing lot table, in the existing state.
+
+**Recon ① reports the resolved answer, not the raw one.** `reconcileAcknowledgement`
+compares only against the lots invoiced in the sale group under review, so any
+carried-forward lot necessarily lands in `unexpected` there. The review screen
+resolves those rows against the register before displaying them — showing
+`re-print` or `rolled forward` — and the confirm action calls the same
+resolver, so the preview can never promise an outcome that confirmation does
+not perform. `unexpected` on screen therefore means what the operator needs it
+to mean: the broker catalogued something the factory has no record of anywhere.
+
+The Broker Invoice that holds these entries carries
+`auction_sales.entry_source = 'reprint-register'` (ordinary invoices are
+`'invoice'`). It is only provenance for the UI badge — nothing was physically
+dispatched for it, so it is shown as `Re-print register` rather than reading as
+a real dispatch. `entry_source` is part of the one-open-invoice-per
+broker + mark + dispatch-date unique key, so a cutover entry never merges into
+an open dispatch invoice. Matching still requires the **same broker**: a legacy
+re-print catalogued by a different broker stays `unexpected`, because that is a
+genuine anomaly.
 
 ---
 

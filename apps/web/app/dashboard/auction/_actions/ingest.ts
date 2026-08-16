@@ -2,46 +2,27 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { computeSettlement, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
+import { brokerDocumentMismatch, computeSettlement, hasContractRates, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import {
   AUC,
   back,
   canonicalGrade,
+  colomboToday,
   extractPdf,
   gradeAliasMap,
   stageImport,
   toISODate,
   saleGroupIds,
+  saleBrokerName,
   saleDetailPath,
   writeAudit,
 } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
-
-type CarryForwardLot = {
-  id: string;
-  sale_id: string;
-  invoice_no: string | null;
-  lot_no: string | null;
-  bags: number | null;
-  kg_per_bag: number | string | null;
-  gross_wt: number | string | null;
-  sample_allowance: number | string | null;
-  net_wt: number | string | null;
-  state: string | null;
-  auction_sales: {
-    broker_id: string;
-    sale_no: string | null;
-    target_sale_no: string | null;
-    dispatch_date: string | null;
-  } | null;
-  lot_invoices?: { invoice_no: string }[] | null;
-};
-
-const CARRY_FORWARD_BLOCKED_STATES = new Set(["sold", "settled"]);
+import { resolveAckCarryForward } from "./carry-forward";
 
 /**
  * The keys a stored lot can be matched by. Broker documents print the bare
@@ -63,6 +44,14 @@ export async function ingestAcknowledgement(saleId: string, formData: FormData) 
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
   if (!isAcknowledgement(text)) return back(detail, "That doesn't look like an Acknowledgement document.");
+  // The file must be THIS broker's document. Without this a wrong-broker
+  // upload stages cleanly and only fails later as an invoice-matching error,
+  // which reads like a data problem rather than the wrong file.
+  const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
+  if (brokerName) {
+    const mismatch = brokerDocumentMismatch(text, brokerName, "Acknowledgement");
+    if (mismatch) return back(detail, mismatch);
+  }
   const parsed = parseAcknowledgement(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
@@ -189,71 +178,34 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
 
-  const unexpectedInvoiceNos = [...new Set(unexpectedAckEntries.map((row) => row.invoice_no))];
-  const unexpectedLotNos = [...new Set(unexpectedAckEntries.map((row) => row.lot_no).filter((lotNo): lotNo is string => Boolean(lotNo)))];
   // A broker can catalogue the same invoice/lot again in a later sale. Before
   // creating an ACK-sourced "unexpected" lot, move the existing unsold lot
   // forward so invoice history stays on one lot id.
-  const { data: linkedInvoiceLots } = unexpectedInvoiceNos.length > 0
-    ? await supabase
-        .from("lot_invoices")
-        .select("lot_id, invoice_no")
-        .eq("factory_id", profile.factory_id)
-        .in("invoice_no", unexpectedInvoiceNos)
-    : { data: [] };
-  const linkedLotIds = [...new Set((linkedInvoiceLots ?? []).map((row) => row.lot_id as string))];
-  const carryForwardParts: string[] = [];
-  if (unexpectedInvoiceNos.length > 0) carryForwardParts.push(`invoice_no.in.(${unexpectedInvoiceNos.join(",")})`);
-  if (unexpectedLotNos.length > 0) carryForwardParts.push(`lot_no.in.(${unexpectedLotNos.join(",")})`);
-  if (linkedLotIds.length > 0) carryForwardParts.push(`id.in.(${linkedLotIds.join(",")})`);
-  const { data: carryForwardRows } = carryForwardParts.length > 0
-    ? await supabase
-        .from("auction_lots")
-        .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date), lot_invoices(invoice_no)")
-        .eq("factory_id", profile.factory_id)
-        .or(carryForwardParts.join(","))
-    : { data: [] };
-  const carryForwardCandidates = ((carryForwardRows ?? []) as unknown as CarryForwardLot[]).filter((lot) => {
-    if (groupIds.includes(lot.sale_id)) return false;
-    if (currentBrokerId && lot.auction_sales?.broker_id !== currentBrokerId) return false;
-    return true;
+  //
+  // The SAME resolution the review screen showed the operator — see
+  // resolveAckCarryForward. If these two ever diverge, the screen promises one
+  // outcome and confirmation performs another.
+  const carryForward = await resolveAckCarryForward(supabase, profile.factory_id, {
+    groupIds,
+    brokerId: currentBrokerId ?? null,
+    rows: unexpectedAckEntries.map((row) => ({ invoiceNo: row.invoice_no, lotNo: row.lot_no })),
   });
-  const { data: existingSaleLines } = carryForwardCandidates.length > 0
-    ? await supabase
-        .from("sale_lines")
-        .select("lot_id")
-        .in("lot_id", carryForwardCandidates.map((lot) => lot.id))
-    : { data: [] };
-  const soldLotIds = new Set((existingSaleLines ?? []).map((line) => line.lot_id as string));
-  const movableLots = carryForwardCandidates.filter((lot) => !CARRY_FORWARD_BLOCKED_STATES.has(lot.state ?? "") && !soldLotIds.has(lot.id));
-  const usedCarryForwardLotIds = new Set<string>();
   const rowsToCreate = [];
   const movedLotsFromAck: { id: string; sale_id: string; state: string }[] = [];
 
   for (const row of unexpectedAckEntries) {
-    const matchingCarryForwardLots = carryForwardCandidates
-      .filter((lot) => {
-        if (usedCarryForwardLotIds.has(lot.id)) return false;
-        const invoiceMatches =
-          invoiceNumbersMatch(lot.invoice_no, row.invoice_no) ||
-          (lot.lot_invoices ?? []).some((invoice) => invoiceNumbersMatch(invoice.invoice_no, row.invoice_no));
-        const lotMatches = row.lot_no && formatFourDigitNo(lot.lot_no) === row.lot_no;
-        return invoiceMatches || lotMatches;
-      })
-      .sort((a, b) => String(b.auction_sales?.dispatch_date ?? "").localeCompare(String(a.auction_sales?.dispatch_date ?? "")));
-    const candidate = matchingCarryForwardLots.find((lot) => movableLots.some((movable) => movable.id === lot.id));
+    const outcome = carryForward.get(row.invoice_no) ?? { status: "unmatched" as const };
 
-    if (!candidate) {
-      if (matchingCarryForwardLots.length > 0) {
-        const blocked = matchingCarryForwardLots[0];
-        const blockedDispatch = formatFourDigitNo(blocked.auction_sales?.sale_no) || "—";
+    if (outcome.status !== "matched") {
+      if (outcome.status === "blocked") {
+        const blockedDispatch = formatFourDigitNo(outcome.lot.auction_sales?.sale_no) || "—";
         back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on broker invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
       }
       rowsToCreate.push(row);
       continue;
     }
 
-    usedCarryForwardLotIds.add(candidate.id);
+    const candidate = outcome.lot;
     if (candidate.state === "re-print") {
       rowsToCreate.push({
         ...row,
@@ -379,6 +331,14 @@ export async function ingestValuation(saleId: string, formData: FormData) {
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
   if (!isValuation(text)) return back(detail, "That doesn't look like a Valuation Report.");
+  // The file must be THIS broker's document. Without this a wrong-broker
+  // upload stages cleanly and only fails later as an invoice-matching error,
+  // which reads like a data problem rather than the wrong file.
+  const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
+  if (brokerName) {
+    const mismatch = brokerDocumentMismatch(text, brokerName, "Valuation Report");
+    if (mismatch) return back(detail, mismatch);
+  }
   const parsed = parseValuation(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
@@ -432,6 +392,14 @@ export async function ingestContract(saleId: string, formData: FormData) {
   const text = await extractPdf(file);
   if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
   if (!isContract(text)) return back(detail, "That doesn't look like a Sellers Contract & Account Sales document.");
+  // The file must be THIS broker's document. Without this a wrong-broker
+  // upload stages cleanly and only fails later as an invoice-matching error,
+  // which reads like a data problem rather than the wrong file.
+  const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
+  if (brokerName) {
+    const mismatch = brokerDocumentMismatch(text, brokerName, "Sellers Contract");
+    if (mismatch) return back(detail, mismatch);
+  }
   const parsed = parseContract(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
   if (!staged.ok) return back(detail, staged.error);
@@ -608,7 +576,50 @@ export async function confirmContract(importId: string, saleId: string) {
       .eq("broker_id", brokerId)
       .order("effective_from", { ascending: false })
       .limit(1);
-    const rateCard = ratesRows?.[0];
+    let rateCard = ratesRows?.[0];
+
+    // The contract IS the rate card. It prints the rate beside every line of
+    // the Account Sales stack, so a broker's first confirmed contract can
+    // establish the card rather than the owner transcribing it by hand — and
+    // until one exists no settlement can be computed at all, which is why
+    // Total revenue reads "—".
+    //
+    // An EXISTING card is never silently overwritten: a broker changing its
+    // rates is a real commercial event, and quietly rewriting history would
+    // restate every settlement already computed from the old card. The
+    // difference is reported on the contract review screen instead
+    // (contractRateDifferences), for a human to act on.
+    if (!rateCard && hasContractRates(parsed.rates)) {
+      const effectiveFrom = toISODate(parsed.saleDate) ?? colomboToday();
+      const { data: createdRate } = await supabase
+        .from("broker_rates")
+        .insert({
+          factory_id: profile.factory_id,
+          broker_id: brokerId,
+          effective_from: effectiveFrom,
+          insurance_per_kg: parsed.rates.insurancePerKg ?? 0,
+          public_sale_ex_per_lot: parsed.rates.publicSaleExPerLot ?? 0,
+          brokerage_pct: parsed.rates.brokeragePct ?? 0,
+          handling_per_kg: parsed.rates.handlingPerKg ?? 0,
+          documentation_per_lot: parsed.rates.documentationPerLot ?? 0,
+          eplatform_per_kg: parsed.rates.eplatformPerKg ?? 0,
+          govt_relief_loan: 0,
+          charges_vat_pct: parsed.rates.chargesVatPct ?? 18,
+          proceeds_vat_pct: parsed.rates.proceedsVatPct ?? 18,
+        })
+        .select("*")
+        .maybeSingle();
+      if (createdRate) {
+        rateCard = createdRate;
+        await writeAudit(supabase, profile.factory_id, {
+          saleId,
+          action: "Broker rate card created",
+          detail: `Deduction rates were taken from the Sellers Contract: brokerage ${(parsed.rates.brokeragePct ?? 0).toFixed(2)}%, insurance Rs.${(parsed.rates.insurancePerKg ?? 0)}/kg, handling Rs.${(parsed.rates.handlingPerKg ?? 0)}/kg, public sale expenses Rs.${(parsed.rates.publicSaleExPerLot ?? 0)}/lot, documentation Rs.${(parsed.rates.documentationPerLot ?? 0)}/lot, e-platform Rs.${(parsed.rates.eplatformPerKg ?? 0)}/kg, charges VAT ${(parsed.rates.chargesVatPct ?? 18)}%.`,
+          reason: "No rate card existed for this broker; the contract is the source of truth for its charges.",
+          actor: profile.name,
+        });
+      }
+    }
 
     // Fetch existing sale lines we just upserted (with their ids) for VAT ledger
     const { data: saleLines } = await supabase

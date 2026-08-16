@@ -137,15 +137,17 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     render: (row) => row.vatAmount == null ? "—" : money(row.vatAmount),
   },
   {
-    key: "onGuarantee",
+    key: "guaranteeLabel",
     label: "Guarantee",
-    accessor: (row) => row.onGuarantee == null ? "-" : row.onGuarantee ? "Guarantee" : "Cash",
+    // Keyed and accessed on the row's own label so the browser and the server
+    // filter the identical value.
+    accessor: (row) => row.guaranteeLabel,
     sortable: true,
     filter: "select",
     filterOptions: [
       { value: "Guarantee", label: "Guarantee" },
       { value: "Cash", label: "Cash" },
-      { value: "-", label: "Not sold" },
+      { value: "Not sold", label: "Not sold" },
     ],
     render: (row) => row.onGuarantee == null ? (
       <span className="text-stone-400 dark:text-stone-500">—</span>
@@ -160,9 +162,9 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     ),
   },
   {
-    key: "reprint",
+    key: "reprintLabel",
     label: "Re-print",
-    accessor: (row) => row.reprint ? "Yes" : "No",
+    accessor: (row) => row.reprintLabel,
     sortable: true,
     filter: "select",
     filterOptions: [{ value: "Yes", label: "Yes" }, { value: "No", label: "No" }],

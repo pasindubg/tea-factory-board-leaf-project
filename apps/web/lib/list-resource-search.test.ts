@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resources } from "./list-resource-registry";
-import { applyListFilters, resolveSearchColumn } from "./list-search-query";
+import { applyListFilters, filterRowsByCriteria, resolveSearchColumn } from "./list-search-query";
 
 // A locked role's criteria must reach the database, not just the rows already
 // fetched — otherwise every row is shipped to the server component and only
@@ -57,5 +57,47 @@ describe("search config integrity", () => {
         expect(config.columns?.[computed], `${key}.${computed}`).toBeUndefined();
       }
     }
+  });
+});
+
+/**
+ * A column whose accessor DERIVES a label from a differently-typed row field
+ * could be searched in the browser but matched nothing once the same criteria
+ * went through the server.
+ *
+ * The server-side fallback filter compares a criterion against the row's own
+ * property; it has no access to the column's accessor. So a column keyed on a
+ * boolean (`onGuarantee`) offering the label "Guarantee" asked the server for
+ * rows whose `onGuarantee` contains "guarantee" — and `true`/`false`/`null`
+ * never do. The fix is to carry the label on the row and key the column on it.
+ */
+describe("row-level criteria against derived display values", () => {
+  const rows = [
+    { id: "a", onGuarantee: true, guaranteeLabel: "Guarantee", reprint: true, reprintLabel: "Yes" },
+    { id: "b", onGuarantee: false, guaranteeLabel: "Cash", reprint: false, reprintLabel: "No" },
+    { id: "c", onGuarantee: null, guaranteeLabel: "Not sold", reprint: false, reprintLabel: "No" },
+  ];
+
+  it("cannot match a label against the raw boolean it was derived from", () => {
+    // The defect, pinned: this is what the list used to ask the server for.
+    expect(filterRowsByCriteria(rows, { onGuarantee: "Guarantee" })).toHaveLength(0);
+    expect(filterRowsByCriteria(rows, { onGuarantee: "Cash" })).toHaveLength(0);
+  });
+
+  it("matches every guarantee label once the row carries it", () => {
+    expect(filterRowsByCriteria(rows, { guaranteeLabel: "Guarantee" }).map((r) => r.id)).toEqual(["a"]);
+    expect(filterRowsByCriteria(rows, { guaranteeLabel: "Cash" }).map((r) => r.id)).toEqual(["b"]);
+    expect(filterRowsByCriteria(rows, { guaranteeLabel: "Not sold" }).map((r) => r.id)).toEqual(["c"]);
+  });
+
+  it("matches the re-print label the same way", () => {
+    expect(filterRowsByCriteria(rows, { reprint: "Yes" })).toHaveLength(0);
+    expect(filterRowsByCriteria(rows, { reprintLabel: "Yes" }).map((r) => r.id)).toEqual(["a"]);
+    expect(filterRowsByCriteria(rows, { reprintLabel: "No" }).map((r) => r.id)).toEqual(["b", "c"]);
+  });
+
+  it("still returns everything when no criteria are set", () => {
+    expect(filterRowsByCriteria(rows, {})).toHaveLength(3);
+    expect(filterRowsByCriteria(rows, { guaranteeLabel: "" })).toHaveLength(3);
   });
 });

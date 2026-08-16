@@ -284,6 +284,21 @@ export async function saleDetailPath(supabase: Supa, factoryId: string, saleId: 
   return `${AUC}/sales/${encodeURIComponent(key || saleId)}`;
 }
 
+/**
+ * The broker a document is being uploaded against. Every broker document is
+ * attached to one broker invoice, so this is the house the file is claimed to
+ * have come from — see brokerDocumentMismatch, which checks the PDF agrees.
+ */
+export async function saleBrokerName(supabase: Supa, factoryId: string, saleId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("auction_sales")
+    .select("brokers(name)")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  return ((data?.brokers as unknown as { name: string } | null)?.name) ?? null;
+}
+
 // `prefix` is the resolved broker_invoice prefix string (e.g. "26B01"); the
 // sequence resets to 0001 under each new prefix since it's scanned only among
 // sale_no values already starting with that prefix, scoped to this factory.

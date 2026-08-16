@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { SubmitButton } from "@/components/submit-button";
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
@@ -238,6 +239,21 @@ export default async function SettingsPage() {
         </form>
 
         <div className="grid gap-6">
+          {profile.role === "owner" && (
+            <section className="rounded-3xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm dark:border-amber-900 dark:bg-amber-950/20">
+              <h2 className="text-lg font-semibold text-stone-950 dark:text-stone-50">Auction data</h2>
+              <p className="mt-1 text-sm leading-5 text-stone-500 dark:text-stone-400">
+                Clear the auction transactions recorded so far, and load the factory&apos;s historic
+                Dispatch Schedule spreadsheet. Used at go-live and while testing.
+              </p>
+              <Link
+                href="/dashboard/settings/auction-data"
+                className="mt-4 inline-block rounded-full border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+              >
+                Open reset &amp; import
+              </Link>
+            </section>
+          )}
           {profile.role === "owner" && (
             <section className="rounded-3xl border border-green-200 bg-green-50/50 p-5 shadow-sm dark:border-green-900 dark:bg-green-950/20">
               <h2 className="text-lg font-semibold text-stone-950 dark:text-stone-50">Factory profile</h2>
