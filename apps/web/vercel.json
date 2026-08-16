@@ -1,4 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "sh scripts/vercel-build.sh"
+  "buildCommand": "sh scripts/vercel-build.sh",
+  "ignoreCommand": "if [ \"$VERCEL_GIT_COMMIT_REF\" = \"blm-cloud-release\" ]; then exit 1; else exit 0; fi"
 }
