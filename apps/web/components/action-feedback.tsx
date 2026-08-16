@@ -28,6 +28,22 @@ export function showAppToast(
  */
 const TOAST_DURATION_MS = 4000;
 
+/** How long the page may stay locked with no completion signal at all. */
+const MAX_BLOCK_MS = 12000;
+
+/**
+ * True for controls that only rearrange what is already on screen — a
+ * disclosure, a menu, a popover trigger. They start no work, so nothing would
+ * ever arrive to lift the lock and it would sit there until its cap.
+ */
+function rearrangesUiOnly(control: Element) {
+  return (
+    control.tagName === "SUMMARY" ||
+    control.hasAttribute("aria-expanded") ||
+    control.hasAttribute("aria-haspopup")
+  );
+}
+
 export function ActionFeedback() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -35,7 +51,9 @@ export function ActionFeedback() {
   const remainingMs = useRef(TOAST_DURATION_MS);
   const timerStartedAt = useRef(0);
   const pendingControlTimers = useRef(new Map<HTMLElement, number>());
+  const blockTimer = useRef<number | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const [blocking, setBlocking] = useState(false);
 
   const startClearTimer = useCallback((duration: number) => {
     if (clearTimer.current) window.clearTimeout(clearTimer.current);
@@ -56,19 +74,41 @@ export function ActionFeedback() {
     startClearTimer(remainingMs.current);
   }, [startClearTimer]);
 
+  const stopBlocking = useCallback(() => {
+    if (blockTimer.current) window.clearTimeout(blockTimer.current);
+    blockTimer.current = null;
+    setBlocking(false);
+  }, []);
+
   const clearPendingControls = useCallback(() => {
     for (const [control, timer] of pendingControlTimers.current) {
       window.clearTimeout(timer);
       control.removeAttribute("data-action-pending");
     }
     pendingControlTimers.current.clear();
-  }, []);
+    stopBlocking();
+  }, [stopBlocking]);
 
-  const markControlPending = useCallback((control: Element, navigation = false) => {
+  const markControlPending = useCallback(
+    (control: Element, navigation = false) => {
     if (!(control instanceof HTMLElement)) return;
     const existing = pendingControlTimers.current.get(control);
     if (existing) window.clearTimeout(existing);
     control.setAttribute("data-action-pending", "true");
+
+    // Lock the page behind the click, so a second click cannot land on work
+    // already in flight. Skipped for controls that only rearrange what is
+    // already on screen — a disclosure, a menu — because there is nothing in
+    // flight to wait for and the lock would have no end condition but its cap.
+    if (!rearrangesUiOnly(control)) {
+      setBlocking(true);
+      if (blockTimer.current) window.clearTimeout(blockTimer.current);
+      // Capped independently of, and far below, the dim's backstop. A stale dim
+      // is cosmetic; a stale lock is the application appearing frozen, so it is
+      // the one that has to give up early if no completion signal ever arrives.
+      blockTimer.current = window.setTimeout(stopBlocking, MAX_BLOCK_MS);
+    }
+
     // A backstop, not the ordinary way out. The dim is cleared for real by the
     // route changing or by a toast reporting the result; this only exists so a
     // click that settles silently — a modal opening, an action that neither
@@ -83,7 +123,9 @@ export function ActionFeedback() {
       pendingControlTimers.current.delete(control);
     }, navigation ? 30000 : 8000);
     pendingControlTimers.current.set(control, timer);
-  }, []);
+    },
+    [stopBlocking],
+  );
 
   useEffect(() => {
     clearPendingControls();
@@ -127,14 +169,25 @@ export function ActionFeedback() {
     };
   }, [markControlPending, startClearTimer, clearPendingControls]);
 
-  if (!feedback) return null;
   return (
+    <>
+      {/* Swallows every pointer event underneath it. Sits above the dialogs
+          (z-150) it must also cover, and below the toast, which is raised to
+          160 so the result of the very action being waited on stays readable
+          and its follow-up link stays reachable. */}
+      {blocking && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-[155] cursor-progress bg-stone-950/10 backdrop-blur-[1px] transition-opacity dark:bg-stone-950/30"
+        />
+      )}
+      {feedback && (
     <div
       role={feedback.tone === "error" ? "alert" : "status"}
       aria-live="polite"
       onMouseEnter={pauseClearTimer}
       onMouseLeave={resumeClearTimer}
-      className={`fixed right-5 bottom-5 z-[120] flex w-[10cm] items-start gap-3 rounded-2xl border px-5 py-3.5 text-sm font-semibold shadow-2xl backdrop-blur-xl ${
+      className={`fixed right-5 bottom-5 z-[160] flex w-[10cm] items-start gap-3 rounded-2xl border px-5 py-3.5 text-sm font-semibold shadow-2xl backdrop-blur-xl ${
         feedback.tone === "error"
           ? "border-red-300 bg-red-50/95 text-red-800 dark:border-red-800 dark:bg-red-950/95 dark:text-red-200"
           : "border-green-300 bg-green-50/95 text-green-800 dark:border-green-800 dark:bg-green-950/95 dark:text-green-200"
@@ -154,5 +207,7 @@ export function ActionFeedback() {
         )}
       </span>
     </div>
+      )}
+    </>
   );
 }
