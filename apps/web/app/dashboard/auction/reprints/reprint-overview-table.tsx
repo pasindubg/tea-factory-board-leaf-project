@@ -32,7 +32,8 @@ const COLUMNS: EntityListColumn<ReprintOverviewRow>[] = [
   // Where the chain STARTED. A re-print entered at cutover never had a
   // dispatch here, and reads as a real one without this.
   { key: "entrySource", label: "Origin", accessor: (row) => entrySourceChip(row.entrySource).label, sortable: true, filter: "select", filterOptions: entrySourceOptions(), minWidth: 150, render: (row) => { const chip = entrySourceChip(row.entrySource); return <span className={`rounded-full px-2 py-0.5 text-xs ${chip.style}`}>{chip.label}</span>; } },
-  { key: "saleNo", label: "Sale", accessor: (row) => row.saleNo ?? null, sortable: true, filter: "text", render: (row) => row.saleNo ?? "—" },
+  { key: "saleNo", label: "First sale", accessor: (row) => row.saleNo ?? null, sortable: true, filter: "text", render: (row) => row.saleNo ?? "—" },
+  { key: "soldSaleNo", label: "Sold sale", accessor: (row) => row.soldSale ?? null, sortable: true, filter: "text", render: (row) => row.soldSale ?? "—" },
   { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
   { key: "invoiceNo", label: "Invoice(s)", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", cellClassName: "font-medium" },
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.lotNo ?? null, sortable: true, filter: "text", render: (row) => row.lotNo ?? "—" },
@@ -40,7 +41,6 @@ const COLUMNS: EntityListColumn<ReprintOverviewRow>[] = [
   { key: "bags", label: "Bags", accessor: (row) => row.bags ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.bags ?? "—" },
   { key: "kgPerBag", label: "kg/bag", accessor: (row) => row.kgPerBag ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.kgPerBag != null ? row.kgPerBag.toFixed(2) : "—" },
   { key: "reprintSales", label: "Re-printed sales", accessor: (row) => row.reprintSales, sortable: true, filter: "text" },
-  { key: "soldSale", label: "Sold sale", accessor: (row) => row.soldSale ?? null, sortable: true, filter: "text", render: (row) => row.soldSale ?? "—" },
   { key: "totalSampleKg", label: "Total sample kg", accessor: (row) => row.totalSampleKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.totalSampleKg.toFixed(2) },
   { key: "remainingNetKg", label: "Remaining kg", accessor: (row) => row.remainingNetKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.remainingNetKg.toFixed(2) },
   { key: "actualSoldKg", label: "Actual sold kg", accessor: (row) => row.actualSoldKg ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => row.actualSoldKg != null ? row.actualSoldKg.toFixed(2) : "—" },
@@ -213,15 +213,27 @@ function OutstandingFields({ today, grades }: { today: string; grades: ReprintGr
           <span className={hint}>The number the broker prints for this lot. Type a prefix to request one, or leave it bare to take the active prefix.</span>
         </label>
         <label className={labelText}>
-          Original sale no.
+          First sale no.
           <input
             name="target_sale_no"
             required
-            placeholder="e.g. 0019"
-            aria-label="Original sale number"
+            placeholder="e.g. 0016"
+            aria-label="First sale number"
             onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
             className={field}
           />
+          <span className={hint}>The sale this lot was originally printed for.</span>
+        </label>
+        <label className={labelText}>
+          Sold in sale no.
+          <input
+            name="sold_sale_no"
+            placeholder="leave blank if still unsold"
+            aria-label="Sold in sale number"
+            onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
+            className={field}
+          />
+          <span className={hint}>The sale it actually sold in, if it already has.</span>
         </label>
         <label className={labelText}>
           Original dispatch date

@@ -12,6 +12,7 @@ const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "dispatchDateTo", label: "Dispatch to", accessor: (row) => row.dispatchDateTo, sortable: true, lov: false, searchInput: "date" },
   { key: "warehouse", label: "Warehouse", accessor: (row) => row.warehouse, sortable: true, filter: "select" },
   { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(DISPATCH_STATUSES) },
+  { key: "createdDate", label: "Created date", accessor: (row) => row.createdDate ?? null, sortable: true, lov: false, searchInput: "date" },
 ];
 
 export function DispatchSideList({

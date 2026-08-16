@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, date, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
@@ -28,6 +29,13 @@ export const auctionBundledDispatches = pgTable(
     // a new broker invoice joins an already-received dispatch.
     dispatchedAt: timestamp("dispatched_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Immutable server date derived from created_at in the factory's
+    // Asia/Colombo calendar, matching auction_sales.created_date. Generated so
+    // the list can filter on a real date column rather than matching a value
+    // computed per row after the query.
+    createdDate: date("created_date")
+      .notNull()
+      .generatedAlwaysAs(sql`("created_at" at time zone 'UTC' at time zone 'Asia/Colombo')::date`),
   },
   (t) => [
     index("idx_auction_bundled_dispatches_factory").on(t.factoryId),

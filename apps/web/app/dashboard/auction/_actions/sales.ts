@@ -213,13 +213,21 @@ async function insertDispatch(
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not check existing Broker Invoices." };
   }
+  // A bundled dispatch is the PHYSICAL movement of tea to the broker. A
+  // cutover re-print was never dispatched from here — it is already sitting at
+  // the broker — so it gets no bundle. Without this it is filed inside a real
+  // dispatch (or conjures one of its own), which makes the dispatch record
+  // claim a lorry left that never did.
+  const needsBundle = entrySource !== "reprint-register";
   let bundleId = "";
-  try {
-    bundleId = await ensureDailyBundledDispatch(supabase, profile.factory_id, dispatchDate);
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Could not create the bundled dispatch." };
+  if (needsBundle) {
+    try {
+      bundleId = await ensureDailyBundledDispatch(supabase, profile.factory_id, dispatchDate);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not create the bundled dispatch." };
+    }
+    if (!bundleId) return { ok: false, error: "Could not create the bundled dispatch." };
   }
-  if (!bundleId) return { ok: false, error: "Could not create the bundled dispatch." };
   const { data, error } = await supabase
     .from("auction_sales")
     .insert({
@@ -233,7 +241,7 @@ async function insertDispatch(
       broker_lorry_no: brokerLorryNo || null,
       driver_name: driverName || null,
       transporter: transporter || null,
-      bundled_dispatch_id: bundleId,
+      bundled_dispatch_id: bundleId || null,
       entry_source: entrySource,
       status: "draft",
     })
@@ -241,11 +249,13 @@ async function insertDispatch(
     .single();
   if (error?.code === "23505") return { ok: false, error: "This broker and selling mark already have an open Broker Invoice on this dispatch date. Refresh the list and reuse or finish that draft, or use a different dispatch date." };
   if (error || !data) return { ok: false, error: friendlyError(error ?? { message: "Could not create the broker invoice." }) };
-  const { error: linkError } = await supabase.from("auction_bundled_dispatch_invoices").insert({
-    factory_id: profile.factory_id,
-    bundled_dispatch_id: bundleId,
-    broker_invoice_id: data.id,
-  });
+  const { error: linkError } = bundleId
+    ? await supabase.from("auction_bundled_dispatch_invoices").insert({
+        factory_id: profile.factory_id,
+        bundled_dispatch_id: bundleId,
+        broker_invoice_id: data.id,
+      })
+    : { error: null };
   if (linkError) {
     const rollback = await deleteTenantRow(supabase, "auction_sales", data.id as string);
     if (rollback.error) {

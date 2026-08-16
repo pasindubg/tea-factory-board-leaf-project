@@ -110,6 +110,13 @@ export type AuctionSaleLineListRow = {
   vatAmount: number | null;
   onGuarantee: boolean | null;
   reprint: boolean;
+  /**
+   * Display labels for the two booleans above, carried on the row because the
+   * server-side row filter matches row PROPERTIES, not column accessors — a
+   * column keyed on the raw boolean cannot be searched by its label.
+   */
+  guaranteeLabel: string;
+  reprintLabel: string;
   reprintCount: number;
 };
 
@@ -141,6 +148,8 @@ export type AuctionPhysicalDispatchListRow = {
   warehouse: string;
   invoiceCount: number;
   status: string;
+  /** Server-side creation date in the factory's Asia/Colombo calendar. */
+  createdDate: string | null;
 };
 
 /** The Auction Sale side rail — a virtual grouping over auction_sales by target sale no. */

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { entrySourceChip, entrySourceOptions } from "../../entry-source";
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 
@@ -16,11 +17,16 @@ export type DispatchInSaleRow = {
   reprintLots: number;
   statusLabel: string;
   statusStyle: string;
+  /** `invoice` | `reprint-register` — which screen opened this broker invoice. */
+  entrySource: string | null;
 };
 
 const COLUMNS: EntityListColumn<DispatchInSaleRow>[] = [
   { key: "saleNo", label: "Broker invoice no.", accessor: (row) => row.saleNo, sortable: true, filter: "text", lov: false, cellClassName: "font-medium", render: (row) => <Link href={`/dashboard/auction/${row.id}`} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
   { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
+  // A cutover re-print register carries no dispatch — saying so here stops it
+  // being read as tea this sale actually sent to the broker.
+  { key: "entrySource", label: "Origin", accessor: (row) => entrySourceChip(row.entrySource).label, sortable: true, filter: "select", filterOptions: entrySourceOptions(), minWidth: 150, render: (row) => { const chip = entrySourceChip(row.entrySource); return <span className={`rounded-full px-2 py-0.5 text-xs ${chip.style}`}>{chip.label}</span>; } },
   { key: "dispatchDate", label: "Invoice date", accessor: (row) => row.dispatchDate ?? null, sortable: true, lov: false, searchInput: "date", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.dispatchDate ?? "—" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, lov: false, searchInput: "date", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.saleDate ?? "—" },
   { key: "lotsCount", label: "Lots", accessor: (row) => row.lotsCount, sortable: true, lov: false, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right tabular-nums" },

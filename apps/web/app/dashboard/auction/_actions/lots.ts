@@ -556,9 +556,15 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   // threshold check attached goes with it. No extra sample is deducted here:
   // the sample weight entered on the form is what has ALREADY been taken, and
   // createDispatchedLotForList has applied it to net weight.
+  // A re-print carries TWO sale numbers: the sale it was first printed for
+  // (provisional, already stamped from the broker invoice) and the sale it
+  // actually sold in. The second is optional at cutover — an outstanding
+  // re-print may not have sold yet — and is recorded on the lot itself so the
+  // chain can state it before any child lot exists.
+  const soldSaleNo = formatSaleNo(str(formData.get("sold_sale_no")));
   const { data: updatedLot, error: updateError } = await supabase
     .from("auction_lots")
-    .update({ state: "re-print", shutout_reason: null })
+    .update({ state: "re-print", shutout_reason: null, final_sale_no: soldSaleNo || null })
     .eq("id", lotId)
     .eq("factory_id", profile.factory_id)
     .select("id, state")
@@ -576,7 +582,7 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
     saleId: resolved.saleId,
     lotId,
     action: "Outstanding re-print registered",
-    detail: `Invoice ${invoiceNo} was registered as a re-print outstanding from before this system${originalSaleNo ? `, originally sale ${originalSaleNo}` : ""}. A later acknowledgement listing this invoice will link to it as a re-print child.`,
+    detail: `Invoice ${invoiceNo} was registered as a re-print outstanding from before this system${originalSaleNo ? `, first offered in sale ${originalSaleNo}` : ""}${soldSaleNo ? ` and sold in sale ${soldSaleNo}` : ""}. A later acknowledgement listing this invoice will link to it as a re-print child.`,
     reason,
     actor: profile.name,
   });

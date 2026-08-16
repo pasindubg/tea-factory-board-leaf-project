@@ -80,6 +80,9 @@ const page = (key: string, label: string, href: string, group: PageDef["group"],
 export const PAGE_DEFINITIONS: readonly PageDef[] = [
   page("overview", "Overview", "/dashboard", "Personal", "overview", ["owner", "manager", "supervisor", "accountant"]),
   page("personal-settings", "My settings", "/dashboard/settings", "Personal", "personal-settings", ALL_WEB_ROLES),
+  // Go-live tooling: wipes auction transactions and loads the factory's
+  // historic dispatch book. Owner only — it is destructive and one-off.
+  page("settings-auction-data", "Auction data reset & import", "/dashboard/settings/auction-data", "Personal", "personal-settings", ["owner"]),
   page("weighings", "Weighings", "/dashboard/weighings", "Leaf Handling", "weighings", ALL_WEB_ROLES),
   page("weighings-new", "New weighing", "/dashboard/weighings/new", "Leaf Handling", "weighings", ALL_WEB_ROLES),
   page("suppliers", "Suppliers", "/dashboard/suppliers", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor", "accountant"]),

@@ -2,6 +2,17 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-08-16 - Go-live Auction Data Reset And Dispatch Schedule Import
+
+- **New dependency:** `fflate` in `packages/api` (MIT, ~10 KB) to unzip .xlsx. A full spreadsheet library was avoided — `packages/api/src/auction/read-xlsx.ts` reads only what one fixed sheet layout needs.
+- No schema change. New owner-only page `/dashboard/settings/auction-data` (`settings-auction-data` in `PAGE_DEFINITIONS`), reached from a card on the personal settings page. Deliberately outside the Auction module's navigation: it is destructive and used once at cutover, not daily.
+- **Stage 1 — reset** (`_actions/reset.ts`) deletes the factory's auction TRANSACTION data in dependency order: vat_ledger, settlement_charges, settlements, sale_lines, valuations, doc_imports, auction_audit, lot_invoices, auction_lots, auction_bundled_dispatch_invoices, auction_sales, auction_bundled_dispatches. Configuration is preserved — brokers, marks, grades, warehouses, invoice prefixes and broker rate cards — because the import needs it. Row counts are shown per entity before deleting and reported per entity after; the operator must type DELETE. Deleting explicitly rather than relying on cascade is what makes every table countable and reportable.
+- **Stage 2 — import** (`_actions/import.ts`) applies each spreadsheet row through the SAME server actions the Invoice Overview page uses: `createInvoiceFromOverview` for an ordinary lot invoice and `registerOutstandingReprint` for a cutover re-print. Nothing is re-implemented, so broker-invoice creation, dispatch bundling, invoice numbering and re-print chaining are exercised exactly as by hand, and any defect surfaces per row with the application's own error message.
+- Grade spellings are resolved before any invoice is written: a spelling meaning an existing grade becomes an `auction_grade_aliases` row (PEKOE→PEKO, PEKOE1→PEKO1, B.M→BM, DUST1→DUST, FBOPFSp→FBOFSP, "OP 1"→OP1); any other spelling becomes a new ACTIVE `auction_grades` row, usable on invoices immediately.
+- **Re-prints now carry two sale numbers** — the sale first offered in (`auction_lots.provisional_sale_no`) and the sale sold in (`final_sale_no`). The register form takes both, and the Re-print Overview shows `First sale` and `Sold sale`. No migration: both columns already existed.
+- Verify with `pnpm --dir packages/api test:dispatch-sheet` (skips itself if the workbook is absent). Against the real book it reads 230 importable rows, 112 skipped with reasons, 4 re-prints, April–July 2026.
+- **Reader bug fixed while building this:** a styled-but-empty cell is written self-closing (`<c r="K2"/>`); matching only `<c …>…</c>` paired its opening tag with the NEXT cell's closing tag, so every column after it shifted left and `Lot No.` read the acknowledgement date. Covered by a test asserting the raw row-2 cells.
+
 ## 2026-08-15 - Broker Rate Card Read From The Sellers Contract
 
 - No schema change. `packages/api/src/auction/parse-contract-rates.ts` reads the broker's deduction rate card off the Account Sales block of a Tea Sellers Contract, and `ParsedContract` now carries a `rates` object. The contract is the source of truth for what a broker charges.

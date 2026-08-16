@@ -31,6 +31,7 @@ type DispatchRow = {
   sale_date: string | null;
   prompt_date: string | null;
   status: string;
+  entry_source: string | null;
   brokers: { name: string } | null;
 };
 
@@ -146,7 +147,7 @@ export default async function SaleDetailPage({
 
   const { data: allDispatches, error: dispatchesError } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, brokers(name)")
+    .select("id, broker_id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, entry_source, brokers(name)")
     .eq("sale_kind", "dispatch")
     .order("dispatch_date", { ascending: false });
   if (dispatchesError) throw new Error(`Could not load auction sale dispatches: ${dispatchesError.message}`);
@@ -401,6 +402,7 @@ export default async function SaleDetailPage({
       reprintLots: dispatchLots.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length,
       statusLabel: state.label,
       statusStyle: state.style,
+      entrySource: dispatch.entry_source,
     };
   });
 

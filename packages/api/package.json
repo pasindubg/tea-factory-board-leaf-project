@@ -20,10 +20,12 @@
     "test:bank": "tsx src/auction/match-bank.test.ts",
     "test:invoice-key": "tsx src/auction/invoice-key.test.ts",
     "test:broker-format": "tsx src/auction/broker-format.test.ts",
-    "test:contract-rates": "tsx src/auction/parse-contract-rates.test.ts"
+    "test:contract-rates": "tsx src/auction/parse-contract-rates.test.ts",
+    "test:dispatch-sheet": "tsx src/auction/parse-dispatch-sheet.test.ts"
   },
   "dependencies": {
-    "@tea/db": "workspace:*"
+    "@tea/db": "workspace:*",
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
