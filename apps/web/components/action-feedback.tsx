@@ -28,8 +28,13 @@ export function showAppToast(
  */
 const TOAST_DURATION_MS = 4000;
 
-/** How long the page may stay locked with no completion signal at all. */
-const MAX_BLOCK_MS = 12000;
+/**
+ * How long the page may stay locked with no completion signal at all. Long
+ * enough that real work — an import walking hundreds of rows — finishes inside
+ * it, since the lock expiring early is exactly the bug it would reintroduce.
+ * Escape lifts it by hand, so a genuinely stuck lock is not a dead end.
+ */
+const MAX_BLOCK_MS = 60000;
 
 /**
  * True for controls that only rearrange what is already on screen — a
@@ -159,11 +164,19 @@ export function ActionFeedback() {
       clearPendingControls();
     };
 
+    // The way out when a click starts work that never reports back. Without it
+    // the only remedy for a mislocked page is waiting out MAX_BLOCK_MS.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearPendingControls();
+    };
+
     document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown);
     window.addEventListener("dashboard:navigation-start", onNavigationStart);
     window.addEventListener("dashboard:toast", onToast);
     return () => {
       document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("dashboard:navigation-start", onNavigationStart);
       window.removeEventListener("dashboard:toast", onToast);
     };
@@ -175,12 +188,12 @@ export function ActionFeedback() {
           (z-150) it must also cover, and below the toast, which is raised to
           160 so the result of the very action being waited on stays readable
           and its follow-up link stays reachable. */}
-      {blocking && (
-        <div
-          aria-hidden="true"
-          className="fixed inset-0 z-[155] cursor-progress bg-stone-950/10 backdrop-blur-[1px] transition-opacity dark:bg-stone-950/30"
-        />
-      )}
+      <div
+        aria-hidden="true"
+        className={`fixed inset-0 z-[155] bg-stone-500/10 transition-opacity duration-200 ${
+          blocking ? "cursor-progress opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      />
       {feedback && (
     <div
       role={feedback.tone === "error" ? "alert" : "status"}
