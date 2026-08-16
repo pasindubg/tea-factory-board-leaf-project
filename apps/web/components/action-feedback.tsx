@@ -36,6 +36,9 @@ const TOAST_DURATION_MS = 4000;
  */
 const MAX_BLOCK_MS = 60000;
 
+/** A click on something that starts no work still deserves a visible flash. */
+const ACKNOWLEDGE_MS = 1400;
+
 /**
  * True for controls that only rearrange what is already on screen — a
  * disclosure, a menu, a popover trigger. They start no work, so nothing would
@@ -95,7 +98,7 @@ export function ActionFeedback() {
   }, [stopBlocking]);
 
   const markControlPending = useCallback(
-    (control: Element, navigation = false) => {
+    (control: Element) => {
     if (!(control instanceof HTMLElement)) return;
     const existing = pendingControlTimers.current.get(control);
     if (existing) window.clearTimeout(existing);
@@ -108,25 +111,24 @@ export function ActionFeedback() {
     if (!rearrangesUiOnly(control)) {
       setBlocking(true);
       if (blockTimer.current) window.clearTimeout(blockTimer.current);
-      // Capped independently of, and far below, the dim's backstop. A stale dim
-      // is cosmetic; a stale lock is the application appearing frozen, so it is
-      // the one that has to give up early if no completion signal ever arrives.
+      // Its own timer, but the same duration as the dim's: the two have to end
+      // together or the page reads as finished while it is still held.
       blockTimer.current = window.setTimeout(stopBlocking, MAX_BLOCK_MS);
     }
 
     // A backstop, not the ordinary way out. The dim is cleared for real by the
-    // route changing or by a toast reporting the result; this only exists so a
-    // click that settles silently — a modal opening, an action that neither
-    // navigates nor reports — cannot leave a control dim forever.
+    // route changing, by a toast reporting the result, or by Escape; this only
+    // exists so a click that settles silently cannot dim a control forever.
     //
-    // It used to be 9s / 1.4s, short enough that ordinary work outlived it. The
-    // dim then cleared while the page was still loading, which reads as
-    // "finished" when nothing had finished — worse than no feedback, because it
-    // invites a second click on work already in flight.
+    // It runs as long as the lock, because they answer the same question and
+    // any gap between them shows the dim clearing while the page is still held
+    // — the false "finished" this keeps having to be pulled back from. The one
+    // exception is a control that merely rearranges the screen: it starts no
+    // work, so its dim is only an acknowledgement of the click and ends quickly.
     const timer = window.setTimeout(() => {
       control.removeAttribute("data-action-pending");
       pendingControlTimers.current.delete(control);
-    }, navigation ? 30000 : 8000);
+    }, rearrangesUiOnly(control) ? ACKNOWLEDGE_MS : MAX_BLOCK_MS);
     pendingControlTimers.current.set(control, timer);
     },
     [stopBlocking],
@@ -144,12 +146,12 @@ export function ActionFeedback() {
       const control = target?.closest("a[href],button,[role='button'],summary");
       if (!control || (control as HTMLButtonElement).disabled || control.getAttribute("aria-disabled") === "true") return;
       if (control.closest("[data-action-feedback-ignore]")) return;
-      markControlPending(control, control.matches("a[href]"));
+      markControlPending(control);
     };
 
     const onNavigationStart = (event: Event) => {
       const trigger = (event as CustomEvent<{ trigger?: Element }>).detail?.trigger;
-      if (trigger) markControlPending(trigger, true);
+      if (trigger) markControlPending(trigger);
     };
     const onToast = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string; tone?: "success" | "error"; action?: ToastAction }>).detail;
@@ -190,7 +192,7 @@ export function ActionFeedback() {
           and its follow-up link stays reachable. */}
       <div
         aria-hidden="true"
-        className={`fixed inset-0 z-[155] bg-stone-500/10 transition-opacity duration-200 ${
+        className={`action-lock-cover fixed inset-0 z-[155] transition-opacity duration-200 ${
           blocking ? "cursor-progress opacity-100" : "pointer-events-none opacity-0"
         }`}
       />

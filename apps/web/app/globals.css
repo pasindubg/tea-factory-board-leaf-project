@@ -169,21 +169,32 @@ body {
 }
 
 /* The action itself is the loading indicator. The clicked/previous destination
-   dims slowly until the destination route settles. */
+   dims slowly until the destination route settles.
+
+   Built from the palette's own tokens rather than fixed greys. The old values
+   were neutral (#d1d5db / #374151) and read as foreign against a surface that
+   is green all the way through — #374151 is a BLUE-grey sitting on #10140e.
+   Because the tokens already swap with the theme, one rule now covers both and
+   the .dark override is gone. */
 .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
   background-image: none !important;
-  background-color: #d1d5db !important;
-  border-color: #9ca3af !important;
-  color: #4b5563 !important;
+  background-color: var(--md-surface-container-high) !important;
+  border-color: var(--md-outline-variant) !important;
+  color: var(--md-on-surface-variant) !important;
   box-shadow: none !important;
   animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
-.dark .dashboard-app :where(a, button, [role="button"])[data-action-pending="true"] {
-  background-image: none !important;
-  background-color: #374151 !important;
-  border-color: #4b5563 !important;
-  color: #9ca3af !important;
+/* The click lock's cover. Tinted from the theme rather than a neutral grey for
+   the same reason. Light mode darkens with the on-surface green; dark mode
+   deepens with the surface green, which is what keeps it from looking like a
+   grey slab dropped on top. */
+.action-lock-cover {
+  background: color-mix(in srgb, var(--md-on-surface) 7%, transparent);
+}
+
+.dark .action-lock-cover {
+  background: color-mix(in srgb, var(--md-surface) 55%, transparent);
 }
 .dashboard-content input[type="radio"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--md-primary) 42%, transparent);
