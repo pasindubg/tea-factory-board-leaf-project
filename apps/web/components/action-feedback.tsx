@@ -69,10 +69,19 @@ export function ActionFeedback() {
     const existing = pendingControlTimers.current.get(control);
     if (existing) window.clearTimeout(existing);
     control.setAttribute("data-action-pending", "true");
+    // A backstop, not the ordinary way out. The dim is cleared for real by the
+    // route changing or by a toast reporting the result; this only exists so a
+    // click that settles silently — a modal opening, an action that neither
+    // navigates nor reports — cannot leave a control dim forever.
+    //
+    // It used to be 9s / 1.4s, short enough that ordinary work outlived it. The
+    // dim then cleared while the page was still loading, which reads as
+    // "finished" when nothing had finished — worse than no feedback, because it
+    // invites a second click on work already in flight.
     const timer = window.setTimeout(() => {
       control.removeAttribute("data-action-pending");
       pendingControlTimers.current.delete(control);
-    }, navigation ? 9000 : 1400);
+    }, navigation ? 30000 : 8000);
     pendingControlTimers.current.set(control, timer);
   }, []);
 
@@ -101,6 +110,11 @@ export function ActionFeedback() {
       setFeedback({ message: detail.message, tone: detail.tone ?? "success", action: detail.action });
       // A toast offering a follow-up gets longer to read and reach for.
       startClearTimer(detail.action ? TOAST_DURATION_MS * 3 : TOAST_DURATION_MS);
+      // The action reported its result, so whatever was clicked to start it is
+      // done. This is the completion signal for work that stays on the page —
+      // a route change never comes, and without this the dim sat there until
+      // the backstop expired.
+      clearPendingControls();
     };
 
     document.addEventListener("click", onClick, true);
@@ -111,7 +125,7 @@ export function ActionFeedback() {
       window.removeEventListener("dashboard:navigation-start", onNavigationStart);
       window.removeEventListener("dashboard:toast", onToast);
     };
-  }, [markControlPending, startClearTimer]);
+  }, [markControlPending, startClearTimer, clearPendingControls]);
 
   if (!feedback) return null;
   return (
