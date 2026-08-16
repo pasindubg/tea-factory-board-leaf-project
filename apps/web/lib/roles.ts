@@ -19,8 +19,10 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
 
-export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "Index Cycle Management" | "User Handling";
-export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "Index Cycle Management", "User Handling"];
+export type ModuleGroup = "Leaf Handling" | "Sales Handling" | "Dispatch Handling" | "Index Cycle Management" | "User Handling" | "BLM Cloud";
+// BLM Cloud sits last: it is platform-level operations (background jobs and,
+// later, other cloud tooling) rather than a step in the factory's work.
+export const MODULE_GROUP_ORDER: readonly ModuleGroup[] = ["Leaf Handling", "Sales Handling", "Dispatch Handling", "Index Cycle Management", "User Handling", "BLM Cloud"];
 
 export type ModuleDef = {
   key: string;
@@ -56,6 +58,9 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "auction-dispatch-detail", href: "/dashboard/auction/new", label: "Broker Invoice Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-bundled-dispatch-details", href: "/dashboard/auction/dispatches/details", label: "Dispatch Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
   { key: "auction-warehouses", href: "/dashboard/auction/warehouses", label: "Warehouse Basic Data", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Dispatch Handling" },
+  { key: "background-jobs", href: "/dashboard/blm-cloud/background-jobs", label: "Background jobs", roles: ["owner", "manager"], entitlement: "leaf-handling", group: "BLM Cloud" },
+  // Owner only: it deletes every auction transaction the factory has recorded.
+  { key: "auction-data", href: "/dashboard/blm-cloud/auction-data", label: "Auction data reset & import", roles: ["owner"], entitlement: "auction", group: "BLM Cloud" },
   { key: "users", href: "/dashboard/user-handling/users", label: "Users", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
   { key: "roles", href: "/dashboard/user-handling/roles", label: "Roles & permissions", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
 ];
@@ -80,9 +85,10 @@ const page = (key: string, label: string, href: string, group: PageDef["group"],
 export const PAGE_DEFINITIONS: readonly PageDef[] = [
   page("overview", "Overview", "/dashboard", "Personal", "overview", ["owner", "manager", "supervisor", "accountant"]),
   page("personal-settings", "My settings", "/dashboard/settings", "Personal", "personal-settings", ALL_WEB_ROLES),
+  page("background-jobs", "Background jobs", "/dashboard/blm-cloud/background-jobs", "BLM Cloud", "background-jobs", ["owner", "manager"]),
+  page("auction-data", "Auction data reset & import", "/dashboard/blm-cloud/auction-data", "BLM Cloud", "auction-data", ["owner"]),
   // Go-live tooling: wipes auction transactions and loads the factory's
   // historic dispatch book. Owner only — it is destructive and one-off.
-  page("settings-auction-data", "Auction data reset & import", "/dashboard/settings/auction-data", "Personal", "personal-settings", ["owner"]),
   page("weighings", "Weighings", "/dashboard/weighings", "Leaf Handling", "weighings", ALL_WEB_ROLES),
   page("weighings-new", "New weighing", "/dashboard/weighings/new", "Leaf Handling", "weighings", ALL_WEB_ROLES),
   page("suppliers", "Suppliers", "/dashboard/suppliers", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor", "accountant"]),

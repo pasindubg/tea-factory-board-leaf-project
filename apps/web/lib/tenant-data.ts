@@ -7,6 +7,7 @@ type FromBuilder = ReturnType<Supabase["from"]>;
 const FACTORY_SCOPED_TABLES = new Set([
   "auction_audit",
   "auction_bundled_dispatch_invoices",
+  "BACKGROUND_JOB_RUNS",
   "auction_bundled_dispatches",
   "auction_grade_aliases",
   "auction_grades",

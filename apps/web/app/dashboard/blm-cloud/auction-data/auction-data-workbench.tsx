@@ -1,31 +1,37 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { resetAuctionData, type ResetEntityCount } from "./_actions/reset";
-import { importDispatchSheet, type AuctionImportResult, type ImportRowOutcome } from "./_actions/import";
+import { importDispatchSheet } from "./_actions/import";
+import { announceJobStarted, BackgroundJobProgress, useJobRun } from "@/components/background-job-progress";
+import type { JobRunState } from "@/lib/background-jobs";
+
+/** This page's job in the background-job framework. */
+const JOB_KEY = "auction.dispatch-import" as const;
 
 const card = "rounded-lg border border-stone-200 bg-white p-5 dark:border-stone-700 dark:bg-stone-900";
 const heading = "text-base font-semibold text-stone-800 dark:text-stone-100";
 const muted = "mt-1 text-sm text-stone-500 dark:text-stone-400";
 const input = "mt-1 w-full max-w-sm rounded-md border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800";
 
-const STATUS_STYLE: Record<ImportRowOutcome["status"], string> = {
-  imported: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-  reprint: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-  skipped: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400",
-  failed: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-};
-
 /**
  * The two stages are separate on purpose and in order: nothing about the
  * import removes data, and nothing about the reset adds any. Running one does
  * not commit the operator to the other.
  */
-export function AuctionDataWorkbench({ entities, total }: { entities: ResetEntityCount[]; total: number }) {
+export function AuctionDataWorkbench({
+  entities,
+  total,
+  initialRun,
+}: {
+  entities: ResetEntityCount[];
+  total: number;
+  initialRun: JobRunState | null;
+}) {
   return (
     <div className="space-y-6">
       <ResetStage entities={entities} total={total} />
-      <ImportStage />
+      <ImportStage initialRun={initialRun} />
     </div>
   );
 }
@@ -111,14 +117,15 @@ function ResetStage({ entities, total }: { entities: ResetEntityCount[]; total: 
   );
 }
 
-function ImportStage() {
-  const [result, setResult] = useState<AuctionImportResult | null>(null);
+/**
+ * The job's own start form; everything after it — progress bar, tallies, the
+ * per-row report — is the shared BackgroundJobProgress surface, so a new
+ * background job needs only its form and a job definition.
+ */
+function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
+  const { run, refresh, running } = useJobRun(JOB_KEY, initialRun);
+  const [startError, setStartError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [showAll, setShowAll] = useState(false);
-
-  const outcomes = result?.ok ? result.outcomes : [];
-  const problems = outcomes.filter((row) => row.status === "failed" || row.status === "skipped");
-  const shown = showAll ? outcomes : problems;
 
   return (
     <section className={card}>
@@ -131,89 +138,40 @@ function ImportStage() {
 
       <form
         className="mt-4"
-        action={(formData) => startTransition(async () => setResult(await importDispatchSheet(formData)))}
+        action={(formData) => startTransition(async () => {
+          setStartError(null);
+          // Poll while our own request is in flight too, so the bar moves for
+          // the tab that started it exactly as it does for any other.
+          const ticker = setInterval(() => { void refresh(); }, 2000);
+          const result = await importDispatchSheet(formData);
+          clearInterval(ticker);
+          if (!result.ok) setStartError(result.error);
+          else announceJobStarted(result.runId);
+          await refresh();
+        })}
       >
         <input
           type="file"
           name="file"
           required
+          disabled={running || pending}
           accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          className="block max-w-md text-sm text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-stone-200 file:px-3 file:py-2 file:text-sm file:font-medium dark:text-stone-300 dark:file:bg-stone-700"
+          className="block max-w-md text-sm text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-stone-200 file:px-3 file:py-2 file:text-sm file:font-medium disabled:opacity-50 dark:text-stone-300 dark:file:bg-stone-700"
         />
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || running}
           className="mt-3 rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
         >
-          {pending ? "Importing…" : "Parse and import"}
+          {running ? "Import in progress…" : pending ? "Importing…" : "Parse and import"}
         </button>
       </form>
 
-      {result && !result.ok && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">
-          {result.error}
-        </p>
+      {startError && (
+        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">{startError}</p>
       )}
 
-      {result?.ok && (
-        <div className="mt-4 space-y-3">
-          <div className="flex flex-wrap gap-2 text-sm">
-            <Chip label="Imported" count={result.imported} style={STATUS_STYLE.imported} />
-            <Chip label="Re-prints registered" count={result.reprints} style={STATUS_STYLE.reprint} />
-            <Chip label="Skipped" count={result.skipped} style={STATUS_STYLE.skipped} />
-            <Chip label="Failed" count={result.failed} style={STATUS_STYLE.failed} />
-          </div>
-          {(result.gradesAdded.length > 0 || result.aliasesAdded.length > 0) && (
-            <div className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:bg-sky-950 dark:text-sky-300">
-              {result.aliasesAdded.length > 0 && <p>Grade aliases added: {result.aliasesAdded.join(", ")}</p>}
-              {result.gradesAdded.length > 0 && <p>New active grades created: {result.gradesAdded.join(", ")}</p>}
-            </div>
-          )}
-          <div className="flex items-center gap-3">
-            <p className="text-sm font-medium text-stone-800 dark:text-stone-100">
-              {showAll ? `All ${outcomes.length} rows` : `${problems.length} rows needing attention`}
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowAll((value) => !value)}
-              className="text-sm text-green-700 hover:underline dark:text-green-400"
-            >
-              {showAll ? "Show only problems" : "Show every row"}
-            </button>
-          </div>
-          <div className="max-h-96 overflow-auto rounded-md border border-stone-200 dark:border-stone-700">
-            <table className="w-full text-left text-sm">
-              <thead className="sticky top-0 bg-stone-100 dark:bg-stone-800">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Sheet row</th>
-                  <th className="px-3 py-2 font-medium">Invoice</th>
-                  <th className="px-3 py-2 font-medium">Result</th>
-                  <th className="px-3 py-2 font-medium">Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((row) => (
-                  <tr key={`${row.sheetRow}-${row.invoiceNo}`} className="border-t border-stone-100 dark:border-stone-800">
-                    <td className="px-3 py-1.5 tabular-nums text-stone-500 dark:text-stone-400">{row.sheetRow}</td>
-                    <td className="px-3 py-1.5 font-medium">{row.invoiceNo}</td>
-                    <td className="px-3 py-1.5">
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[row.status]}`}>{row.status}</span>
-                    </td>
-                    <td className="px-3 py-1.5 text-stone-600 dark:text-stone-300">{row.detail}</td>
-                  </tr>
-                ))}
-                {shown.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-3 text-stone-500 dark:text-stone-400">Every row imported cleanly.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <BackgroundJobProgress jobKey={JOB_KEY} run={run} emptyMessage="No import has been run yet." />
     </section>
   );
-}
-
-function Chip({ label, count, style }: { label: string; count: number; style: string }) {
-  return <span className={`rounded-full px-3 py-1 ${style}`}>{label}: <strong>{count}</strong></span>;
 }

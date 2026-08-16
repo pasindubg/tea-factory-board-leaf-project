@@ -1,6 +1,7 @@
 import "server-only";
 
 import { invoiceMatchKey } from "@tea/api";
+import { JOB_DEFINITIONS, JOB_STATE_CHIPS, isJobKey, type JobKey, type JobRunStatus } from "@/lib/background-jobs";
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
@@ -299,6 +300,85 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           lockedAdvancedQuery: state.lockedAdvancedQuery,
           canManageLocks: state.canManageLocks,
         }],
+      };
+    },
+  },
+  /**
+   * Every background job run for this factory, newest first.
+   *
+   * Framework-level, not module-level: the runs table is shared by every job,
+   * and its `job_key` is resolved through JOB_DEFINITIONS for the title and
+   * unit names. A key with no definition (an older run of a job since removed)
+   * still lists, under its raw key, rather than vanishing.
+   */
+  "framework.background-jobs": {
+    moduleKey: "background-jobs",
+    parse: parseNoParams,
+    search: {
+      columns: {
+        jobKey: { column: "job_key", mode: "contains" },
+        label: { column: "label", mode: "contains" },
+      },
+      // Derived from status + heartbeat, and from the metrics json.
+      computed: ["stateLabel", "progressLabel", "summary", "startedBy", "durationLabel"],
+    },
+    async load({ supabase, profile }, _params, search) {
+      const { data, error } = await search.apply(
+        supabase
+          .from("BACKGROUND_JOB_RUNS")
+          .select("id, job_key, label, status, total_units, processed_units, metrics, error, started_at, updated_at, finished_at, users(name)")
+          .eq("factory_id", profile.factory_id),
+      ).order("started_at", { ascending: false }).limit(200);
+      if (error) return { ok: false, error: friendlyError(error) };
+
+      const STALE_AFTER_MS = 2 * 60 * 1000;
+      return {
+        ok: true,
+        rows: ((data ?? []) as unknown as {
+          id: string; job_key: string; label: string | null; status: string;
+          total_units: number; processed_units: number; metrics: Record<string, number> | null;
+          error: string | null; started_at: string | null; updated_at: string | null; finished_at: string | null;
+          users: { name: string } | null;
+        }[]).map((run) => {
+          // A run claiming to be running whose heartbeat stopped was
+          // interrupted — the action that owned it is gone.
+          const stale = run.status === "running" && Date.now() - new Date(run.updated_at ?? 0).getTime() > STALE_AFTER_MS;
+          const state = (stale ? "interrupted" : run.status) as JobRunStatus;
+          const chip = JOB_STATE_CHIPS[state] ?? JOB_STATE_CHIPS.failed;
+          const definition = isJobKey(run.job_key) ? JOB_DEFINITIONS[run.job_key as JobKey] : null;
+          const total = Number(run.total_units ?? 0);
+          const processed = Number(run.processed_units ?? 0);
+          const unit = definition ? (total === 1 ? definition.unit.one : definition.unit.many) : "units";
+          const metrics = run.metrics ?? {};
+          const finished = run.finished_at ?? (state === "interrupted" ? run.updated_at : null);
+          const elapsedMs = run.started_at && finished
+            ? new Date(finished).getTime() - new Date(run.started_at).getTime()
+            : null;
+          return {
+            id: run.id,
+            jobKey: run.job_key,
+            jobTitle: definition?.title ?? run.job_key,
+            label: run.label,
+            stateLabel: chip.label,
+            stateStyle: chip.style,
+            percent: total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0,
+            progressLabel: total > 0 ? `${processed} / ${total} ${unit}` : "—",
+            totalUnits: total,
+            processedUnits: processed,
+            startedBy: run.users?.name ?? null,
+            startedAt: run.started_at,
+            finishedAt: run.finished_at,
+            durationLabel: elapsedMs == null
+              ? "—"
+              : elapsedMs < 60000
+                ? `${Math.max(1, Math.round(elapsedMs / 1000))}s`
+                : `${Math.floor(elapsedMs / 60000)}m ${Math.round((elapsedMs % 60000) / 1000)}s`,
+            // The job's own tallies, flattened so the list stays generic.
+            summary: Object.entries(metrics).filter(([, value]) => Number(value) > 0)
+              .map(([key, value]) => `${key}: ${value}`).join(" · ") || "—",
+            error: run.error,
+          };
+        }),
       };
     },
   },
