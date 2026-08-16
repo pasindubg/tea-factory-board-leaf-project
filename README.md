@@ -21,7 +21,7 @@ app for the whole factory — owners and managers get daily intake, supplier
 management, automatic monthly payment calculation, and production tracking
 (out-turn % and grades, which expose watered/poor leaf per supplier); the
 weighing desk at the factory gate gets a restricted weighing-entry interface.
-Sold per-factory at LKR 5,000–15,000/month. A mobile *field* app for estate
+A mobile *field* app for estate
 owners and suppliers comes with Phase 2. Full domain and persona detail:
 **[docs/PRODUCT.md](docs/PRODUCT.md)**.
 
