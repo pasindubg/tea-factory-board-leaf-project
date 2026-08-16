@@ -1,0 +1,59 @@
+name: Release — deploy blm-cloud-release
+
+# Builds whatever blm-cloud-release currently points at, on demand.
+#
+# This exists because a push to the release branch does not reliably produce a
+# deployment. A commit reaches main first, where the ignoreCommand in
+# apps/web/vercel.json tells Vercel to skip it; when the same commit is then
+# fast-forwarded onto blm-cloud-release, Vercel can treat that SHA as already
+# handled and create nothing. Production then sits on an older build while both
+# branches look correct — which is exactly what happened to #55 and #56.
+#
+# A deploy hook is immune to that: it builds the BRANCH TIP, whatever its SHA
+# has been through. It is also the only manual trigger that does the right
+# thing — the dashboard's Redeploy rebuilds that deployment's own pinned
+# commit, which is how an eight-commit-old build came to be promoted.
+#
+# The hook URL is a credential: anyone who has it can deploy. It lives only in
+# the VERCEL_DEPLOY_HOOK_URL secret, never in this file, and GitHub masks it in
+# the logs. Rotate it in Vercel if it is ever exposed.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Trigger Vercel production build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Show what will be built
+        run: |
+          echo "Branch tip Vercel will build: ${{ github.sha }}"
+          echo "(this workflow must be dispatched against blm-cloud-release)"
+
+      - name: Call the deploy hook
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          set -e
+          if [ -z "$HOOK" ]; then
+            echo "VERCEL_DEPLOY_HOOK_URL is not set."
+            echo "Vercel > the PROJECT > Settings > Git > Deploy Hooks, branch"
+            echo "blm-cloud-release, then add the URL as an Actions secret."
+            exit 1
+          fi
+
+          # --fail-with-body so a rejected hook prints Vercel's reason rather
+          # than an exit code on its own. The URL is never echoed.
+          response=$(curl --fail-with-body -sS -X POST "$HOOK")
+          echo "$response"
+
+          # The hook returns immediately with a job id; the build itself runs on
+          # Vercel. Watch it there — this step only reports that it was accepted.
+          echo
+          echo "Deployment queued. Follow it in the Vercel dashboard."
