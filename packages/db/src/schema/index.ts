@@ -31,6 +31,7 @@ export * from "./auction-warehouses";
 export * from "./broker-grade-thresholds";
 export * from "./auction-sales";
 export * from "./auction-bundled-dispatches";
+export * from "./background-job-runs";
 export * from "./auction-lots";
 export * from "./lot-invoices";
 export * from "./auction-audit";

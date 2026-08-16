@@ -6,6 +6,7 @@ import type { ListResourceKey } from "@/lib/list-resources";
  */
 export const ENTITY_LIST_METADATA: Record<ListResourceKey, { title: string; description: string }> = {
   "framework.search-state": { title: "Search state", description: "Internal: a list instance's saved and locked search criteria." },
+  "framework.background-jobs": { title: "Background jobs", description: "Every long-running job this factory has started, with its progress and outcome." },
   "auction.brokers": { title: "Brokers", description: "Broker contacts available to this factory." },
   "auction.marks": { title: "Selling marks", description: "Factory selling marks used on broker invoices." },
   "auction.broker-rates": { title: "Broker rate cards", description: "Effective-dated deductions used for settlement calculations." },

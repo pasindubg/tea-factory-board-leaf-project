@@ -95,6 +95,6 @@ export async function resetAuctionData(formData: FormData): Promise<AuctionReset
   }
 
   revalidatePath("/dashboard/auction");
-  revalidatePath("/dashboard/settings/auction-data");
+  revalidatePath("/dashboard/blm-cloud/auction-data");
   return { ok: true, deleted, total: deleted.reduce((sum, entity) => sum + entity.count, 0) };
 }

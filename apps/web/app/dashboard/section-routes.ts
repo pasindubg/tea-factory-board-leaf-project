@@ -6,6 +6,7 @@ const SECTION_SLUGS: Record<ModuleGroup, string> = {
   "Dispatch Handling": "dispatch-handling",
   "Index Cycle Management": "index-cycle-management",
   "User Handling": "user-handling",
+  "BLM Cloud": "blm-cloud",
 };
 
 export function sectionSlugForGroup(group: ModuleGroup) {

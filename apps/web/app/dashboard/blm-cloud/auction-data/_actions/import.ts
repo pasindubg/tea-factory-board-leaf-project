@@ -10,6 +10,8 @@ import {
 } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
+import type { JobRunItem } from "@/lib/background-jobs";
+import { finishJobRun, jobIsRunning, startJobRun, updateJobProgress } from "@/lib/background-jobs-server";
 import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 import { colomboToday } from "@/app/dashboard/auction/_actions/_shared";
@@ -30,25 +32,14 @@ import { colomboToday } from "@/app/dashboard/auction/_actions/_shared";
  * error message.
  */
 
-export type ImportRowOutcome = {
-  sheetRow: number;
-  invoiceNo: string;
-  status: "imported" | "reprint" | "skipped" | "failed";
-  detail: string;
-};
+/** This job's identity in the background-job framework. */
+const JOB_KEY = "auction.dispatch-import" as const;
 
-export type AuctionImportResult =
-  | {
-      ok: true;
-      imported: number;
-      reprints: number;
-      skipped: number;
-      failed: number;
-      gradesAdded: string[];
-      aliasesAdded: string[];
-      outcomes: ImportRowOutcome[];
-    }
-  | { ok: false; error: string };
+/** A sheet row's outcome, in the framework's generic item shape: the sheet row
+ * number is the ref, the invoice number is the record. */
+type ImportRowOutcome = JobRunItem;
+
+export type AuctionImportResult = { ok: true; runId: string } | { ok: false; error: string };
 
 /**
  * Spellings in the book that mean a grade the factory already has. These are
@@ -218,6 +209,9 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
   if (!(file instanceof File) || file.size === 0) {
     return { ok: false, error: "Choose the Dispatch Schedule .xlsx file to upload." };
   }
+  if (await jobIsRunning(supabase, profile.factory_id, JOB_KEY)) {
+    return { ok: false, error: "An import is already running. Wait for it to finish before starting another." };
+  }
   const sheet = readSheet(new Uint8Array(await file.arrayBuffer()), DISPATCH_SHEET_NAME);
   if (!sheet.ok) return { ok: false, error: sheet.error };
 
@@ -242,21 +236,54 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
 
   const cutoverDate = colomboToday();
   const outcomes: ImportRowOutcome[] = parsed.skipped.map((row) => ({
-    sheetRow: row.sheetRow,
-    invoiceNo: row.invoiceNo ?? "—",
-    status: "skipped" as const,
+    ref: String(row.sheetRow),
+    label: row.invoiceNo ?? "—",
+    status: "skipped",
     detail: row.reason,
   }));
+
+  // Opened BEFORE the first invoice is written. This action keeps running
+  // after the tab that started it is refreshed or closed, so progress has to
+  // live somewhere any tab can read — see lib/background-jobs-server.ts.
+  const notes = [
+    ...(grades.aliasesAdded.length > 0 ? [`Grade aliases added: ${grades.aliasesAdded.join(", ")}`] : []),
+    ...(grades.gradesAdded.length > 0 ? [`New active grades created: ${grades.gradesAdded.join(", ")}`] : []),
+  ];
+  const started = await startJobRun(supabase, profile.factory_id, {
+    jobKey: JOB_KEY,
+    startedBy: profile.id,
+    label: file.name,
+    totalUnits: parsed.rows.length,
+    notes,
+  });
+  if (!started.ok) return { ok: false, error: started.error };
+  const handle = started.handle;
+
+  const count = (status: string) => outcomes.filter((row) => row.status === status).length;
+  const tallies = () => ({
+    imported: count("imported"),
+    reprints: count("reprint"),
+    skipped: count("skipped"),
+    failed: count("failed"),
+  });
+  // Written every few rows rather than every row: the operator needs a bar
+  // that moves, not a database write per invoice.
+  const PROGRESS_EVERY = 5;
 
   // Applied in sheet order. A re-print's chain depends on its earlier lot
   // existing first, and broker invoices group by dispatch date, so order is
   // part of the behaviour being exercised — these cannot run in parallel.
+  let processed = 0;
   for (const row of parsed.rows) {
+    processed += 1;
     const brokerId = brokerIdByName.get(normalizeSpelling(row.brokerName));
     const markId = markIdByCode.get(normalizeSpelling(row.markCode));
-    const record = (status: ImportRowOutcome["status"], detail: string) =>
-      outcomes.push({ sheetRow: row.sheetRow, invoiceNo: formatFourDigitNo(row.invoiceNo), status, detail });
+    const record = (status: string, detail: string) =>
+      outcomes.push({ ref: String(row.sheetRow), label: formatFourDigitNo(row.invoiceNo), status, detail });
 
+    if (processed % PROGRESS_EVERY === 0) {
+      await updateJobProgress(supabase, profile.factory_id, handle, { processedUnits: processed, metrics: tallies() });
+    }
     if (!brokerId) { record("failed", `Broker "${row.brokerName}" is not registered.`); continue; }
     if (!markId) { record("failed", `Selling mark "${row.markCode}" is not registered.`); continue; }
 
@@ -294,17 +321,16 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
     record("imported", result.notice ?? "Invoice created.");
   }
 
+  const sorted = outcomes.sort((a, b) => Number(a.ref) - Number(b.ref));
+  await finishJobRun(supabase, profile.factory_id, handle, {
+    status: "completed",
+    processedUnits: parsed.rows.length,
+    metrics: tallies(),
+    notes,
+    items: sorted,
+  });
+
   revalidatePath("/dashboard/auction");
-  revalidatePath("/dashboard/settings/auction-data");
-  const count = (status: ImportRowOutcome["status"]) => outcomes.filter((row) => row.status === status).length;
-  return {
-    ok: true,
-    imported: count("imported"),
-    reprints: count("reprint"),
-    skipped: count("skipped"),
-    failed: count("failed"),
-    gradesAdded: grades.gradesAdded,
-    aliasesAdded: grades.aliasesAdded,
-    outcomes: outcomes.sort((a, b) => a.sheetRow - b.sheetRow),
-  };
+  revalidatePath("/dashboard/blm-cloud/auction-data");
+  return { ok: true, runId: handle.runId };
 }

@@ -270,6 +270,27 @@ export type AuctionReprintOverviewListRow = {
   reprintCount: number;
 };
 
+/** One background job run, for the BLM Cloud overview. */
+export type BackgroundJobListRow = {
+  id: string;
+  jobKey: string;
+  jobTitle: string;
+  label: string | null;
+  /** `In progress` | `Completed` | `Error` | `Interrupted` — the display state. */
+  stateLabel: string;
+  stateStyle: string;
+  progressLabel: string;
+  percent: number;
+  totalUnits: number;
+  processedUnits: number;
+  startedBy: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationLabel: string;
+  summary: string;
+  error: string | null;
+};
+
 export type SupplierListRow = {
   id: string;
   name: string;
@@ -442,6 +463,7 @@ export type ListResourceContracts = {
   "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
   "auction.documents-side-list": { params: undefined; row: AuctionDocumentSideListRow };
   "auction.eligible-broker-invoices": { params: undefined; row: AuctionEligibleBrokerInvoiceListRow };
+  "framework.background-jobs": { params: undefined; row: BackgroundJobListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
   "leaf.collectors": { params: undefined; row: CollectorListRow };
   "communications.sent-messages": { params: undefined; row: SentMessageListRow };
@@ -495,6 +517,7 @@ export const LIST_RESOURCE_KEYS = [
   "users.staff-directory",
   "leaf.weighings",
   "framework.search-state",
+  "framework.background-jobs",
 ] as const satisfies readonly (keyof ListResourceContracts)[];
 
 /**
