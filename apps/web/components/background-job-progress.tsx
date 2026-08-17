@@ -59,15 +59,19 @@ export function useJobRun(jobKey: JobKey, initialRun: JobRunState | null) {
     if (result.ok) setRun(result.run);
   }, [jobKey]);
 
-  // Polls only while something is actually running, so an idle page makes no
-  // requests at all.
+  // Polls only while something is actually in flight, so an idle page makes no
+  // requests at all. `queued` counts: a run is queued for the moment between
+  // the upload returning and the worker claiming it, and a page that would not
+  // poll until it was already running showed a frozen 0% through exactly the
+  // stretch the operator is watching hardest.
+  const busy = run?.status === "queued" || run?.status === "running";
   useEffect(() => {
-    if (run?.status !== "running") return;
+    if (!busy) return;
     const timer = setInterval(() => { void refresh(); }, POLL_MS);
     return () => clearInterval(timer);
-  }, [run?.status, refresh]);
+  }, [busy, refresh]);
 
-  return { run, setRun, refresh, running: run?.status === "running" };
+  return { run, setRun, refresh, running: busy };
 }
 
 export function BackgroundJobProgress({
@@ -85,7 +89,7 @@ export function BackgroundJobProgress({
   if (!run) return <p className="mt-4 text-sm text-stone-500 dark:text-stone-400">{emptyMessage}</p>;
 
   const percent = jobProgressPercent(run);
-  const inFlight = run.status === "running";
+  const inFlight = run.status === "running" || run.status === "queued";
   const interrupted = run.status === "interrupted";
   const attention = new Set(definition.attentionStatuses);
   const problems = run.items.filter((item) => attention.has(item.status));

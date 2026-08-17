@@ -257,13 +257,14 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
     label: file.name,
     totalUnits: parsed.rows.length,
     notes,
-    // Skipped rows are known before any work starts, so they are recorded now
-    // rather than replayed by the worker.
-    metrics: { skipped: outcomes.length },
-    items: outcomes,
+    // Deliberately NOT seeded with the skipped rows. They are known already,
+    // but a run that has not started yet showing "Skipped: 112" and a table of
+    // 112 skipped rows reads as though the import ran and rejected everything,
+    // while the bar underneath still says 0%. They travel on the payload and
+    // the worker attaches them when the run finishes.
     // Self-contained on purpose: the worker reads this in another invocation
     // minutes later and has no upload to go back to.
-    payload: { rows: parsed.rows, cutoverDate } satisfies DispatchImportPayload,
+    payload: { rows: parsed.rows, cutoverDate, skipped: outcomes } satisfies DispatchImportPayload,
   });
   if (!started.ok) return { ok: false, error: started.error };
 

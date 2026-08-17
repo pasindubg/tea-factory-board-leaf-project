@@ -417,7 +417,12 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
 - **Commit/PR only when the user asks.** Branch per change (e.g. `feat/m6-payments`);
   the user reviews via PR. `gh` CLI isn't installed — use the GitHub API with stored
   git credentials, or ask the user.
-- **Every branch starts from a FRESH pull of main, under a NEW name.** Always
+- **Every branch starts from a FRESH pull of main, under a NEW name.** Enforced,
+  not just documented: `.claude/hooks/git-branch-guard.sh` runs before every
+  `git commit`/`git push` and refuses one made on `main`/`blm-cloud-release` or
+  from a branch origin/main has already moved past. It is a hook because this
+  rule was written here and then broken on the next push — a skill is only read
+  when it is loaded. Always
   `git fetch origin main` first and branch from `origin/main`, never from a local
   `main` that may be days stale and never from whatever branch is checked out.
   Never reuse a branch name that has already been merged — add a numeric suffix
