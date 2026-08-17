@@ -90,6 +90,13 @@ export type JobRunState = {
   items: JobRunItem[];
   error: string | null;
   startedAt: string | null;
+  /** Heartbeat. Not shown anywhere — it is how a stalled run is recognised and
+   * restarted; see app/_actions/background-jobs.ts. */
+  updatedAt: string | null;
+  /** When the claiming worker's hold expires. A live worker always holds one,
+   * so a lapsed lease is proof no worker has this run — which is what
+   * separates a dead run from a slow one. */
+  leaseUntil: string | null;
   finishedAt: string | null;
 };
 

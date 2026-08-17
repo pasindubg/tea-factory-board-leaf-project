@@ -23,7 +23,7 @@ type Supa = Awaited<ReturnType<typeof requireProfile>>["supabase"];
 // Upper case, and PostgREST matches it exactly — do not lower-case this.
 const TABLE = "BACKGROUND_JOB_RUNS";
 const COLUMNS =
-  "id, job_key, label, status, total_units, processed_units, metrics, notes, items, error, started_at, updated_at, finished_at";
+  "id, job_key, label, status, total_units, processed_units, metrics, notes, items, error, started_at, updated_at, lease_until, finished_at";
 
 export type JobRunHandle = { runId: string; jobKey: JobKey };
 
@@ -143,6 +143,8 @@ function toRunState(row: Record<string, unknown>): JobRunState {
     items: (row.items as JobRunItem[] | null) ?? [],
     error: (row.error as string | null) ?? null,
     startedAt: (row.started_at as string | null) ?? null,
+    updatedAt: (row.updated_at as string | null) ?? null,
+    leaseUntil: (row.lease_until as string | null) ?? null,
     finishedAt: (row.finished_at as string | null) ?? null,
   };
 }
@@ -167,6 +169,40 @@ export async function latestJobRun(
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
   return { ok: true, run: data ? toRunState(data as Record<string, unknown>) : null };
+}
+
+/**
+ * Declares a run dead.
+ *
+ * A run whose worker was killed keeps saying "In progress" forever, because
+ * nothing on the server is left to say otherwise — the invocation that would
+ * have written the failure is the one that died. Somebody watching a bar frozen
+ * at 27% has no way to tell that from slow work, so it is stated plainly and
+ * the run stops claiming to be running.
+ *
+ * The cursor is left exactly where it was: this marks the run, it does not undo
+ * it. Execute resumes from that cursor rather than starting over.
+ */
+export async function markRunInterrupted(
+  supabase: Supa,
+  factoryId: string,
+  runId: string,
+  message: string,
+): Promise<void> {
+  await supabase
+    .from(TABLE)
+    .update({
+      status: "failed",
+      error: message,
+      finished_at: new Date().toISOString(),
+      lease_until: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", runId)
+    .eq("factory_id", factoryId)
+    // Only if it still claims to be working. Without this, a run that finished
+    // between the read and this write would be marked dead after succeeding.
+    .in("status", ["queued", "running"]);
 }
 
 /** Whether a job is already working, so a second run cannot be stacked on it. */
