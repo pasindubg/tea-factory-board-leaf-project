@@ -417,6 +417,25 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
 - **Commit/PR only when the user asks.** Branch per change (e.g. `feat/m6-payments`);
   the user reviews via PR. `gh` CLI isn't installed — use the GitHub API with stored
   git credentials, or ask the user.
+- **Every branch starts from a FRESH pull of main, under a NEW name.** Always
+  `git fetch origin main` first and branch from `origin/main`, never from a local
+  `main` that may be days stale and never from whatever branch is checked out.
+  Never reuse a branch name that has already been merged — add a numeric suffix
+  instead (`pasindu/durable-background-job-worker-01`, `-02`). Merging deletes the
+  branch on GitHub, so pushing the old name recreates it carrying commits that are
+  already on main, and the PR reads **"1 commit behind main"** because main's merge
+  commit is missing from it. That "behind" is cosmetic — the merge commit holds no
+  file changes — but it recurs on every follow-up push and has to be rebased away
+  each time. A fresh name off a fresh `origin/main` avoids it outright.
+- **Never leave a fix uncommitted or unpushed while the user is deploying.** A
+  vercel.json fix that sat on the local machine cost a full merge → sync → deploy
+  cycle before anyone noticed production was still carrying the broken value.
+- **`vercel.json` is validated by Vercel BEFORE the build starts**, and a bad key
+  fails the deploy with nothing compiled — a failure the local tree cannot
+  reproduce. Check any edit against `openapi.vercel.sh/vercel.json` rather than
+  assuming: `crons[]` accepts exactly `schedule` and `path` (a `comment` key is
+  rejected), and on Hobby any schedule firing more than once a day is refused
+  outright, not silently downgraded.
 - **Verify before claiming done:** type-check + lint + the relevant `db:verify-*`
   gate +, for UI, a `preview_*` walk-through. Clean up any test rows you create in the
   real Supabase DB.

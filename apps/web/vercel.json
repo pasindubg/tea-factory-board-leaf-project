@@ -3,7 +3,6 @@
   "buildCommand": "sh scripts/vercel-build.sh",
   "crons": [
     {
-      "comment": "Backstop only, and a weak one. A queued run is nudged awake immediately by the action that created it (lib/jobs/trigger.ts); this collects what that nudge missed — a run whose worker died, or one queued while a deploy was in flight. Hobby REFUSES to deploy any expression that would fire more than once a day, so this is daily, and one tick claims one run and does one chunk. It is not the recovery path: Execute on the Background jobs page is. 02:00 UTC is ~07:30 Colombo, give or take the hour Hobby is allowed to drift, so anything stuck overnight is picked up as the factory day starts.",
       "path": "/api/jobs/tick",
       "schedule": "0 2 * * *"
     }
