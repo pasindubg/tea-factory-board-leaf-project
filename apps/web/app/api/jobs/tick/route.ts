@@ -23,6 +23,14 @@ import { isJobKey, type JobKey } from "@/lib/background-jobs";
  *
  * There is no time limit on a JOB. maxDuration bounds one CHUNK, which is what
  * makes an unbounded job possible.
+ *
+ * WHAT CALLS THIS. Normally the action that queued the run, immediately, via
+ * lib/jobs/trigger.ts — that is the trigger. The cron in vercel.json is only a
+ * backstop for a nudge that never arrived, and a weak one: Hobby refuses to
+ * deploy any schedule that would fire more than once a day, and one tick claims
+ * one run and does one chunk. Execute on the Background jobs page is the real
+ * recovery path. (That reasoning lives here because vercel.json is strict JSON
+ * — it rejects a `comment` key on a cron, and has nowhere else to put it.)
  */
 
 // Node, not Edge: minting a token uses node:crypto.
