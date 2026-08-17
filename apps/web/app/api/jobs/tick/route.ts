@@ -22,14 +22,16 @@ import { isJobKey, type JobKey } from "@/lib/background-jobs";
  * same run and carries on from that cursor. Nothing is lost but the units
  * between the last cursor write and the death.
  *
- * There is no time limit on a JOB. maxDuration bounds one CHUNK, which is what
- * makes an unbounded job possible.
+ * THERE IS NO TIME LIMIT ON A JOB, and nothing here imposes one. The platform
+ * bounds a single invocation and always will; a chunk yielding before that
+ * bound, with a cursor written, is precisely what turns a bounded invocation
+ * into an unbounded job.
  *
  * WHY THIS RESPONDS BEFORE IT WORKS. A chunk that does not finish the run has
  * to hand over to another invocation, and the handover is an HTTP call to this
  * same route. If the work happened before the response, that call would not
  * return for a full chunk, so every tick would sit holding a connection open
- * across its successor's entire chunk — nested, and killed by maxDuration long
+ * across its successor's entire chunk — nested, and killed by the platform long
  * before the run ended. Claiming first and responding immediately makes the
  * handover cost milliseconds, so the chain is flat: each chunk starts a fresh
  * invocation with a fresh duration budget and then exits.
@@ -54,29 +56,35 @@ import { isJobKey, type JobKey } from "@/lib/background-jobs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** The platform ceiling for one chunk. Hobby caps this at 60. */
-export const maxDuration = 60;
+// NO maxDuration EXPORT, DELIBERATELY. Declaring one can only ever shorten the
+// invocation: with fluid compute (on by default) Hobby's default AND maximum
+// are both 300s, so the `export const maxDuration = 60` that used to sit here
+// was cutting every chunk to a fifth of what the platform already allowed —
+// five times more handovers, five times more chances for the chain to break.
+// Leaving it unset takes the platform default, which is also the ceiling.
+// (If chunks ever come back short, check Settings ▸ Functions ▸ Default Max
+// Duration — a project-level default overrides the platform one.)
 
 /**
- * Stop this early and hand back a cursor. The gap covers the writes that follow
- * the last unit and the handover to the next chunk — losing those would mean
- * redoing units already applied.
+ * When a chunk stops and hands over. NOT a limit on the job — it is what makes
+ * the job unlimited. A chunk that yields here writes a cursor and the next one
+ * resumes from it, so a run of any length is a sequence of finite chunks. The
+ * only thing that would happen without it is the platform killing the
+ * invocation mid-unit, with no cursor written and no successor called, which
+ * strands the entire run.
  *
- * 35s, not 45s. The deadline is checked BETWEEN units, so a unit that starts
- * just under it runs past it, and the invocation is killed if that overrun
- * crosses maxDuration. A killed chunk writes no cursor and never calls its
- * successor, which strands the whole run — so the headroom protects far more
- * than the last unit. One import stopped dead at 61 of 230 this way. In
- * production a dispatch row costs ~4s, so 25s of slack covers a row several
- * times slower than usual.
+ * 240s of the 300s available. The deadline is checked BETWEEN units, so a unit
+ * starting just under it overruns; the remaining 60s covers a unit several
+ * times slower than the ~4s a dispatch row costs in production, plus the final
+ * writes and the handover.
  */
-const CHUNK_BUDGET_MS = 35_000;
+const CHUNK_BUDGET_MS = 240_000;
 
 /**
- * How long a claim is held. Longer than a chunk, so a slow chunk does not have
- * its run stolen; short enough that a dead worker's run is picked up soon.
+ * How long a claim is held. Must exceed a whole chunk, or a slow chunk has its
+ * run stolen by the next tick and both workers apply the same units.
  */
-const LEASE_SECONDS = 120;
+const LEASE_SECONDS = 360;
 
 const TABLE = "BACKGROUND_JOB_RUNS";
 
