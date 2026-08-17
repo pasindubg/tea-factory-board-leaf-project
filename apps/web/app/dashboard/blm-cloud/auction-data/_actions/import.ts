@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
 import {
   carryForwardInvoiceFilters,
   parseDispatchSheet,
@@ -12,7 +11,9 @@ import {
 import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import type { JobRunItem } from "@/lib/background-jobs";
-import { finishJobRun, jobIsRunning, startJobRun, updateJobProgress } from "@/lib/background-jobs-server";
+import { jobIsRunning, startJobRun } from "@/lib/background-jobs-server";
+import { triggerJobTick } from "@/lib/jobs/trigger";
+import type { DispatchImportPayload } from "./import-row";
 import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 import { colomboToday } from "@/app/dashboard/auction/_actions/_shared";
@@ -256,101 +257,21 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
     label: file.name,
     totalUnits: parsed.rows.length,
     notes,
+    // Skipped rows are known before any work starts, so they are recorded now
+    // rather than replayed by the worker.
+    metrics: { skipped: outcomes.length },
+    items: outcomes,
+    // Self-contained on purpose: the worker reads this in another invocation
+    // minutes later and has no upload to go back to.
+    payload: { rows: parsed.rows, cutoverDate } satisfies DispatchImportPayload,
   });
   if (!started.ok) return { ok: false, error: started.error };
-  const handle = started.handle;
 
-  // Everything from here on runs AFTER the response has been sent.
-  //
-  // It used to run before it, so the action did not return until the last
-  // invoice was written — and since the run id comes back with that return, the
-  // page had nothing to poll and nothing to announce until the import was
-  // already over. The progress bar appeared at the end, and the toast saying
-  // the job had been created arrived after it had finished.
-  //
-  // after() also detaches the work from the client: the response is complete,
-  // so closing the tab or navigating away no longer aborts it. It does not
-  // survive the function's own lifetime, which is what the queue and worker are
-  // for; this makes the page honest in the meantime.
-  after(async () => {
-    await applyRows();
-  });
+  // The action is finished. The rows are applied by the worker, one chunk per
+  // invocation, resuming from a cursor — which is what makes the import survive
+  // a closed tab, a sign-out, a deploy, and a function that runs out of time.
+  // Nothing here waits for it.
+  void triggerJobTick();
 
-  return { ok: true, runId: handle.runId };
-
-  async function applyRows() {
-  const count = (status: string) => outcomes.filter((row) => row.status === status).length;
-  const tallies = () => ({
-    imported: count("imported"),
-    reprints: count("reprint"),
-    skipped: count("skipped"),
-    failed: count("failed"),
-  });
-  // Written every few rows rather than every row: the operator needs a bar
-  // that moves, not a database write per invoice.
-  const PROGRESS_EVERY = 5;
-
-  // Applied in sheet order. A re-print's chain depends on its earlier lot
-  // existing first, and broker invoices group by dispatch date, so order is
-  // part of the behaviour being exercised — these cannot run in parallel.
-  let processed = 0;
-  for (const row of parsed.rows) {
-    processed += 1;
-    const brokerId = brokerIdByName.get(normalizeSpelling(row.brokerName));
-    const markId = markIdByCode.get(normalizeSpelling(row.markCode));
-    const record = (status: string, detail: string) =>
-      outcomes.push({ ref: String(row.sheetRow), label: formatFourDigitNo(row.invoiceNo), status, detail });
-
-    if (processed % PROGRESS_EVERY === 0) {
-      await updateJobProgress(supabase, profile.factory_id, handle, { processedUnits: processed, metrics: tallies() });
-    }
-    if (!brokerId) { record("failed", `Broker "${row.brokerName}" is not registered.`); continue; }
-    if (!markId) { record("failed", `Selling mark "${row.markCode}" is not registered.`); continue; }
-
-    const form = invoiceFormData(row, brokerId, markId, cutoverDate);
-
-    // Only a re-print the book never dispatched belongs in the cutover
-    // register. The book marks a row "Reprint" for BOTH cases: a lot that was
-    // dispatched from here, went unsold and was re-printed (an ordinary
-    // lifecycle this system models in full), and a lot already sitting at the
-    // broker from a sale that predates the book. The dispatch date is what
-    // separates them — the second kind has none, because it never left here.
-    // Registering the first kind would badge a real dispatch as a cutover
-    // entry and hide the sale it actually came from.
-    if (row.isReprint && !row.dispatchDate) {
-      form.set("target_sale_no", formatSaleNo(row.saleNo ?? ""));
-      form.set("sold_sale_no", formatSaleNo(row.nextSaleNo ?? ""));
-      form.set("sample_allowance", String(row.sampleWeightKg + row.additionalSampleKg));
-      form.set("reason", `Imported from the Dispatch Schedule, sheet row ${row.sheetRow}.`);
-      const result = await registerOutstandingReprint(form);
-      record(result.ok ? "reprint" : "failed", result.ok ? (result.notice ?? "Registered as an outstanding re-print.") : result.error);
-      continue;
-    }
-
-    const result = await createInvoiceFromOverview(form);
-    if (!result.ok) { record("failed", result.error); continue; }
-
-    // A dispatched lot the book marks as re-printed: created as an ordinary
-    // invoice above, then moved through the SAME owner action the Lots list
-    // uses, so the sampling deduction and audit entry are identical.
-    if (row.isReprint) {
-      const marked = await markImportedLotAsReprint(supabase, profile.factory_id, row);
-      record(marked.ok ? "reprint" : "failed", marked.ok ? marked.detail : marked.error);
-      continue;
-    }
-    record("imported", result.notice ?? "Invoice created.");
-  }
-
-  const sorted = outcomes.sort((a, b) => Number(a.ref) - Number(b.ref));
-  await finishJobRun(supabase, profile.factory_id, handle, {
-    status: "completed",
-    processedUnits: parsed.rows.length,
-    metrics: tallies(),
-    notes,
-    items: sorted,
-  });
-
-  revalidatePath("/dashboard/auction");
-  revalidatePath("/dashboard/blm-cloud/auction-data");
-  }
+  return { ok: true, runId: started.handle.runId };
 }

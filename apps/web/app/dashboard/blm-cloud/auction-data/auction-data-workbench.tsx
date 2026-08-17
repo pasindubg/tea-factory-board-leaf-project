@@ -135,9 +135,24 @@ function ResetStage({ entities, total }: { entities: ResetEntityCount[]; total: 
  * background job needs only its form and a job definition.
  */
 function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
-  const { run, refresh, running } = useJobRun(JOB_KEY, initialRun);
+  const { run, setRun, refresh, running } = useJobRun(JOB_KEY, initialRun);
   const [startError, setStartError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+
+  /**
+   * Puts the panel back to how it looks before anything has been run.
+   *
+   * Local only — the run itself is history and stays on the Background jobs
+   * page, where it can be re-run or deleted. This clears the chosen file, the
+   * error, and the report of a run somebody has finished reading, so the next
+   * import starts against an empty panel rather than the last one's tallies.
+   */
+  const clearPanel = () => {
+    formRef.current?.reset();
+    setStartError(null);
+    setRun(null);
+  };
 
   return (
     <section className={card}>
@@ -149,6 +164,7 @@ function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
       </p>
 
       <form
+        ref={formRef}
         className="mt-4"
         action={(formData) => startTransition(async () => {
           setStartError(null);
@@ -175,13 +191,25 @@ function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
           accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="block max-w-md text-sm text-stone-600 file:mr-3 file:rounded-md file:border-0 file:bg-stone-200 file:px-3 file:py-2 file:text-sm file:font-medium disabled:opacity-50 dark:text-stone-300 dark:file:bg-stone-700"
         />
-        <button
-          type="submit"
-          disabled={pending || running}
-          className="mt-3 rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
-        >
-          {running ? "Import in progress…" : pending ? "Importing…" : "Parse and import"}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="submit"
+            disabled={pending || running}
+            className="rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+          >
+            {running ? "Import in progress…" : pending ? "Importing…" : "Parse and import"}
+          </button>
+          {/* Not offered while a run is in flight: clearing the panel under a
+              moving progress bar would look like the import had stopped. */}
+          <button
+            type="button"
+            onClick={clearPanel}
+            disabled={pending || running || (!run && !startError)}
+            className="rounded-md border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800"
+          >
+            Clear
+          </button>
+        </div>
       </form>
 
       {startError && (

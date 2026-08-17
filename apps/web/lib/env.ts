@@ -53,6 +53,33 @@ export function getSupabaseEnv() {
   return { url, publishableKey };
 }
 
+/**
+ * What the background-job worker needs, and nothing else.
+ *
+ * The worker has no session, but it must not fall back to the admin client:
+ * that would bypass RLS in a job that writes real invoices, turning tenant
+ * isolation from a database guarantee into an application convention. Instead
+ * it signs a short-lived token for the run's own user (see lib/jobs/auth.ts),
+ * so every policy applies exactly as it would for that person signed in.
+ *
+ * The signing secret is the project's JWT secret — Supabase ▸ Settings ▸ API.
+ * It can mint a token for ANY user, so it is as sensitive as the service key.
+ */
+export function getJobsEnv() {
+  const jwtSecret = process.env.SUPABASE_JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error(
+      "SUPABASE_JWT_SECRET must be set for the background job worker " +
+        "(Supabase > Settings > API > JWT Secret)",
+    );
+  }
+  const tickSecret = process.env.JOBS_TICK_SECRET;
+  if (!tickSecret) {
+    throw new Error("JOBS_TICK_SECRET must be set for the background job worker");
+  }
+  return { jwtSecret, tickSecret };
+}
+
 export function getSupabaseAdminEnv() {
   const { url } = getSupabaseEnv();
   const secretKey = process.env.SUPABASE_SECRET_KEY;
