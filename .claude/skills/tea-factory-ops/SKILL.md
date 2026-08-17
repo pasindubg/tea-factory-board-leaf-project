@@ -426,7 +426,12 @@ pnpm --dir packages/db db:mint-otp <email># print a login OTP (SMTP is unconfigu
   `git fetch origin main` first and branch from `origin/main`, never from a local
   `main` that may be days stale and never from whatever branch is checked out.
   Never reuse a branch name that has already been merged — add a numeric suffix
-  instead (`pasindu/durable-background-job-worker-01`, `-02`). Merging deletes the
+  instead (`pasindu/durable-background-job-worker-01`, `-02`). **The trigger is
+  every MERGE, not every new task**: the moment a PR is merged, the branch it came
+  from is finished, and the next commit belongs on a new branch cut from the new
+  main. Re-check `git rev-list --count HEAD..origin/main` before EVERY push rather
+  than trusting the branch was fresh when it was created — it goes stale the
+  instant its own PR merges. Merging deletes the
   branch on GitHub, so pushing the old name recreates it carrying commits that are
   already on main, and the PR reads **"1 commit behind main"** because main's merge
   commit is missing from it. That "behind" is cosmetic — the merge commit holds no
