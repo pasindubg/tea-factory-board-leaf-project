@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { friendlyError } from "@/lib/errors";
 import { withTenantDataScope } from "@/lib/tenant-data";
+import { currentJobActor } from "@/lib/jobs/context";
 import {
   MANAGEMENT_ROLES,
   getDefaultRoles,
@@ -39,6 +40,14 @@ export type Profile = {
  * - deactivated → signed out, /login
  */
 async function resolveProfile() {
+  // A background job installs who it is acting as before calling anything, so
+  // the gates below resolve from memory instead of a cookie. This is the only
+  // reason the import can keep calling the very same server actions the
+  // Invoice Overview page uses — and why signing out no longer stops it, and
+  // why a row no longer costs several auth round trips.
+  const jobActor = currentJobActor();
+  if (jobActor) return jobActor;
+
   const supabase = await createClient();
 
   let user = null;
@@ -57,26 +66,64 @@ async function resolveProfile() {
   }
   if (!user) redirect("/login");
 
-  const { data, error: profileError } = await supabase
+  const loaded = await readProfile(supabase, user.id);
+  if (!loaded.profile) {
+    if (loaded.reason === "no_profile") {
+      await supabase.auth.signOut();
+      redirect("/login?error=no_profile");
+    }
+    if (loaded.reason === "deactivated") {
+      await supabase.auth.signOut();
+      redirect("/login?error=deactivated");
+    }
+    throw new Error(loaded.reason);
+  }
+  const profile = loaded.profile;
+
+  return {
+    supabase: withTenantDataScope(supabase, {
+      factoryId: profile.factory_id,
+      actorUserId: profile.id,
+    }),
+    profile,
+  };
+}
+
+/**
+ * Reads one user's profile with whatever client it is handed.
+ *
+ * Split out of resolveProfile because the background job worker needs exactly
+ * this and none of what surrounds it: a job has no cookies to read a session
+ * from, and — more importantly — must never call redirect(). Signing out used
+ * to abort a running import halfway precisely because a gate deep inside the
+ * loop reached redirect("/login") and threw.
+ *
+ * So the failure is RETURNED here, and each caller decides: a request redirects,
+ * a job fails the run with a message somebody can read on the overview.
+ */
+export async function readProfile(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<{ profile: Profile; reason: null } | { profile: null; reason: string }> {
+  const { data, error } = await supabase
     .from("users")
     .select("id, name, role, factory_id, active, access_role_id")
-    .eq("id", user.id)
+    .eq("id", userId)
     .single();
-  if (profileError && profileError.code !== "PGRST116") {
-    throw new Error(`Could not load your factory profile. ${friendlyError(profileError)}`);
+  if (error && error.code !== "PGRST116") {
+    return { profile: null, reason: `Could not load your factory profile. ${friendlyError(error)}` };
   }
-  if (!data) {
-    await supabase.auth.signOut();
-    redirect("/login?error=no_profile");
-  }
+  if (!data) return { profile: null, reason: "no_profile" };
+
   const { data: personalProfile, error: personalProfileError } = await supabase
     .from("user_profiles")
     .select("full_name")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .maybeSingle();
   if (personalProfileError) {
-    throw new Error(`Could not load your personal profile. ${friendlyError(personalProfileError)}`);
+    return { profile: null, reason: `Could not load your personal profile. ${friendlyError(personalProfileError)}` };
   }
+
   let accessRoleName: string | null = null;
   let accessRoleCustom = false;
   if (data.access_role_id) {
@@ -86,29 +133,20 @@ async function resolveProfile() {
       .eq("id", data.access_role_id)
       .maybeSingle();
     if (accessRoleError) {
-      throw new Error(`Could not load your access role. ${friendlyError(accessRoleError)}`);
+      return { profile: null, reason: `Could not load your access role. ${friendlyError(accessRoleError)}` };
     }
     accessRoleName = accessRole?.name ?? null;
     accessRoleCustom = accessRole?.system_role === false;
   }
+
   const profile: Profile = {
     ...(data as Profile),
     name: String(personalProfile?.full_name ?? data.name).trim() || data.name,
     access_role_name: accessRoleName,
     access_role_custom: accessRoleCustom,
   };
-  if (profile.active === false) {
-    await supabase.auth.signOut();
-    redirect("/login?error=deactivated");
-  }
-
-  return {
-    supabase: withTenantDataScope(supabase, {
-      factoryId: profile.factory_id,
-      actorUserId: profile.id,
-    }),
-    profile,
-  };
+  if (profile.active === false) return { profile: null, reason: "deactivated" };
+  return { profile, reason: null };
 }
 
 /**

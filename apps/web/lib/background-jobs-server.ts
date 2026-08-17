@@ -27,12 +27,31 @@ const COLUMNS =
 
 export type JobRunHandle = { runId: string; jobKey: JobKey };
 
-/** Opens a run. Called before the first unit of work, so a refresh at any
- * point after this finds something to show. */
+/**
+ * Queues a run.
+ *
+ * `queued`, not `running`: the row is the request the caller makes, and a
+ * worker picks it up. That is the whole difference between work that dies with
+ * the request that started it and work that does not — the action returns as
+ * soon as this row exists, and nothing it does afterwards matters to the job.
+ *
+ * `payload` is the job's input, and must be self-contained: the worker reads it
+ * minutes later in another process, so anything the handler needs has to be in
+ * here rather than in a closure or an upload buffer.
+ */
 export async function startJobRun(
   supabase: Supa,
   factoryId: string,
-  input: { jobKey: JobKey; startedBy?: string | null; label?: string | null; totalUnits: number; metrics?: Record<string, number>; notes?: string[] },
+  input: {
+    jobKey: JobKey;
+    startedBy?: string | null;
+    label?: string | null;
+    totalUnits: number;
+    metrics?: Record<string, number>;
+    notes?: string[];
+    payload?: Record<string, unknown>;
+    items?: JobRunItem[];
+  },
 ): Promise<{ ok: true; handle: JobRunHandle } | { ok: false; error: string }> {
   const { data, error } = await supabase
     .from(TABLE)
@@ -41,10 +60,12 @@ export async function startJobRun(
       started_by: input.startedBy ?? null,
       job_key: input.jobKey,
       label: input.label ?? null,
-      status: "running",
+      status: "queued",
       total_units: input.totalUnits,
       metrics: input.metrics ?? {},
       notes: input.notes ?? [],
+      payload: input.payload ?? {},
+      items: input.items ?? [],
     })
     .select("id")
     .single();

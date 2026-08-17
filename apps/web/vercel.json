@@ -1,5 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "sh scripts/vercel-build.sh",
+  "crons": [
+    {
+      "comment": "Safety net only. A queued run is nudged awake immediately by the action that created it (lib/jobs/trigger.ts); this collects anything that nudge missed — a run whose worker died, or one queued while a deploy was in flight. On Hobby this fires once a day, which is enough for a backstop and would not be enough as the primary trigger.",
+      "path": "/api/jobs/tick",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "ignoreCommand": "if [ \"$VERCEL_GIT_COMMIT_REF\" = \"blm-cloud-release\" ]; then exit 1; else exit 0; fi"
 }
