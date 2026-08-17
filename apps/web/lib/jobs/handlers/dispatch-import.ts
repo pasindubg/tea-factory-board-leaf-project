@@ -45,6 +45,7 @@ export const runDispatchImportChunk: JobHandler = async ({
 }) => {
   const payload = run.payload as unknown as DispatchImportPayload;
   const rows = payload.rows ?? [];
+  const skipped = payload.skipped ?? [];
   const metrics: Record<string, number> = { ...run.metrics };
   const items: JobRunItem[] = [];
 
@@ -82,11 +83,17 @@ export const runDispatchImportChunk: JobHandler = async ({
     }
   }
 
+  // Attached at the end, not at the start. The rows the parser rejected are
+  // part of the finished report, but showing them while the run is still
+  // queued makes an import that has not begun look like one that skipped
+  // everything — which is exactly how it read on the panel.
+  const done = index >= rows.length;
+
   return {
     cursor: { index },
     processedUnits: index,
-    metrics,
-    items,
-    done: index >= rows.length,
+    metrics: done ? { ...metrics, skipped: skipped.length } : metrics,
+    items: done ? [...items, ...skipped] : items,
+    done,
   };
 };

@@ -172,5 +172,8 @@ export async function latestJobRun(
 /** Whether a job is already working, so a second run cannot be stacked on it. */
 export async function jobIsRunning(supabase: Supa, factoryId: string, jobKey: JobKey): Promise<boolean> {
   const latest = await latestJobRun(supabase, factoryId, jobKey);
-  return latest.ok && latest.run?.status === "running";
+  // `queued` counts as running. It is the state a run sits in between the
+  // upload returning and the worker claiming it, and treating it as idle let a
+  // second import be started on top of the first during exactly that window.
+  return latest.ok && (latest.run?.status === "running" || latest.run?.status === "queued");
 }

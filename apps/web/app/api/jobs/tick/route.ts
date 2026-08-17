@@ -1,13 +1,14 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getJobsEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildJobActor } from "@/lib/jobs/actor";
 import { runAsJobActor } from "@/lib/jobs/context";
+import { baseUrlFromHeaders, triggerJobTick } from "@/lib/jobs/trigger";
 import { JOB_HANDLERS, type JobRun } from "@/lib/jobs/registry";
 import { isJobKey, type JobKey } from "@/lib/background-jobs";
 
 /**
- * The background job worker: claims one run, does a slice of it, and exits.
+ * The background job worker: claims one run, does a slice of it, and hands over.
  *
  * Everything about this shape exists to survive the thing that kept killing the
  * dispatch import — a job's life being tied to something that ends. It was the
@@ -23,6 +24,22 @@ import { isJobKey, type JobKey } from "@/lib/background-jobs";
  *
  * There is no time limit on a JOB. maxDuration bounds one CHUNK, which is what
  * makes an unbounded job possible.
+ *
+ * WHY THIS RESPONDS BEFORE IT WORKS. A chunk that does not finish the run has
+ * to hand over to another invocation, and the handover is an HTTP call to this
+ * same route. If the work happened before the response, that call would not
+ * return for a full chunk, so every tick would sit holding a connection open
+ * across its successor's entire chunk — nested, and killed by maxDuration long
+ * before the run ended. Claiming first and responding immediately makes the
+ * handover cost milliseconds, so the chain is flat: each chunk starts a fresh
+ * invocation with a fresh duration budget and then exits.
+ *
+ * This is the piece that was missing. The route used to return `more: true` and
+ * expect "the caller" to tick again, but the only caller was a fire-and-forget
+ * nudge that never read the response. A run therefore did exactly one chunk and
+ * went back to the queue, where nothing but the daily cron would ever find it —
+ * invisible locally, where 230 rows fit in one chunk, and immediately obvious in
+ * production, where 12 did.
  *
  * WHAT CALLS THIS. Normally the action that queued the run, immediately, via
  * lib/jobs/trigger.ts — that is the trigger. The cron in vercel.json is only a
@@ -42,7 +59,8 @@ export const maxDuration = 60;
 
 /**
  * Stop this early and hand back a cursor. The gap covers the writes that follow
- * the last unit — losing those would mean redoing units already applied.
+ * the last unit and the handover to the next chunk — losing those would mean
+ * redoing units already applied.
  */
 const CHUNK_BUDGET_MS = 45_000;
 
@@ -102,12 +120,42 @@ export async function POST(request: Request) {
     cursor: (claimed.cursor as Record<string, unknown> | null) ?? {},
   };
 
+  // Read while the request is still in hand. Inside after() the response has
+  // gone and request APIs are no longer dependable, but the chain needs a URL
+  // to hand over to.
+  const selfBase = baseUrlFromHeaders(request.headers);
+
+  after(async () => {
+    await runChunk(run, selfBase);
+  });
+
+  // The run is claimed; the work is under way. Progress is read from the run
+  // row, which is the only honest source anyway — this response could never
+  // describe a chunk that has not happened yet.
+  return NextResponse.json({ claimed: 1, runId: run.id, jobKey: run.jobKey, status: "running" });
+}
+
+/**
+ * One slice of one run, after the response has been sent.
+ *
+ * Nothing here can return an HTTP status to anybody, so every failure has to
+ * land on the run row instead — that row is what the operator is looking at.
+ */
+async function runChunk(run: JobRun, selfBase: string | null) {
+  const admin = createAdminClient();
+
   const fail = async (message: string) => {
     await admin
       .from(TABLE)
-      .update({ status: "failed", error: message, finished_at: new Date().toISOString(), lease_until: null, updated_at: new Date().toISOString() })
+      .update({
+        status: "failed",
+        error: message,
+        finished_at: new Date().toISOString(),
+        lease_until: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", run.id);
-    return NextResponse.json({ runId: run.id, status: "failed", error: message });
+    console.error(`[jobs] run ${run.id} (${run.jobKey}) failed: ${message}`);
   };
 
   // A key with no handler is failed rather than left claimed, so it appears on
@@ -159,6 +207,17 @@ export async function POST(request: Request) {
     const finished = cancelled || result.done;
     const now = new Date().toISOString();
 
+    // A chunk that neither finished the run nor advanced it would chain
+    // forever, one invocation per second, achieving nothing. Whatever the
+    // cause — a handler that cannot make progress, or units so slow that not
+    // one fits in a chunk — it needs a person, so it stops here and says so.
+    if (!finished && result.processedUnits <= run.processedUnits) {
+      return fail(
+        `The worker ran for ${Math.round(CHUNK_BUDGET_MS / 1000)}s without completing a single unit ` +
+          `(stuck at ${result.processedUnits} of ${run.totalUnits}). Stopping rather than retrying forever.`,
+      );
+    }
+
     // Read-append-write rather than a jsonb concat: the chunk only knows the
     // rows IT applied, and the report has to accumulate across every chunk or
     // a resumed run would show only its last slice.
@@ -170,6 +229,12 @@ export async function POST(request: Request) {
 
     // Progress is written whatever the outcome — a cancelled run keeps what it
     // managed to do, and the cursor is what a later Execute would resume from.
+    //
+    // An unfinished run stays `running` with no lease rather than going back to
+    // `queued`. Both are claimable, but only one is true: work is under way and
+    // the next chunk is already being asked for. Saying "Waiting to start" at
+    // 12 of 230 rows described the queue rather than the job, and it also
+    // stopped the page polling, so the bar froze until a manual refresh.
     const { error } = await supabase
       .from(TABLE)
       .update({
@@ -177,7 +242,7 @@ export async function POST(request: Request) {
         processed_units: result.processedUnits,
         metrics: result.metrics,
         ...(result.items?.length ? { items } : {}),
-        status: cancelled ? "cancelled" : result.done ? "completed" : "queued",
+        status: cancelled ? "cancelled" : result.done ? "completed" : "running",
         finished_at: finished ? now : null,
         lease_until: null,
         run_after: now,
@@ -186,20 +251,12 @@ export async function POST(request: Request) {
       .eq("id", run.id);
     if (error) return fail(error.message);
 
-    return NextResponse.json({
-      runId: run.id,
-      jobKey: run.jobKey,
-      processedUnits: result.processedUnits,
-      totalUnits: run.totalUnits,
-      status: cancelled ? "cancelled" : result.done ? "completed" : "queued",
-      // The caller re-ticks on this rather than the worker looping, so every
-      // chunk is a fresh invocation with a fresh duration budget.
-      more: !finished,
-    });
+    // The handover. Fresh invocation, fresh duration budget, same cursor.
+    if (!finished) await triggerJobTick(selfBase ?? undefined);
   } catch (error) {
     // The run keeps the cursor it last wrote, so Execute can pick it up rather
     // than starting over. Nothing retries on a timer — a person decides.
-    return fail(error instanceof Error ? error.message : String(error));
+    await fail(error instanceof Error ? error.message : String(error));
   }
 }
 
