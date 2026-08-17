@@ -61,8 +61,16 @@ export const maxDuration = 60;
  * Stop this early and hand back a cursor. The gap covers the writes that follow
  * the last unit and the handover to the next chunk — losing those would mean
  * redoing units already applied.
+ *
+ * 35s, not 45s. The deadline is checked BETWEEN units, so a unit that starts
+ * just under it runs past it, and the invocation is killed if that overrun
+ * crosses maxDuration. A killed chunk writes no cursor and never calls its
+ * successor, which strands the whole run — so the headroom protects far more
+ * than the last unit. One import stopped dead at 61 of 230 this way. In
+ * production a dispatch row costs ~4s, so 25s of slack covers a row several
+ * times slower than usual.
  */
-const CHUNK_BUDGET_MS = 45_000;
+const CHUNK_BUDGET_MS = 35_000;
 
 /**
  * How long a claim is held. Longer than a chunk, so a slow chunk does not have
@@ -250,6 +258,14 @@ async function runChunk(run: JobRun, selfBase: string | null) {
       })
       .eq("id", run.id);
     if (error) return fail(error.message);
+
+    // One line per chunk, so a stalled run can be read off the function log
+    // rather than guessed at. Which chunk was the last to print is the whole
+    // diagnosis when a chain breaks.
+    console.log(
+      `[jobs] ${run.jobKey} ${run.id}: ${run.processedUnits} → ${result.processedUnits} of ${run.totalUnits}` +
+        ` (${cancelled ? "cancelled" : result.done ? "completed" : "handing over"})`,
+    );
 
     // The handover. Fresh invocation, fresh duration budget, same cursor.
     if (!finished) await triggerJobTick(selfBase ?? undefined);

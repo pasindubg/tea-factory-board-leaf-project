@@ -143,6 +143,7 @@ function toRunState(row: Record<string, unknown>): JobRunState {
     items: (row.items as JobRunItem[] | null) ?? [],
     error: (row.error as string | null) ?? null,
     startedAt: (row.started_at as string | null) ?? null,
+    updatedAt: (row.updated_at as string | null) ?? null,
     finishedAt: (row.finished_at as string | null) ?? null,
   };
 }

@@ -90,6 +90,9 @@ export type JobRunState = {
   items: JobRunItem[];
   error: string | null;
   startedAt: string | null;
+  /** Heartbeat. Not shown anywhere — it is how a stalled run is recognised and
+   * restarted; see app/_actions/background-jobs.ts. */
+  updatedAt: string | null;
   finishedAt: string | null;
 };
 
