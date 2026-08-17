@@ -28,14 +28,9 @@ type ActionResult = { ok: true; notice?: string } | { ok: false; error: string }
 export type DispatchImportPayload = {
   rows: DispatchSheetRow[];
   cutoverDate: string;
-  /**
-   * Rows the parser rejected before the run was queued — buyer return notes,
-   * rows with no mark, and so on. They belong in the final report, but they
-   * are carried HERE rather than written onto the run when it is queued: a run
-   * that has not started yet must not already show 112 skipped rows, which
-   * reads as "the import skipped everything" while the bar still says 0%.
-   * The worker attaches them when the run actually finishes.
-   */
+  /** Parser-rejected rows. Carried here rather than written onto the run when
+   * queued, so an import that has not started does not already show 112
+   * skipped. The worker attaches them when it finishes. */
   skipped?: JobRunItem[];
 };
 

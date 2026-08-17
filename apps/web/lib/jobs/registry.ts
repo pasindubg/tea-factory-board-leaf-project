@@ -47,15 +47,9 @@ export type JobChunkContext = {
    * cursor, stopping mid-write does not.
    */
   cancelled: () => Promise<boolean>;
-  /**
-   * Publishes progress mid-chunk. Without it a run that fits in one chunk goes
-   * from 0% straight to complete, because the worker only writes when the chunk
-   * returns — the operator watches a still bar through the entire import.
-   *
-   * It writes the cursor too, so it is not merely cosmetic: a worker that dies
-   * mid-chunk resumes from the last report rather than from the start of the
-   * chunk, and re-applies fewer units.
-   */
+  /** Publishes progress mid-chunk — without it a run that fits in one chunk
+   * jumps 0% straight to complete. Writes the cursor too, so a death mid-chunk
+   * re-applies fewer units. */
   reportProgress: (progress: {
     cursor: Record<string, unknown>;
     processedUnits: number;

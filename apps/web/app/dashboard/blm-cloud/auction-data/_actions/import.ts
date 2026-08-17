@@ -257,21 +257,15 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
     label: file.name,
     totalUnits: parsed.rows.length,
     notes,
-    // Deliberately NOT seeded with the skipped rows. They are known already,
-    // but a run that has not started yet showing "Skipped: 112" and a table of
-    // 112 skipped rows reads as though the import ran and rejected everything,
-    // while the bar underneath still says 0%. They travel on the payload and
-    // the worker attaches them when the run finishes.
-    // Self-contained on purpose: the worker reads this in another invocation
-    // minutes later and has no upload to go back to.
+    // Skipped rows travel on the payload, not seeded onto the run: "Skipped:
+    // 112" over a 0% bar reads as an import that ran and rejected everything.
+    // Self-contained on purpose — the worker has no upload to go back to.
     payload: { rows: parsed.rows, cutoverDate, skipped: outcomes } satisfies DispatchImportPayload,
   });
   if (!started.ok) return { ok: false, error: started.error };
 
-  // The action is finished. The rows are applied by the worker, one chunk per
-  // invocation, resuming from a cursor — which is what makes the import survive
-  // a closed tab, a sign-out, a deploy, and a function that runs out of time.
-  // Nothing here waits for it.
+  // Applied by the worker, one chunk per invocation, resuming from a cursor —
+  // which is what survives a closed tab, a sign-out and a deploy.
   void triggerJobTick();
 
   return { ok: true, runId: started.handle.runId };

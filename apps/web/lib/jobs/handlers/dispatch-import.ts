@@ -26,14 +26,10 @@ import type { JobRunItem } from "@/lib/background-jobs";
  * dispatch date.
  */
 
-/** How often to ask whether somebody pressed Cancel. Every row would be a
- * database round trip per invoice; this is frequent enough to feel immediate. */
+/** Checking every row would be a database round trip per invoice. */
 const CANCEL_CHECK_EVERY = 5;
 
-/**
- * How often the bar moves. The same cadence the inline version used: the
- * operator needs a bar that moves, not a database write per invoice.
- */
+/** The operator needs a bar that moves, not a write per invoice. */
 const PROGRESS_EVERY = 5;
 
 export const runDispatchImportChunk: JobHandler = async ({
@@ -76,17 +72,14 @@ export const runDispatchImportChunk: JobHandler = async ({
     metrics[outcome.status] = (metrics[outcome.status] ?? 0) + 1;
     index += 1;
 
-    // Published as we go, not only when the chunk ends: a 230-row import that
-    // fits in one chunk would otherwise sit at 0% and then be finished.
+    // As we go, not only at chunk end, or a one-chunk run never shows a bar.
     if (index % PROGRESS_EVERY === 0) {
       await reportProgress({ cursor: { index }, processedUnits: index, metrics });
     }
   }
 
-  // Attached at the end, not at the start. The rows the parser rejected are
-  // part of the finished report, but showing them while the run is still
-  // queued makes an import that has not begun look like one that skipped
-  // everything — which is exactly how it read on the panel.
+  // Attached at the end: showing parser-rejected rows while the run is still
+  // queued makes an import that has not begun look like one that skipped all.
   const done = index >= rows.length;
 
   return {

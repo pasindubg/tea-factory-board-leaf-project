@@ -59,11 +59,8 @@ export function useJobRun(jobKey: JobKey, initialRun: JobRunState | null) {
     if (result.ok) setRun(result.run);
   }, [jobKey]);
 
-  // Polls only while something is actually in flight, so an idle page makes no
-  // requests at all. `queued` counts: a run is queued for the moment between
-  // the upload returning and the worker claiming it, and a page that would not
-  // poll until it was already running showed a frozen 0% through exactly the
-  // stretch the operator is watching hardest.
+  // Only while in flight, so an idle page makes no requests. `queued` counts,
+  // or the bar sits frozen through the stretch most closely watched.
   const busy = run?.status === "queued" || run?.status === "running";
   useEffect(() => {
     if (!busy) return;
