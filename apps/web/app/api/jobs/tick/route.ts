@@ -42,6 +42,36 @@ const LEASE_SECONDS = 360;
 
 const TABLE = "BACKGROUND_JOB_RUNS";
 
+/** Past this, a run with no live worker is dead rather than slow. Must match
+ * the poll's own threshold in app/_actions/background-jobs.ts. */
+const DEAD_AFTER_MS = 180_000;
+
+/**
+ * Fails runs no worker holds and nothing has touched for DEAD_AFTER_MS.
+ *
+ * Without it the claim resurrects them forever: a run abandoned an hour ago is
+ * still `running` with a lapsed lease, sorts before today's upload by
+ * run_after, and so every tick picks IT up while the fresh run waits. Execute
+ * is how an abandoned run is resumed — deliberately, by a person.
+ */
+async function sweepDeadRuns(admin: ReturnType<typeof createAdminClient>) {
+  const now = new Date().toISOString();
+  const deadline = new Date(Date.now() - DEAD_AFTER_MS).toISOString();
+  const { error } = await admin
+    .from(TABLE)
+    .update({
+      status: "failed",
+      error: "Interrupted — the worker stopped and did not restart. Use Execute to resume from where it stopped.",
+      finished_at: now,
+      lease_until: null,
+      updated_at: now,
+    })
+    .eq("status", "running")
+    .lt("updated_at", deadline)
+    .or(`lease_until.is.null,lease_until.lt.${now}`);
+  if (error) console.error(`[jobs] sweep failed: ${error.message}`);
+}
+
 function authorised(request: Request, secret: string) {
   // Vercel signs its own cron invocations; anything else must present the
   // secret. This route causes tenant writes, so it is never open.
@@ -64,6 +94,8 @@ export async function POST(request: Request) {
   // tenant work below runs as the run's own user, with RLS enforcing it.
   const admin = createAdminClient();
   const workerId = `${process.env.VERCEL_DEPLOYMENT_ID ?? "local"}:${crypto.randomUUID().slice(0, 8)}`;
+
+  await sweepDeadRuns(admin);
 
   const claim = await admin.rpc("claim_background_job", {
     p_worker_id: workerId,

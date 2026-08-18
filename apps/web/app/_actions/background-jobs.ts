@@ -26,6 +26,24 @@ const STALLED_AFTER_MS = 30_000;
  * two-minute heartbeat got wrong. */
 const DEAD_AFTER_MS = 180_000;
 
+/**
+ * Stops the poll firing a tick every 2 seconds.
+ *
+ * The panel polls on a 2s timer, so an unconditional nudge meant ~30 worker
+ * invocations a minute at a database that was already the bottleneck — which
+ * is what made the whole app crawl while an import was stuck. One nudge per
+ * window is all a restart needs.
+ */
+const NUDGE_COOLDOWN_MS = 30_000;
+const lastNudgeByRun = new Map<string, number>();
+
+function mayNudge(runId: string): boolean {
+  const last = lastNudgeByRun.get(runId) ?? 0;
+  if (Date.now() - last < NUDGE_COOLDOWN_MS) return false;
+  lastNudgeByRun.set(runId, Date.now());
+  return true;
+}
+
 export async function fetchJobRun(jobKey: string): Promise<
   { ok: true; run: JobRunState | null } | { ok: false; error: string }
 > {
@@ -53,7 +71,7 @@ export async function fetchJobRun(jobKey: string): Promise<
       return { ok: true, run: { ...run, status: "failed", error: message } };
     }
 
-    if (claimsToBeWorking && quietFor > STALLED_AFTER_MS) {
+    if (claimsToBeWorking && quietFor > STALLED_AFTER_MS && mayNudge(run.id)) {
       // after(), same reason as the upload: an un-awaited fetch dies with the
       // instance.
       const base = baseUrlFromHeaders(await headers());
