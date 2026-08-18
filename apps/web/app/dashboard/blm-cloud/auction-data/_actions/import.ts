@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import {
-  carryForwardInvoiceFilters,
   parseDispatchSheet,
   readSheet,
   DISPATCH_SHEET_NAME,
@@ -17,7 +16,7 @@ import { headers } from "next/headers";
 import { baseUrlFromHeaders } from "@/lib/jobs/trigger";
 import { claimAndRunChunk } from "@/lib/jobs/worker";
 import { KNOWN_GRADE_ALIASES, normalizeSpelling, type DispatchImportPayload } from "./import-row";
-import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
+import { createInvoiceFromOverview, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 import { colomboToday } from "@/app/dashboard/auction/_actions/_shared";
 
@@ -118,58 +117,6 @@ async function ensureGrades(
 }
 
 
-
-/**
- * Moves a just-imported lot to `re-print`, recording the sale it sold in.
- *
- * The lot is found by its invoice number because `createInvoiceFromOverview`
- * deliberately returns no row — the overview refetches rather than splicing in
- * a locally-built one — and the import needs the id to transition it.
- */
-async function markImportedLotAsReprint(
-  supabase: Awaited<ReturnType<typeof requireProfile>>["supabase"],
-  factoryId: string,
-  row: DispatchSheetRow,
-): Promise<{ ok: true; detail: string } | { ok: false; error: string }> {
-  const invoiceNo = formatFourDigitNo(row.invoiceNo);
-  const { data: invoiceRows, error: lookupError } = await supabase
-    .from("lot_invoices")
-    .select("lot_id, invoice_no")
-    .eq("factory_id", factoryId)
-    .or(carryForwardInvoiceFilters([invoiceNo]).join(","));
-  if (lookupError) return { ok: false, error: friendlyError(lookupError) };
-  const lotId = (invoiceRows ?? [])[0]?.lot_id as string | undefined;
-  if (!lotId) return { ok: false, error: `Invoice ${invoiceNo} was created but could not be found again to mark as a re-print.` };
-
-  const { data: lot, error: lotError } = await supabase
-    .from("auction_lots")
-    .select("id, sale_id")
-    .eq("id", lotId)
-    .eq("factory_id", factoryId)
-    .maybeSingle();
-  if (lotError) return { ok: false, error: friendlyError(lotError) };
-  if (!lot) return { ok: false, error: `Invoice ${invoiceNo} could not be re-read to mark as a re-print.` };
-
-  const form = new FormData();
-  form.set("additional_sample_kg", String(row.additionalSampleKg));
-  const marked = await markReprint(lot.id as string, lot.sale_id as string, form);
-  if (!marked.ok) return { ok: false, error: marked.error };
-
-  // The second sale number: where it actually sold after being re-printed.
-  const soldSaleNo = formatSaleNo(row.nextSaleNo ?? "");
-  if (soldSaleNo) {
-    const { error } = await supabase
-      .from("auction_lots")
-      .update({ final_sale_no: soldSaleNo })
-      .eq("id", lot.id as string)
-      .eq("factory_id", factoryId);
-    if (error) return { ok: false, error: friendlyError(error) };
-  }
-  return {
-    ok: true,
-    detail: `Marked as re-print${row.saleNo ? `, first offered in sale ${formatSaleNo(row.saleNo)}` : ""}${soldSaleNo ? `, sold in sale ${soldSaleNo}` : ""}.`,
-  };
-}
 
 export async function importDispatchSheet(formData: FormData): Promise<AuctionImportResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
