@@ -14,7 +14,8 @@ import type { JobRunItem } from "@/lib/background-jobs";
 import { jobIsRunning, startJobRun } from "@/lib/background-jobs-server";
 import { after } from "next/server";
 import { headers } from "next/headers";
-import { baseUrlFromHeaders, triggerJobTick } from "@/lib/jobs/trigger";
+import { baseUrlFromHeaders } from "@/lib/jobs/trigger";
+import { claimAndRunChunk } from "@/lib/jobs/worker";
 import { KNOWN_GRADE_ALIASES, normalizeSpelling, type DispatchImportPayload } from "./import-row";
 import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
@@ -230,12 +231,13 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
   });
   if (!started.ok) return { ok: false, error: started.error };
 
-  // after(), not a bare void: the platform can suspend this instance the moment
-  // the response is sent, dropping an un-awaited fetch and leaving the run at
-  // "Waiting to start". The URL is read here because headers() is not
-  // dependable once the response has gone.
+  // The first chunk runs HERE, in this invocation, after the response. No HTTP
+  // to ourselves: that call is what kept failing silently, leaving a run at
+  // "Waiting to start" and later reported as "0 of 230". after() is already
+  // enough to outlive the response. The URL is only for the chunk-to-chunk
+  // handover, and is read now because headers() is not dependable inside after().
   const base = baseUrlFromHeaders(await headers());
-  after(async () => { await triggerJobTick(base ?? undefined); });
+  after(async () => { await claimAndRunChunk(base); });
 
   return { ok: true, runId: started.handle.runId };
 }

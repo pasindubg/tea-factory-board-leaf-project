@@ -22,7 +22,7 @@ export function baseUrlFromHeaders(source: { get(name: string): string | null })
  * where request APIs are no longer dependable. Never throws — the run row
  * exists either way, and the cron would collect it.
  */
-export async function triggerJobTick(baseUrl?: string): Promise<void> {
+export async function triggerJobTick(baseUrl?: string): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     const { tickSecret } = getJobsEnv();
 
@@ -41,16 +41,16 @@ export async function triggerJobTick(baseUrl?: string): Promise<void> {
     });
     // Logged, not thrown: a rejected nudge is why a run would sit unstarted.
     if (!response.ok) {
-      console.error(
-        `[jobs] tick refused the nudge: ${response.status} ${await response.text().catch(() => "")}`.trim(),
-      );
+      const reason = `the worker refused the handover: ${response.status} ${(await response.text().catch(() => "")).slice(0, 200)}`.trim();
+      console.error(`[jobs] ${reason}`);
+      return { ok: false, reason };
     }
+    return { ok: true };
   } catch (error) {
     // Loud but never thrown — failing here would fail an upload that
     // succeeded. Usually a missing SUPABASE_JWT_SECRET or JOBS_TICK_SECRET.
-    console.error(
-      "[jobs] could not nudge the worker; the run stays queued until the cron collects it.",
-      error instanceof Error ? error.message : error,
-    );
+    const reason = `could not reach the worker: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(`[jobs] ${reason}`);
+    return { ok: false, reason };
   }
 }
