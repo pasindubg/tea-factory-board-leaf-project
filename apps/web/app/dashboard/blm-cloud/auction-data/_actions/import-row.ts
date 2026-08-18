@@ -1,10 +1,8 @@
 import "server-only";
 
-import { carryForwardInvoiceFilters, type DispatchSheetRow } from "@tea/api";
-import { friendlyError } from "@/lib/errors";
+import type { DispatchSheetRow } from "@tea/api";
 import type { JobRunItem } from "@/lib/background-jobs";
 import type { requireProfile } from "@/lib/profile";
-import { markReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 
 /**
@@ -118,58 +116,6 @@ export function invoiceFormData(row: DispatchSheetRow, brokerId: string, markId:
 }
 
 /**
- * Moves a just-imported lot to `re-print`, recording the sale it sold in.
- *
- * The lot is found by its invoice number because `createInvoiceFromOverview`
- * deliberately returns no row — the overview refetches rather than splicing in
- * a locally-built one — and the import needs the id to transition it.
- */
-export async function markImportedLotAsReprint(
-  supabase: Supa,
-  factoryId: string,
-  row: DispatchSheetRow,
-): Promise<{ ok: true; detail: string } | { ok: false; error: string }> {
-  const invoiceNo = formatFourDigitNo(row.invoiceNo);
-  const { data: invoiceRows, error: lookupError } = await supabase
-    .from("lot_invoices")
-    .select("lot_id, invoice_no")
-    .eq("factory_id", factoryId)
-    .or(carryForwardInvoiceFilters([invoiceNo]).join(","));
-  if (lookupError) return { ok: false, error: friendlyError(lookupError) };
-  const lotId = (invoiceRows ?? [])[0]?.lot_id as string | undefined;
-  if (!lotId) return { ok: false, error: `Invoice ${invoiceNo} was created but could not be found again to mark as a re-print.` };
-
-  const { data: lot, error: lotError } = await supabase
-    .from("auction_lots")
-    .select("id, sale_id")
-    .eq("id", lotId)
-    .eq("factory_id", factoryId)
-    .maybeSingle();
-  if (lotError) return { ok: false, error: friendlyError(lotError) };
-  if (!lot) return { ok: false, error: `Invoice ${invoiceNo} could not be re-read to mark as a re-print.` };
-
-  const form = new FormData();
-  form.set("additional_sample_kg", String(row.additionalSampleKg));
-  const marked = await markReprint(lot.id as string, lot.sale_id as string, form);
-  if (!marked.ok) return { ok: false, error: marked.error };
-
-  // The second sale number: where it actually sold after being re-printed.
-  const soldSaleNo = formatSaleNo(row.nextSaleNo ?? "");
-  if (soldSaleNo) {
-    const { error } = await supabase
-      .from("auction_lots")
-      .update({ final_sale_no: soldSaleNo })
-      .eq("id", lot.id as string)
-      .eq("factory_id", factoryId);
-    if (error) return { ok: false, error: friendlyError(error) };
-  }
-  return {
-    ok: true,
-    detail: `Marked as re-print${row.saleNo ? `, first offered in sale ${formatSaleNo(row.saleNo)}` : ""}${soldSaleNo ? `, sold in sale ${soldSaleNo}` : ""}.`,
-  };
-}
-
-/**
  * One row, start to finish, returning what to record about it.
  *
  * Lifted verbatim from the loop that used to live inside the import action, so
@@ -185,7 +131,7 @@ export async function applyImportRow(input: {
   createInvoice: (form: FormData) => Promise<ActionResult>;
   registerReprint: (form: FormData) => Promise<ActionResult>;
 }): Promise<JobRunItem> {
-  const { row, lookups, cutoverDate, supabase, factoryId } = input;
+  const { row, lookups, cutoverDate } = input;
   const item = (status: string, detail: string): JobRunItem => ({
     ref: String(row.sheetRow),
     label: formatFourDigitNo(row.invoiceNo),
@@ -200,18 +146,21 @@ export async function applyImportRow(input: {
 
   const form = invoiceFormData(row, brokerId, markId, cutoverDate, lookups);
 
-  // Only a re-print the book never dispatched belongs in the cutover register.
-  // The book marks a row "Reprint" for BOTH cases: a lot dispatched from here
-  // that went unsold and was re-printed (an ordinary lifecycle this system
-  // models in full), and a lot already sitting at the broker from a sale that
-  // predates the book. The dispatch date separates them — the second kind has
-  // none, because it never left here. Registering the first kind would badge a
-  // real dispatch as a cutover entry and hide the sale it came from.
-  if (row.isReprint && !row.dispatchDate) {
+  // Every book re-print goes to the cutover register, dispatched or not.
+  // The dispatched kind used to be created as an invoice and then marked, but
+  // marking demands an acknowledged lot and a lot created seconds earlier never
+  // is — the rows failed every time. The register records the original sale
+  // (target_sale_no) and the sale it sold in, so nothing about its origin is
+  // lost, and it appears on the Re-print Overview to be caught up later.
+  if (row.isReprint) {
     form.set("target_sale_no", formatSaleNo(row.saleNo ?? ""));
     form.set("sold_sale_no", formatSaleNo(row.nextSaleNo ?? ""));
     form.set("sample_allowance", String(row.sampleWeightKg + row.additionalSampleKg));
-    form.set("reason", `Imported from the Dispatch Schedule, sheet row ${row.sheetRow}.`);
+    form.set(
+      "reason",
+      `Imported from the Dispatch Schedule, sheet row ${row.sheetRow}.` +
+        (row.dispatchDate ? ` Dispatched ${row.dispatchDate}${row.saleNo ? ` for sale ${formatSaleNo(row.saleNo)}` : ""}.` : ""),
+    );
     const result = await input.registerReprint(form);
     return result.ok
       ? item("reprint", result.notice ?? "Registered as an outstanding re-print.")
@@ -220,13 +169,5 @@ export async function applyImportRow(input: {
 
   const result = await input.createInvoice(form);
   if (!result.ok) return item("failed", result.error);
-
-  // A dispatched lot the book marks as re-printed: created as an ordinary
-  // invoice above, then moved through the SAME owner action the Lots list uses,
-  // so the sampling deduction and audit entry are identical.
-  if (row.isReprint) {
-    const marked = await markImportedLotAsReprint(supabase, factoryId, row);
-    return marked.ok ? item("reprint", marked.detail) : item("failed", marked.error);
-  }
   return item("imported", result.notice ?? "Invoice created.");
 }
