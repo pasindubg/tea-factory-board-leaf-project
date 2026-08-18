@@ -1,6 +1,10 @@
 "use server";
 
+import { after } from "next/server";
+import { headers } from "next/headers";
 import { requirePagePermission } from "@/lib/profile";
+import { baseUrlFromHeaders } from "@/lib/jobs/trigger";
+import { claimAndRunChunk } from "@/lib/jobs/worker";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 
@@ -76,6 +80,12 @@ export async function executeBackgroundJobs(ids: string[]): Promise<ListMutation
 
   const count = data?.length ?? 0;
   if (count === 0) return { ok: false, error: "Nothing to start. A job already in progress must be cancelled first." };
+
+  // The first chunk runs in THIS invocation — Execute used to only queue, so
+  // starting depended entirely on something else coming along to claim.
+  const base = baseUrlFromHeaders(await headers());
+  after(async () => { await claimAndRunChunk(base); });
+
   return { ok: true, notice: `${count} job${count === 1 ? "" : "s"} queued to run.`, invalidate };
 }
 

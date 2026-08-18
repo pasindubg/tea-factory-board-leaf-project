@@ -22,7 +22,7 @@ export function baseUrlFromHeaders(source: { get(name: string): string | null })
  * where request APIs are no longer dependable. Never throws — the run row
  * exists either way, and the cron would collect it.
  */
-export async function triggerJobTick(baseUrl?: string): Promise<void> {
+export async function triggerJobTick(baseUrl?: string): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     const { tickSecret } = getJobsEnv();
 
@@ -34,23 +34,30 @@ export async function triggerJobTick(baseUrl?: string): Promise<void> {
 
     const response = await fetch(`${base}/api/jobs/tick`, {
       method: "POST",
-      headers: { authorization: `Bearer ${tickSecret}` },
+      headers: {
+        authorization: `Bearer ${tickSecret}`,
+        // Deployment Protection intercepts the app's own fetch with a 401 SSO
+        // page. Vercel issues this secret for exactly that; sent only when set.
+        ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+          ? { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET }
+          : {}),
+      },
       // The tick claims and returns; the chunk runs after the response. So
       // this resolves in ms however long the work takes.
       keepalive: true,
     });
     // Logged, not thrown: a rejected nudge is why a run would sit unstarted.
     if (!response.ok) {
-      console.error(
-        `[jobs] tick refused the nudge: ${response.status} ${await response.text().catch(() => "")}`.trim(),
-      );
+      const reason = `the worker refused the handover: ${response.status} ${(await response.text().catch(() => "")).slice(0, 200)}`.trim();
+      console.error(`[jobs] ${reason}`);
+      return { ok: false, reason };
     }
+    return { ok: true };
   } catch (error) {
     // Loud but never thrown — failing here would fail an upload that
     // succeeded. Usually a missing SUPABASE_JWT_SECRET or JOBS_TICK_SECRET.
-    console.error(
-      "[jobs] could not nudge the worker; the run stays queued until the cron collects it.",
-      error instanceof Error ? error.message : error,
-    );
+    const reason = `could not reach the worker: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(`[jobs] ${reason}`);
+    return { ok: false, reason };
   }
 }
