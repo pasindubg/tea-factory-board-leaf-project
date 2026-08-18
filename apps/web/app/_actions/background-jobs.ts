@@ -4,7 +4,9 @@ import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES } from "@/lib/roles";
 import { isJobKey, type JobRunState } from "@/lib/background-jobs";
 import { latestJobRun, markRunInterrupted } from "@/lib/background-jobs-server";
-import { triggerJobTick } from "@/lib/jobs/trigger";
+import { after } from "next/server";
+import { headers } from "next/headers";
+import { baseUrlFromHeaders, triggerJobTick } from "@/lib/jobs/trigger";
 
 /**
  * The one poll every background-job UI uses.
@@ -52,7 +54,10 @@ export async function fetchJobRun(jobKey: string): Promise<
     }
 
     if (claimsToBeWorking && quietFor > STALLED_AFTER_MS) {
-      void triggerJobTick();
+      // after(), same reason as the upload: an un-awaited fetch dies with the
+      // instance.
+      const base = baseUrlFromHeaders(await headers());
+      after(async () => { await triggerJobTick(base ?? undefined); });
     }
   }
 
