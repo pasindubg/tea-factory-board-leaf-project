@@ -34,7 +34,14 @@ export async function triggerJobTick(baseUrl?: string): Promise<{ ok: true } | {
 
     const response = await fetch(`${base}/api/jobs/tick`, {
       method: "POST",
-      headers: { authorization: `Bearer ${tickSecret}` },
+      headers: {
+        authorization: `Bearer ${tickSecret}`,
+        // Deployment Protection intercepts the app's own fetch with a 401 SSO
+        // page. Vercel issues this secret for exactly that; sent only when set.
+        ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+          ? { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET }
+          : {}),
+      },
       // The tick claims and returns; the chunk runs after the response. So
       // this resolves in ms however long the work takes.
       keepalive: true,
