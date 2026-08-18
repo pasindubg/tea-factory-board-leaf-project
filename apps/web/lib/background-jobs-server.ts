@@ -28,16 +28,11 @@ const COLUMNS =
 export type JobRunHandle = { runId: string; jobKey: JobKey };
 
 /**
- * Queues a run.
+ * Queues a run. `queued`, not `running`: the row is a request, and a worker
+ * picks it up — which is why the work no longer dies with the caller.
  *
- * `queued`, not `running`: the row is the request the caller makes, and a
- * worker picks it up. That is the whole difference between work that dies with
- * the request that started it and work that does not — the action returns as
- * soon as this row exists, and nothing it does afterwards matters to the job.
- *
- * `payload` is the job's input, and must be self-contained: the worker reads it
- * minutes later in another process, so anything the handler needs has to be in
- * here rather than in a closure or an upload buffer.
+ * `payload` must be self-contained; the worker reads it later in another
+ * process, with no closure and no upload to go back to.
  */
 export async function startJobRun(
   supabase: Supa,
@@ -172,16 +167,9 @@ export async function latestJobRun(
 }
 
 /**
- * Declares a run dead.
- *
- * A run whose worker was killed keeps saying "In progress" forever, because
- * nothing on the server is left to say otherwise — the invocation that would
- * have written the failure is the one that died. Somebody watching a bar frozen
- * at 27% has no way to tell that from slow work, so it is stated plainly and
- * the run stops claiming to be running.
- *
- * The cursor is left exactly where it was: this marks the run, it does not undo
- * it. Execute resumes from that cursor rather than starting over.
+ * Declares a run dead. A killed worker leaves nothing behind to report itself,
+ * so the run says "In progress" forever and a frozen bar is indistinguishable
+ * from slow work. The cursor is untouched — Execute resumes from it.
  */
 export async function markRunInterrupted(
   supabase: Supa,
@@ -200,16 +188,15 @@ export async function markRunInterrupted(
     })
     .eq("id", runId)
     .eq("factory_id", factoryId)
-    // Only if it still claims to be working. Without this, a run that finished
-    // between the read and this write would be marked dead after succeeding.
+    // Guards the read-then-write race: a run that finished in between must not
+    // be marked dead after succeeding.
     .in("status", ["queued", "running"]);
 }
 
 /** Whether a job is already working, so a second run cannot be stacked on it. */
 export async function jobIsRunning(supabase: Supa, factoryId: string, jobKey: JobKey): Promise<boolean> {
   const latest = await latestJobRun(supabase, factoryId, jobKey);
-  // `queued` counts as running. It is the state a run sits in between the
-  // upload returning and the worker claiming it, and treating it as idle let a
-  // second import be started on top of the first during exactly that window.
+  // `queued` counts: treating it as idle let a second import be stacked on the
+  // first in the window before the worker claimed it.
   return latest.ok && (latest.run?.status === "running" || latest.run?.status === "queued");
 }

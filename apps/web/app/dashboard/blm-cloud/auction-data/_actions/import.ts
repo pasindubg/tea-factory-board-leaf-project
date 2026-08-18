@@ -13,7 +13,7 @@ import { friendlyError } from "@/lib/errors";
 import type { JobRunItem } from "@/lib/background-jobs";
 import { jobIsRunning, startJobRun } from "@/lib/background-jobs-server";
 import { triggerJobTick } from "@/lib/jobs/trigger";
-import type { DispatchImportPayload } from "./import-row";
+import { KNOWN_GRADE_ALIASES, normalizeSpelling, type DispatchImportPayload } from "./import-row";
 import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 import { colomboToday } from "@/app/dashboard/auction/_actions/_shared";
@@ -49,16 +49,6 @@ export type AuctionImportResult = { ok: true; runId: string } | { ok: false; err
  * as it already does for broker documents that spell a grade their own way.
  * Anything NOT listed here is treated as a grade in its own right.
  */
-const KNOWN_GRADE_ALIASES: Record<string, string> = {
-  PEKOE: "PEKO",
-  PEKOE1: "PEKO1",
-  "B.M": "BM",
-  DUST1: "DUST",
-  FBOPFSP: "FBOFSP",
-  "OP 1": "OP1",
-};
-
-const normalizeSpelling = (value: string) => value.trim().toUpperCase();
 
 /**
  * Makes every grade spelling in the sheet resolvable before a single invoice
@@ -124,32 +114,6 @@ async function ensureGrades(
   return { ok: true, gradesAdded, aliasesAdded };
 }
 
-/** The grade code an invoice row should be entered with — its alias target
- * when it has one, otherwise the spelling itself. */
-function gradeForRow(row: DispatchSheetRow): string {
-  return KNOWN_GRADE_ALIASES[normalizeSpelling(row.grade)] ?? row.grade.trim();
-}
-
-/** Form fields for one ordinary lot invoice, exactly as the Invoice Overview
- * draft row submits them. */
-function invoiceFormData(row: DispatchSheetRow, brokerId: string, markId: string, cutoverDate: string): FormData {
-  // An outstanding re-print has no dispatch date in the book; it is registered
-  // as of the cutover day instead.
-  const dispatchDate = row.dispatchDate ?? row.saleDate ?? cutoverDate;
-  const form = new FormData();
-  form.set("broker_id", brokerId);
-  form.set("selling_mark_id", markId);
-  form.set("dispatch_date", dispatchDate);
-  form.set("sale_date", row.saleDate ?? dispatchDate);
-  form.set("target_sale_no", formatSaleNo(row.saleNo ?? row.nextSaleNo ?? ""));
-  form.set("invoice_no", formatFourDigitNo(row.invoiceNo));
-  form.set("grade", gradeForRow(row));
-  form.set("bags", String(row.bags));
-  form.set("kg_per_bag", String(row.kgPerBag));
-  form.set("sample_allowance", String(row.sampleWeightKg));
-  if (row.lotNo) form.set("lot_no", row.lotNo);
-  return form;
-}
 
 
 /**
@@ -257,21 +221,15 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
     label: file.name,
     totalUnits: parsed.rows.length,
     notes,
-    // Deliberately NOT seeded with the skipped rows. They are known already,
-    // but a run that has not started yet showing "Skipped: 112" and a table of
-    // 112 skipped rows reads as though the import ran and rejected everything,
-    // while the bar underneath still says 0%. They travel on the payload and
-    // the worker attaches them when the run finishes.
-    // Self-contained on purpose: the worker reads this in another invocation
-    // minutes later and has no upload to go back to.
+    // Skipped rows travel on the payload, not seeded onto the run: "Skipped:
+    // 112" over a 0% bar reads as an import that ran and rejected everything.
+    // Self-contained on purpose — the worker has no upload to go back to.
     payload: { rows: parsed.rows, cutoverDate, skipped: outcomes } satisfies DispatchImportPayload,
   });
   if (!started.ok) return { ok: false, error: started.error };
 
-  // The action is finished. The rows are applied by the worker, one chunk per
-  // invocation, resuming from a cursor — which is what makes the import survive
-  // a closed tab, a sign-out, a deploy, and a function that runs out of time.
-  // Nothing here waits for it.
+  // Applied by the worker, one chunk per invocation, resuming from a cursor —
+  // which is what survives a closed tab, a sign-out and a deploy.
   void triggerJobTick();
 
   return { ok: true, runId: started.handle.runId };

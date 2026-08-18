@@ -40,11 +40,9 @@ export type Profile = {
  * - deactivated → signed out, /login
  */
 async function resolveProfile() {
-  // A background job installs who it is acting as before calling anything, so
-  // the gates below resolve from memory instead of a cookie. This is the only
-  // reason the import can keep calling the very same server actions the
-  // Invoice Overview page uses — and why signing out no longer stops it, and
-  // why a row no longer costs several auth round trips.
+  // A job installs who it acts as, so the gates below resolve from memory
+  // rather than a cookie — which is why signing out no longer stops an import,
+  // and why a row no longer costs several auth round trips.
   const jobActor = currentJobActor();
   if (jobActor) return jobActor;
 
@@ -92,14 +90,9 @@ async function resolveProfile() {
 /**
  * Reads one user's profile with whatever client it is handed.
  *
- * Split out of resolveProfile because the background job worker needs exactly
- * this and none of what surrounds it: a job has no cookies to read a session
- * from, and — more importantly — must never call redirect(). Signing out used
- * to abort a running import halfway precisely because a gate deep inside the
- * loop reached redirect("/login") and threw.
- *
- * So the failure is RETURNED here, and each caller decides: a request redirects,
- * a job fails the run with a message somebody can read on the overview.
+ * Split out because a job has no session and must never redirect() — a gate
+ * deep inside the loop reaching redirect("/login") is what aborted a running
+ * import on sign-out. Failure is RETURNED; the caller decides what to do.
  */
 export async function readProfile(
   supabase: Awaited<ReturnType<typeof createClient>>,
