@@ -12,7 +12,9 @@ import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import type { JobRunItem } from "@/lib/background-jobs";
 import { jobIsRunning, startJobRun } from "@/lib/background-jobs-server";
-import { triggerJobTick } from "@/lib/jobs/trigger";
+import { after } from "next/server";
+import { headers } from "next/headers";
+import { baseUrlFromHeaders, triggerJobTick } from "@/lib/jobs/trigger";
 import { KNOWN_GRADE_ALIASES, normalizeSpelling, type DispatchImportPayload } from "./import-row";
 import { createInvoiceFromOverview, markReprint, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
@@ -228,9 +230,12 @@ export async function importDispatchSheet(formData: FormData): Promise<AuctionIm
   });
   if (!started.ok) return { ok: false, error: started.error };
 
-  // Applied by the worker, one chunk per invocation, resuming from a cursor —
-  // which is what survives a closed tab, a sign-out and a deploy.
-  void triggerJobTick();
+  // after(), not a bare void: the platform can suspend this instance the moment
+  // the response is sent, dropping an un-awaited fetch and leaving the run at
+  // "Waiting to start". The URL is read here because headers() is not
+  // dependable once the response has gone.
+  const base = baseUrlFromHeaders(await headers());
+  after(async () => { await triggerJobTick(base ?? undefined); });
 
   return { ok: true, runId: started.handle.runId };
 }
