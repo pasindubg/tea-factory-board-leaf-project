@@ -285,7 +285,7 @@ function DeductionsSettings({ initialSettings, canManage }: { initialSettings: P
       <p className="mt-1 max-w-4xl text-sm text-stone-500 dark:text-stone-400">
         Transport applies to supplier kilograms automatically. The selected water-penalty mode is charged only on deliveries marked as wet at intake.
       </p>
-      <form onSubmit={submit} className="mt-5 flex flex-wrap items-end gap-3" data-action-feedback-ignore>
+      <form onSubmit={submit} className="mt-5 flex flex-wrap items-end gap-3">
         <label className="text-sm">
           Transport (LKR/kg)
           <input name="transport_per_kg" type="number" step="0.01" min="0" defaultValue={initialSettings.transportPerKg} disabled={!canManage || saving} className={`${input} w-40`} />

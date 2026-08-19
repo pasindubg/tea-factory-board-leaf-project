@@ -291,3 +291,34 @@ Use this file to track changes that matter when hosting or rebuilding the projec
   - confirm saving a lot with a known grade still succeeds;
   - run `db:verify-rls` and `db:verify-auth`;
   - run the repo lint and typecheck commands.
+
+## 2026-08-19 - Settlement And VAT Upsert Conflict Targets
+
+- Migration `0053_true_stryfe.sql` replaces `idx_settlement_charges_settlement`
+  with a UNIQUE index `uq_settlement_charges_code` on
+  `settlement_charges(settlement_id, code)`, and `idx_vat_ledger_sale_line`
+  with a UNIQUE index `uq_vat_ledger_sale_line_flow` on
+  `vat_ledger(sale_line_id, flow)`. Both replace a plain lookup index, so no
+  index is lost.
+- Why: the sellers-contract confirm path upserts both tables with
+  `ON CONFLICT (settlement_id, code)` and `ON CONFLICT (sale_line_id)`, but no
+  unique index backed either target. Postgres rejected every such statement
+  with `42P10`, so `settlement_charges` and `vat_ledger` were never populated
+  since they were introduced in `0012`. The errors were discarded by the
+  action, so the confirm reported success.
+- The `vat_ledger` conflict target moved from `sale_line_id` to
+  `sale_line_id,flow`, keeping the documented seam for a future
+  `auction_input` row alongside the `auction_output` one.
+- The migration deletes pre-existing duplicates (keeping the newest row per
+  key) before creating each unique index, so it is safe to apply to an
+  environment that already holds rows. The local stack held zero rows in both
+  tables, which is itself the evidence the upserts never succeeded.
+- No package dependency was added or changed.
+- Verification checklist for this change:
+  - apply migrations through `0053_true_stryfe.sql`;
+  - confirm a sellers contract and check `settlement_charges` and `vat_ledger`
+    now hold rows, and that re-confirming the same document updates rather
+    than duplicates them;
+  - run `pnpm --dir packages/api test:contract`;
+  - run `db:verify-rls` and `db:verify-auth`;
+  - run the repo lint and typecheck commands.

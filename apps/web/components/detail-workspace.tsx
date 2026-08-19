@@ -118,7 +118,6 @@ export function DetailWorkspace({
               aria-expanded={false}
               aria-label="Show record list"
               title="Show record list"
-              data-action-feedback-ignore
               onClick={() => setRailCollapsed(false)}
             >
               <PanelLeftOpen aria-hidden="true" className="h-4 w-4" />
@@ -132,7 +131,6 @@ export function DetailWorkspace({
               size="icon"
               aria-label={createAction.label}
               title={createAction.title ?? createAction.label}
-              data-action-feedback-ignore
               disabled={createAction.disabled}
               busy={createAction.busy}
               busyLabel={createAction.label}
@@ -181,7 +179,6 @@ export function DetailWorkspace({
               aria-expanded={true}
               aria-label="Collapse record list"
               title="Collapse record list"
-              data-action-feedback-ignore
               onClick={() => setRailCollapsed(true)}
             >
               <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
@@ -260,7 +257,6 @@ function DetailStateMenu({ state }: { state: DetailWorkspaceState }) {
         aria-controls={menuId}
         aria-expanded={open}
         aria-haspopup="menu"
-        data-action-feedback-ignore
         onClick={() => setOpen((current) => !current)}
         className="min-w-28"
       >
@@ -301,7 +297,6 @@ function DetailStateMenu({ state }: { state: DetailWorkspaceState }) {
               }}
               type="button"
               role="menuitem"
-              data-action-feedback-ignore
               variant="ghost"
               disabled={command.disabled}
               busy={command.busy}
@@ -331,7 +326,6 @@ function DetailStateIndicator({ state }: { state: DetailWorkspaceState }) {
         type="button"
         variant="secondary"
         data-testid={state.testId ?? "detail-state-indicator"}
-        data-action-feedback-ignore
         aria-label={`${model.current.label}, ${model.current.metric}`}
         className="min-h-11 w-full flex-col items-stretch justify-start rounded-xl px-3 py-2 text-left shadow-sm"
       >
@@ -427,7 +421,6 @@ function DetailDeleteCommand({
         variant="ghost"
         size="icon"
         className="text-red-600 hover:bg-stone-100 dark:text-red-400 dark:hover:bg-stone-800"
-        data-action-feedback-ignore
         disabled={config.disabled}
         busy={deleting}
         title={config.disabledReason ?? config.label ?? "Delete"}
@@ -525,7 +518,6 @@ export function DetailRecordPanel({
                 aria-expanded={contentVisible}
                 aria-label={`${contentVisible ? "Collapse" : "Expand"} ${label}`}
                 title={`${contentVisible ? "Collapse" : "Expand"} ${label}`}
-                data-action-feedback-ignore
                 onClick={() => setCollapsed((current) => !current)}
               >
                 {contentVisible ? (

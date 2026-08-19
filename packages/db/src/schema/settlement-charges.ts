@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, numeric, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, numeric, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { settlements } from "./settlements";
 
@@ -25,7 +25,8 @@ export const settlementCharges = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
-    index("idx_settlement_charges_settlement").on(t.settlementId),
+    // The ingest upsert's ON CONFLICT target; also the per-settlement lookup.
+    uniqueIndex("uq_settlement_charges_code").on(t.settlementId, t.code),
     index("idx_settlement_charges_factory").on(t.factoryId),
   ],
 );

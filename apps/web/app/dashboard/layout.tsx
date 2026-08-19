@@ -54,35 +54,43 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const wantsDispatchDetail = nav.some((mod) => mod.key === "auction-dispatch-detail");
   const wantsSaleDetail = nav.some((mod) => mod.key === "auction-sale-detail");
   const [{ data: latestDispatchRows }, { data: latestSaleRows }] = await Promise.all([
+    // Undated dispatches exist, and Postgres sorts NULLs first on DESC.
     wantsDispatchDetail
       ? supabase
           .from("auction_sales")
           .select("id")
-          .order("dispatch_date", { ascending: false })
-          .order("sale_no", { ascending: false })
+          .eq("sale_kind", "dispatch")
+          .order("dispatch_date", { ascending: false, nullsFirst: false })
+          .order("sale_no", { ascending: false, nullsFirst: false })
           .limit(1)
       : Promise.resolve({ data: [] }),
+    // A dispatch identifies a sale by its target, or by its own number when it
+    // has no target. Unresolved here means the nav keeps its Sales Overview href.
     wantsSaleDetail
       ? supabase
           .from("auction_sales")
           .select("sale_no, target_sale_no")
-          .not("target_sale_no", "is", null)
-          .order("dispatch_date", { ascending: false })
-          .order("target_sale_no", { ascending: false })
+          .eq("sale_kind", "dispatch")
+          .order("dispatch_date", { ascending: false, nullsFirst: false })
+          .order("target_sale_no", { ascending: false, nullsFirst: false })
           .limit(1)
       : Promise.resolve({ data: [] }),
   ]);
   const latestDispatch = latestDispatchRows?.[0];
   const latestSale = latestSaleRows?.[0];
   const latestSaleNo = saleNoKey(latestSale?.target_sale_no || latestSale?.sale_no);
-  const navWithDetailLinks = nav.map((mod) => {
+  const navWithDetailLinks = nav.flatMap((mod) => {
     if (mod.key === "auction-dispatch-detail" && latestDispatch?.id) {
-      return { ...mod, href: `/dashboard/auction/${latestDispatch.id}` };
+      return [{ ...mod, href: `/dashboard/auction/${latestDispatch.id}` }];
     }
-    if (mod.key === "auction-sale-detail" && latestSaleNo) {
-      return { ...mod, href: `/dashboard/auction/sales/${encodeURIComponent(latestSaleNo)}` };
+    // With no sale to open this would keep Sales Overview's href: a link to the
+    // page you are already on, which neither navigates nor shows click feedback.
+    if (mod.key === "auction-sale-detail") {
+      return latestSaleNo
+        ? [{ ...mod, href: `/dashboard/auction/sales/${encodeURIComponent(latestSaleNo)}` }]
+        : [];
     }
-    return mod;
+    return [mod];
   });
 
   return (

@@ -82,7 +82,10 @@ function parseAsiaSiyakaContract(text: string): ParsedContract {
     for (const candidate of headers) if (candidate.index <= index) header = candidate;
     return header;
   };
-  const contracts = headers.map(({ contractNo, markCode, markName }) => ({ contractNo, markCode, markName }));
+  // A multi-page contract repeats its header per page; keep the first.
+  const contracts = [...new Map(headers.map((h) => [h.contractNo, h])).values()].map(
+    ({ contractNo, markCode, markName }) => ({ contractNo, markCode, markName }),
+  );
   const saleNo = contracts[0] ? contracts[0].contractNo.split("/").slice(0, 2).join("-") : null;
 
   const lines: ContractLine[] = [];
