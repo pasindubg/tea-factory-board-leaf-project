@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, numeric, boolean, date, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, numeric, boolean, date, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { saleLines } from "./sale-lines";
 
@@ -30,6 +30,8 @@ export const vatLedger = pgTable(
   },
   (t) => [
     index("idx_vat_ledger_factory").on(t.factoryId),
-    index("idx_vat_ledger_sale_line").on(t.saleLineId),
+    // The ingest upsert's ON CONFLICT target; flow is keyed so a future
+    // auction_input row can join an existing auction_output one.
+    uniqueIndex("uq_vat_ledger_sale_line_flow").on(t.saleLineId, t.flow),
   ],
 );

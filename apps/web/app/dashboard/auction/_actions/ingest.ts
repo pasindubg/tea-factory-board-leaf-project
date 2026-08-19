@@ -548,10 +548,11 @@ export async function confirmContract(importId: string, saleId: string) {
     .map(([name, vatNo]) => ({ factory_id: profile.factory_id, name, vat_no: vatNo || null }));
   const buyerByName = new Map<string, string>();
   if (uniqueBuyers.length > 0) {
-    const { data: upserted } = await supabase
+    const { data: upserted, error: buyerUpsertError } = await supabase
       .from("buyers")
       .upsert(uniqueBuyers, { onConflict: "factory_id,name" })
       .select("id, name");
+    if (buyerUpsertError) return back(detail, friendlyError(buyerUpsertError));
     for (const b of upserted ?? []) buyerByName.set(b.name as string, b.id as string);
   }
 
@@ -571,8 +572,15 @@ export async function confirmContract(importId: string, saleId: string) {
     });
   }
   if (saleLineByLot.size > 0) {
-    await supabase.from("sale_lines").upsert([...saleLineByLot.values()], { onConflict: "lot_id" });
-    await supabase.from("auction_lots").update({ state: "sold" }).in("id", [...saleLineByLot.keys()]);
+    const { error: saleLineUpsertError } = await supabase
+      .from("sale_lines")
+      .upsert([...saleLineByLot.values()], { onConflict: "lot_id" });
+    if (saleLineUpsertError) return back(detail, friendlyError(saleLineUpsertError));
+    const { error: lotStateError } = await supabase
+      .from("auction_lots")
+      .update({ state: "sold" })
+      .in("id", [...saleLineByLot.keys()]);
+    if (lotStateError) return back(detail, friendlyError(lotStateError));
   }
 
   // ── Settlements per contract (A3) ──
@@ -652,7 +660,10 @@ export async function confirmContract(importId: string, saleId: string) {
       };
       // Compute every contract's settlement first (pure), then write all
       // settlements and all their charge lines in two batched upserts.
-      const computed = parsed.contracts.map((c) => {
+      // Older staged imports repeat a contract header per page; the upsert
+      // rejects the whole statement if one conflict key appears twice.
+      const uniqueContracts = [...new Map(parsed.contracts.map((c) => [c.contractNo, c])).values()];
+      const computed = uniqueContracts.map((c) => {
         const contractLines = soldLines.filter((l) => l.contractNo === c.contractNo);
         const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
         const s = computeSettlement(rates, {
@@ -664,7 +675,7 @@ export async function confirmContract(importId: string, saleId: string) {
         return { contractNo: c.contractNo, proceedsTotal, s };
       });
 
-      const { data: upsertedSettlements } = await supabase
+      const { data: upsertedSettlements, error: settlementUpsertError } = await supabase
         .from("settlements")
         .upsert(
           computed.map(({ contractNo, proceedsTotal, s }) => ({
@@ -679,6 +690,7 @@ export async function confirmContract(importId: string, saleId: string) {
           { onConflict: "factory_id,contract_no" },
         )
         .select("id, contract_no");
+      if (settlementUpsertError) return back(detail, friendlyError(settlementUpsertError));
       const settlementIdByContract = new Map<string, string>(
         (upsertedSettlements ?? []).map((r) => [r.contract_no as string, r.id as string]),
       );
@@ -695,7 +707,10 @@ export async function confirmContract(importId: string, saleId: string) {
         }));
       });
       if (chargeRows.length > 0) {
-        await supabase.from("settlement_charges").upsert(chargeRows, { onConflict: "settlement_id,code" });
+        const { error: chargeUpsertError } = await supabase
+          .from("settlement_charges")
+          .upsert(chargeRows, { onConflict: "settlement_id,code" });
+        if (chargeUpsertError) return back(detail, friendlyError(chargeUpsertError));
       }
     }
 
@@ -720,14 +735,15 @@ export async function confirmContract(importId: string, saleId: string) {
       const recon = reconcileVat(vatInputs, inputVat);
 
       if (recon.lines.length > 0) {
-        await supabase.from("vat_ledger").upsert(
+        const { error: vatUpsertError } = await supabase.from("vat_ledger").upsert(
           recon.lines.map((l) => ({
             factory_id: profile.factory_id, sale_line_id: l.saleLineId,
             flow: l.flow, vat_amount: l.vatAmount.toFixed(2), mode: l.mode,
             status: "pending",
           })),
-          { onConflict: "sale_line_id" },
+          { onConflict: "sale_line_id,flow" },
         );
+        if (vatUpsertError) return back(detail, friendlyError(vatUpsertError));
       }
     }
   }
