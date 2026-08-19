@@ -2,7 +2,9 @@ import "server-only";
 
 import type { JobClient } from "@/lib/jobs/auth";
 import type { JobKey, JobRunItem } from "@/lib/background-jobs";
-import { runDispatchImportChunk } from "@/lib/jobs/handlers/dispatch-import";
+// Handlers are DOMAIN code and live beside the feature that owns them; this
+// import line is the only place the engine ever names one.
+import { runDispatchImportChunk } from "@/app/dashboard/blm-cloud/auction-data/_actions/dispatch-import-job";
 
 /**
  * What a background job actually does, and the contract it runs under.
