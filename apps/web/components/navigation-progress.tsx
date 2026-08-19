@@ -46,13 +46,37 @@ export function NavigationProgress() {
     return () => window.clearTimeout(timer);
   }, [pathname, searchParams]);
 
+  // The overlay swallows every click, so a navigation that never lands would
+  // seal the page for good. Escape and a hard cap are the ways out.
+  useEffect(() => {
+    if (!visible) return;
+    const release = () => {
+      wasNavigating.current = false;
+      setVisible(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") release();
+    };
+    const failsafe = window.setTimeout(release, 10000);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(failsafe);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [visible]);
+
   if (!visible) return null;
 
   return (
-    <div
-      role="progressbar"
-      aria-label="Loading next page"
-      className="navigation-progress fixed inset-x-0 top-0 z-[130] h-1"
-    />
+    <>
+      <div
+        role="progressbar"
+        aria-label="Loading next page"
+        className="navigation-progress fixed inset-x-0 top-0 z-[200] h-1"
+      />
+      {/* Same signal, full screen, above everything — swallows every click
+          until the route settles. */}
+      <div aria-hidden="true" className="navigation-progress-overlay fixed inset-0 z-[195] cursor-progress" />
+    </>
   );
 }
