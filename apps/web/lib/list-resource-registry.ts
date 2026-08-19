@@ -1488,7 +1488,8 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const dispatches = (allDispatches ?? []).filter((dispatch) =>
         assignedDispatchIds.has(dispatch.id as string)
         || saleNoMatches(dispatch.target_sale_no as string | null, saleNo)
-        || saleNoMatches(dispatch.sale_no as string | null, saleNo),
+        // Own-number fallback only without a target, or dispatch 0020 joins sale 20.
+        || (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no as string | null, saleNo)),
       );
       const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id as string));
       const lotRows = allLotRows.filter((lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id));

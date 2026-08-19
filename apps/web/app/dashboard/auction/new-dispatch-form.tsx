@@ -73,7 +73,7 @@ export function NewDispatchFields({
     const previousSameSale = dispatchHistory.find((dispatch) =>
       dispatch.saleDate && (
         saleNoMatches(dispatch.targetSaleNo, formattedSaleNo) ||
-        saleNoMatches(dispatch.saleNo, formattedSaleNo)
+        (!dispatch.targetSaleNo && saleNoMatches(dispatch.saleNo, formattedSaleNo))
       )
     );
     if (previousSameSale && targetSaleNo !== formattedSaleNo) setTargetSaleNo(formattedSaleNo);
