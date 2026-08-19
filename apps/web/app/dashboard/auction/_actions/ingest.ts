@@ -128,22 +128,27 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 
   // Apply acknowledgement to every matched invoiced lot (in parallel — each touches a
   // distinct lot, then the sweep below moves whatever's left).
-  await Promise.all(
-    recon.rows
-      .filter((row) => row.invoiced && (row.status === "catalogued" || row.status === "shutout"))
-      .map((row) =>
-        supabase
-          .from("auction_lots")
-          .update({
-            lot_no: row.ack?.lotNo ?? null,
-            mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
-            state: row.status === "catalogued" ? "acknowledged" : "shutout",
-            shutout_reason:
-              row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
-          })
-          .eq("id", row.invoiced!.id),
-      ),
-  );
+  const ackUpdateErrors = (
+    await Promise.all(
+      recon.rows
+        .filter((row) => row.invoiced && (row.status === "catalogued" || row.status === "shutout"))
+        .map((row) =>
+          supabase
+            .from("auction_lots")
+            .update({
+              lot_no: row.ack?.lotNo ?? null,
+              mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
+              state: row.status === "catalogued" ? "acknowledged" : "shutout",
+              shutout_reason:
+                row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
+            })
+            .eq("id", row.invoiced!.id),
+        ),
+    )
+  )
+    .map((result) => result.error)
+    .filter((error) => error !== null);
+  if (ackUpdateErrors.length > 0) return back(detail, friendlyError(ackUpdateErrors[0]));
 
   const unexpectedAckEntries = recon.rows
     .filter((row) => row.status === "unexpected" && row.ack)
@@ -282,12 +287,18 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 
   // Remaining invoiced lots not in this ack → pending (may be in a later ack).
   // Group-wide: the ack is the broker's full statement for this sale.
-  await supabase.from("auction_lots").update({ state: "pending" }).in("sale_id", groupIds).eq("state", "invoiced");
+  const { error: pendingSweepError } = await supabase
+    .from("auction_lots")
+    .update({ state: "pending" })
+    .in("sale_id", groupIds)
+    .eq("state", "invoiced");
+  if (pendingSweepError) return back(detail, friendlyError(pendingSweepError));
 
-  await supabase
+  const { error: confirmError } = await supabase
     .from("doc_imports")
     .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
     .eq("id", importId);
+  if (confirmError) return back(detail, friendlyError(confirmError));
   // Flip every dispatch in the group that had lots acknowledged — but never
   // regress one that has already moved past cataloguing.
   const saleIdByLot = new Map((lotRows ?? []).map((l) => [l.id as string, l.sale_id as string]));
