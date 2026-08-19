@@ -163,6 +163,8 @@ export default async function SaleDetailPage({
   // A sale can be identified by an explicit lot assignment after reconciliation,
   // or by the target sale number on its broker invoice before that assignment is
   // present. Keep both paths so every row on the sales overview has a detail page.
+  // A dispatch's own number identifies a sale ONLY when it has no target: broker
+  // invoice 26B01-0020 must not leak into sale 20 when it targets sale 22.
   const assignedLotRows = allLotRows.filter((lot) =>
     saleNoMatches(lot.final_sale_no || lot.provisional_sale_no, saleNo),
   );
@@ -171,7 +173,7 @@ export default async function SaleDetailPage({
     (dispatch) =>
       assignedDispatchIds.has(dispatch.id) ||
       saleNoMatches(dispatch.target_sale_no, saleNo) ||
-      saleNoMatches(dispatch.sale_no, saleNo),
+      (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no, saleNo)),
   );
   const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id));
   const lotRows = allLotRows.filter(

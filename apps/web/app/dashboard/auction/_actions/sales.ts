@@ -405,7 +405,9 @@ export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutati
 
   const dispatchIds = new Set(
     (dispatches ?? [])
-      .filter((dispatch) => saleNoMatches(dispatch.target_sale_no as string | null, saleNo) || saleNoMatches(dispatch.sale_no as string, saleNo))
+      // sale_no is an identity fallback only for dispatches with no target —
+      // otherwise deleting sale 20 would take broker invoice 0020 (sale 22) with it.
+      .filter((dispatch) => saleNoMatches(dispatch.target_sale_no as string | null, saleNo) || (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no as string, saleNo)))
       .map((dispatch) => dispatch.id as string),
   );
   for (const lot of (lots ?? []) as { sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null }[]) {
