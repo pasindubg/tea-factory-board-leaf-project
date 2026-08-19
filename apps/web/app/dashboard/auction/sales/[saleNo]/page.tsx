@@ -518,6 +518,11 @@ export default async function SaleDetailPage({
             the broker's deductions. VAT is charged to the buyer on top of
             this, never taken out of it (docs/AUCTION.md section 1). */}
         <DetailField label="Total proceeds (before VAT)" value={`LKR ${money(totalProceeds)}`} />
+        {/* Average hammer price per kg offered: proceeds ÷ total kg to sale. */}
+        <DetailField
+          label="Average/kg"
+          value={totalNetKg === 0 ? "—" : `LKR ${money(totalProceeds / totalNetKg)}`}
+        />
         {/* Sold lots against their OWN valuation — the counts are on both
             labels because the two populations differ whenever a lot is
             unsold, which otherwise reads as a contradiction. */}
@@ -537,6 +542,11 @@ export default async function SaleDetailPage({
         <DetailField
           label="Total revenue"
           value={settlements.length === 0 ? "—" : `LKR ${money(totalRevenue)}`}
+        />
+        {/* Revenue kept per kg offered: revenue ÷ total kg to sale. */}
+        <DetailField
+          label="Revenue/kg"
+          value={settlements.length === 0 || totalNetKg === 0 ? "—" : `LKR ${money(totalRevenue / totalNetKg)}`}
         />
         {/* The literal credit on prompt date. It is net proceeds PLUS the
             output VAT the broker collected, so it is larger than what the
