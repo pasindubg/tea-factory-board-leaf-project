@@ -5,7 +5,7 @@ import { requireModuleAccess } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, writeAudit, gradeRulesByCode, notAnExisting, type Supa } from "./_shared";
+import { AUC, str, num, writeAudit, gradeRulesByCode, notAnExisting, unsoldBlockedReason, type Supa } from "./_shared";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
@@ -373,6 +373,8 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
   if (!lot) return { ok: false, error: "Lot not found." };
   if (!["valued", "withdrawn", "acknowledged", "catalogued", "re-print", "sold"].includes(lot.state as string))
     return { ok: false, error: "Only an acknowledged or sales-stage lot can be marked as re-print." };
+  const contractBlocked = await unsoldBlockedReason(supabase, profile.factory_id, saleId);
+  if (contractBlocked) return { ok: false, error: contractBlocked };
   const existingSample = Math.max(0, Number(lot.sample_allowance ?? 0));
   const additionalSample = Math.max(0, num(formData.get("additional_sample_kg")) || 0);
   const cumulativeSample = Number((existingSample + additionalSample).toFixed(2));

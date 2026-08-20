@@ -159,6 +159,7 @@ export type AuctionSalesSideListRow = {
   brokers: string[];
   saleDate: string | null;
   statuses: string[];
+  hasUnsold: boolean;
 };
 
 /** Every staged/confirmed auction document, factory-wide — the Document Details side rail. */

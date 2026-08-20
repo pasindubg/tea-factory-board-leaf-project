@@ -273,6 +273,27 @@ export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: st
   return ids.includes(saleId) ? ids : [saleId, ...ids];
 }
 
+export async function unsoldBlockedReason(supabase: Supa, factoryId: string, saleId: string): Promise<string | null> {
+  const { data: invoice } = await supabase
+    .from("auction_sales")
+    .select("entry_source")
+    .eq("id", saleId)
+    .eq("factory_id", factoryId)
+    .maybeSingle();
+  if (invoice?.entry_source === "reprint-register") return null;
+  const groupIds = await saleGroupIds(supabase, factoryId, saleId);
+  const { data: contracts } = await supabase
+    .from("doc_imports")
+    .select("id")
+    .eq("factory_id", factoryId)
+    .eq("doc_type", "contract")
+    .eq("status", "confirmed")
+    .in("sale_id", groupIds)
+    .limit(1);
+  if ((contracts ?? []).length > 0) return null;
+  return "Confirm the sellers contract for this sale before marking a lot un-sold.";
+}
+
 export async function saleDetailPath(supabase: Supa, factoryId: string, saleId: string): Promise<string> {
   const { data: sale } = await supabase
     .from("auction_sales")

@@ -336,7 +336,8 @@ export default async function SaleDetailPage({
   const totalDeductions = settlements.reduce((sum, row) => sum + Number(row.total_deductions ?? 0), 0);
   const totalRevenue = settlements.reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0);
   const bankCredit = settlements.reduce((sum, row) => sum + Number(row.total_net_proceeds ?? 0), 0);
-  const reprintCount = lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length;
+  const reprintsSoldCount = lotRows.filter((lot) => lot.reprint_source_lot_id && soldLotIds.has(lot.id)).length;
+  const notSoldCount = lotCount(lotRows, ["re-print"]);
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
   const soldCount = soldLotIds.size;
@@ -379,7 +380,8 @@ export default async function SaleDetailPage({
     { label: "Not Valued", count: lotCount(lotRows, ["not-valued"]) },
     { label: "Shutout", count: lotCount(lotRows, ["shutout"]) },
     { label: "Withdrawn", count: lotCount(lotRows, ["withdrawn"]) },
-    { label: "Re-print", count: lotRows.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length },
+    { label: "Not sold", count: notSoldCount },
+    { label: "Re-prints sold", count: reprintsSoldCount },
     { label: "Missing", count: lotCount(lotRows, ["missing"]) },
   ].filter((item) => item.count > 0);
   // Shared with the side rail's own client-side refetch on search — one
@@ -484,7 +486,7 @@ export default async function SaleDetailPage({
       <DetailRecordPanel
         eyebrow="Sale details"
         title={`Sale ${displaySaleNo}`}
-        description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${reprintCount} re-print`}
+        description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${notSoldCount} not sold`}
         contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
         footer={
           issueSteps.length > 0 ? (

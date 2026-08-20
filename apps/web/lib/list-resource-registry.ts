@@ -981,12 +981,12 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select("id, sale_id, provisional_sale_no, final_sale_no"),
+          .select("id, sale_id, provisional_sale_no, final_sale_no, state"),
       ]);
       if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
 
       type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; sale_date: string | null; status: string; brokers: { name: string } | null };
-      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null };
+      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null; state: string | null };
       const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
       const lotRows = (lots ?? []) as unknown as LotRow[];
       const dispatchById = new Map(dispatchRows.map((dispatch) => [dispatch.id, dispatch]));
@@ -1016,10 +1016,15 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
         if (key) addSummary(key, dispatch);
       }
+      const unsoldSaleNos = new Set<string>();
       for (const lot of lotRows) {
         const dispatch = dispatchById.get(lot.sale_id);
         const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
         if (dispatch && key) addSummary(key, dispatch);
+        if (lot.state === "re-print" && !lot.final_sale_no) {
+          const printedFor = formatSaleNo(saleNoKey(lot.provisional_sale_no));
+          if (printedFor) unsoldSaleNos.add(printedFor);
+        }
       }
 
       return {
@@ -1032,6 +1037,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
             saleDate: sale.saleDate,
             statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
+            hasUnsold: unsoldSaleNos.has(sale.saleNo),
           })),
       };
     },
@@ -1536,7 +1542,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           const line = lineByLotId.get(lot.id);
           const dispatch = dispatchById.get(lot.sale_id);
           const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
-          const state = stateBucket(lot.state);
+          const state = stateBucket(lot.state === "re-print" && lot.final_sale_no ? "invoiced" : lot.state);
           return {
             id: lot.id,
             saleId: lot.sale_id,

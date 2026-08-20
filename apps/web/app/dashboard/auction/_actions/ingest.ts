@@ -214,6 +214,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     if (candidate.state === "re-print") {
       rowsToCreate.push({
         ...row,
+        invoice_no: candidate.invoice_no ?? row.invoice_no,
         bags: candidate.bags ?? row.bags,
         kg_per_bag: candidate.kg_per_bag ?? row.kg_per_bag,
         gross_wt: candidate.gross_wt,
