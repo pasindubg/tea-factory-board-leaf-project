@@ -168,6 +168,11 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     sortable: true,
     filter: "select",
     filterOptions: [{ value: "Yes", label: "Yes" }, { value: "No", label: "No" }],
+    render: (row) => (
+      <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.reprintLabel === "Yes" ? "bg-blue-600" : "bg-stone-400 dark:bg-stone-600"}`}>
+        {row.reprintLabel}
+      </span>
+    ),
   },
   {
     key: "reprintCount",

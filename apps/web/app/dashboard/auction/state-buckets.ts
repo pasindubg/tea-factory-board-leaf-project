@@ -23,7 +23,7 @@ export const STATE_BUCKET: Record<string, StateBucket> = {
   shutout:    { label: "Shutout",   style: ISSUE },
   "not-valued": { label: "Not Valued", style: ISSUE },
   withdrawn:  { label: "Withdrawn",   style: ISSUE },
-  "re-print": { label: "Re-print",   style: ISSUE },
+  "re-print": { label: "Un-sold",   style: ISSUE },
   missing:    { label: "Missing",   style: ISSUE },
 };
 

@@ -13,6 +13,7 @@ const COLUMNS: ColumnDef<SaleSideListRow>[] = [
   { key: "brokers", label: "Brokers", accessor: (row) => row.brokers.join(", ") || null, sortable: true, filter: "text" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date" },
   { key: "statuses", label: "Status", accessor: (row) => row.statuses.join(", ") || null, sortable: true, filter: "text" },
+  { key: "hasUnsold", label: "Un-solds", accessor: (row) => (row.hasUnsold ? "Yes" : "No"), sortable: true, filter: "select" },
 ];
 
 export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
@@ -38,7 +39,14 @@ export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
           <>
             <div className="flex items-start justify-between gap-2">
               <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{sale.saleNo}</span>
-              {active && <span className="text-stone-400">‹</span>}
+              <span className="flex items-center gap-2">
+                {sale.hasUnsold && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    Un-solds
+                  </span>
+                )}
+                {active && <span className="text-stone-400">‹</span>}
+              </span>
             </div>
             <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{sale.brokers.join(", ") || "—"}</p>
             <div className="mt-2 flex items-center justify-between gap-2 text-xs">

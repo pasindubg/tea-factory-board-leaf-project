@@ -7,7 +7,7 @@ import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/pr
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyDeleteError, friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit, gradeRulesByCode, isRecordId, notAnExisting } from "./_shared";
+import { AUC, str, num, back, nextDispatchNo, saleDetailPath, stageImport, writeAudit, gradeRulesByCode, isRecordId, notAnExisting, unsoldBlockedReason } from "./_shared";
 import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
 import { isOpenDraft } from "../state-buckets";
 import { resolveInvoicePrefix } from "../invoice-number";
@@ -958,6 +958,12 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
     if (row.state === "sold" && (!(Number(row.pricePerKg) > 0) || !(Number(row.proceeds) > 0) || row.vatAmount == null || Number.isNaN(Number(row.vatAmount)))) {
       return { ok: false, error: "It is not allowed to change the status to sold without entering Price/kg, proceeds value and VAT." };
     }
+  }
+
+  for (const row of submittedRows) {
+    if (row.state !== "re-print") continue;
+    const contractBlocked = await unsoldBlockedReason(supabase, profile.factory_id, saleIdByLotId.get(row.id) ?? saleId);
+    if (contractBlocked) return { ok: false, error: contractBlocked };
   }
 
   for (const row of submittedRows) {
