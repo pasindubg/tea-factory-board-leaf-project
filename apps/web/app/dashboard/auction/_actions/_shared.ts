@@ -273,6 +273,44 @@ export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: st
   return ids.includes(saleId) ? ids : [saleId, ...ids];
 }
 
+/**
+ * A broker's documents arrive in one order — acknowledgement, then valuation,
+ * then sellers contract — and each one supersedes the last. Once a stage is
+ * confirmed for this broker's sale, an EARLIER document can no longer be
+ * uploaded against it: it would reopen a reconciliation the later document has
+ * already settled. Another document of the current stage is always allowed —
+ * a broker splits one sale across several reports.
+ */
+const DOC_STAGE: Record<string, number> = { acknowledgement: 1, valuation: 2, contract: 3 };
+const DOC_LABEL: Record<string, string> = {
+  acknowledgement: "acknowledgement",
+  valuation: "valuation report",
+  contract: "sellers contract",
+};
+
+export async function documentOrderBlockedReason(
+  supabase: Supa,
+  factoryId: string,
+  saleId: string,
+  docType: DocType,
+): Promise<string | null> {
+  const stage = DOC_STAGE[docType];
+  if (!stage) return null;
+  const groupIds = await saleGroupIds(supabase, factoryId, saleId);
+  const { data: confirmed } = await supabase
+    .from("doc_imports")
+    .select("doc_type")
+    .eq("factory_id", factoryId)
+    .eq("status", "confirmed")
+    .in("sale_id", groupIds);
+  const later = (confirmed ?? [])
+    .map((row) => row.doc_type as string)
+    .filter((type) => (DOC_STAGE[type] ?? 0) > stage)
+    .sort((a, b) => (DOC_STAGE[b] ?? 0) - (DOC_STAGE[a] ?? 0))[0];
+  if (!later) return null;
+  return `This broker's ${DOC_LABEL[later]} for this sale is already confirmed, so its ${DOC_LABEL[docType]} can no longer be uploaded. Reject the ${DOC_LABEL[later]} first if it was wrong.`;
+}
+
 export async function unsoldBlockedReason(supabase: Supa, factoryId: string, saleId: string): Promise<string | null> {
   const { data: invoice } = await supabase
     .from("auction_sales")

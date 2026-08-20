@@ -5,8 +5,9 @@ import { requireModuleAccess } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { AUC, str, num, writeAudit, gradeRulesByCode, notAnExisting, unsoldBlockedReason, type Supa } from "./_shared";
-import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { invoiceMatchKey } from "@tea/api";
+import { AUC, str, num, writeAudit, gradeRulesByCode, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
+import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
 import { buildCompositeInvoiceNo, invoiceSeqOf, parseCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
@@ -62,7 +63,7 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
 
   const states = (lots ?? []).map((lot) => lot.state as string | null);
   const cataloguedLots = states.filter((state) =>
-    ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(state ?? ""),
+    ["acknowledged", "valued", "sold"].includes(state ?? ""),
   ).length;
 
   let nextStatus: string | null = null;
@@ -124,12 +125,12 @@ async function reusableReprintSourceForInvoices(
   const lotIds = [...new Set(conflicts.map((row) => row.lot_id as string).filter(Boolean))];
   const { data: lots, error: lotsError } = await supabase
     .from("auction_lots")
-    .select("id, state, created_at")
+    .select("id, state, unsold, reprint, created_at")
     .eq("factory_id", factoryId)
     .in("id", lotIds);
   if (lotsError) return { ok: false, error: friendlyError(lotsError) };
-  const rows = (lots ?? []) as { id: string; state: string | null; created_at: string | null }[];
-  const blocking = rows.find((lot) => lot.state !== "re-print");
+  const rows = (lots ?? []) as { id: string; state: string | null; unsold: boolean | null; reprint: boolean | null; created_at: string | null }[];
+  const blocking = rows.find((lot) => !lot.unsold && !lot.reprint);
   if (blocking) {
     const conflict = conflicts.find((row) => row.lot_id === blocking.id);
     return { ok: false, error: `Invoice ${conflict?.invoice_no as string} is already attached to another active broker invoice.` };
@@ -188,7 +189,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   const { supabase, profile } = await requireModuleAccess("auction");
   const editError = await dispatchEditError(supabase, saleId, profile.factory_id, profile.role);
   if (editError) return { ok: false, error: editError };
-  const updates: Record<string, string | number | null> = {};
+  const updates: Record<string, string | number | boolean | null> = {};
   const rawInvoiceList = invoiceNumbers(formData);
   const rawInvoiceNo = rawInvoiceList[0] ?? "";
   let invoiceNo = "";
@@ -252,8 +253,14 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   }
   if (newState && isOwner && isLotState(newState)) {
     updates.state = newState;
-    if (newState === "shutout") updates.shutout_reason = str(formData.get("shutout_reason")) || "Manual override";
-    else updates.shutout_reason = null;
+  }
+  if (isOwner && formData.has("shutout")) {
+    const shutout = str(formData.get("shutout")) === "true";
+    updates.shutout = shutout;
+    updates.shutout_reason = shutout ? str(formData.get("shutout_reason")) || "Manual override" : null;
+  }
+  for (const flag of ["unsold", "reprint", "withdrawn", "not_valued", "missing", "settled"] as const) {
+    if (isOwner && formData.has(flag)) updates[flag] = str(formData.get(flag)) === "true";
   }
   if (!(newState && isOwner) && grade && bags > 0 && kgPerBag > 0) {
     const thresholdResult = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);
@@ -261,7 +268,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     const threshold = thresholdResult.threshold;
     const netWt = netWeight(bags, kgPerBag, sampleKg);
     if (threshold != null && threshold > 0 && netWt < threshold) {
-      updates.state = "shutout";
+      updates.shutout = true;
       updates.shutout_reason = `Below broker minimum ${threshold.toFixed(2)} kg for ${grade}`;
     }
   }
@@ -364,15 +371,15 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
   if (editError) return { ok: false, error: editError };
   const { data: lot, error: lotError } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, state, bags, kg_per_bag, gross_wt, sample_allowance, net_wt")
+    .select("id, invoice_no, state, unsold, bags, kg_per_bag, gross_wt, sample_allowance, net_wt")
     .eq("id", lotId)
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (lotError) return { ok: false, error: friendlyError(lotError) };
   if (!lot) return { ok: false, error: "Lot not found." };
-  if (!["valued", "withdrawn", "acknowledged", "catalogued", "re-print", "sold"].includes(lot.state as string))
-    return { ok: false, error: "Only an acknowledged or sales-stage lot can be marked as re-print." };
+  if (!["acknowledged", "valued", "sold"].includes(lot.state as string))
+    return { ok: false, error: "Only an acknowledged or sales-stage lot can be marked un-sold." };
   const contractBlocked = await unsoldBlockedReason(supabase, profile.factory_id, saleId);
   if (contractBlocked) return { ok: false, error: contractBlocked };
   const existingSample = Math.max(0, Number(lot.sample_allowance ?? 0));
@@ -383,7 +390,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
   const nextNet = Number(Math.max(0, baseGross - cumulativeSample).toFixed(2));
   const { data: updatedLot, error: updateError } = await supabase
     .from("auction_lots")
-    .update({ state: "re-print", sample_allowance: cumulativeSample, net_wt: nextNet })
+    .update({ unsold: true, sample_allowance: cumulativeSample, net_wt: nextNet })
     .eq("id", lotId)
     .eq("sale_id", saleId)
     .eq("factory_id", profile.factory_id)
@@ -393,20 +400,20 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
   const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
     saleId,
     lotId,
-    action: "Manual re-print",
-    detail: `Invoice ${formatFourDigitNo(lot.invoice_no as string)} was manually moved to re-print. An additional ${additionalSample.toFixed(2)} kg sample was deducted; cumulative sample allowance is ${cumulativeSample.toFixed(2)} kg and remaining net weight is ${nextNet.toFixed(2)} kg.`,
-    reason: "Owner manually marked the lot for re-print.",
+    action: "Manual un-sold",
+    detail: `Invoice ${formatFourDigitNo(lot.invoice_no as string)} was manually marked un-sold. An additional ${additionalSample.toFixed(2)} kg sample was deducted; cumulative sample allowance is ${cumulativeSample.toFixed(2)} kg and remaining net weight is ${nextNet.toFixed(2)} kg.`,
+    reason: "Owner manually marked the lot un-sold.",
     actor: profile.name,
   });
   if (auditError) {
     const { error: rollbackError } = await supabase
       .from("auction_lots")
-      .update({ state: lot.state, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
+      .update({ unsold: lot.unsold, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
       .eq("id", lotId)
       .eq("sale_id", saleId)
       .eq("factory_id", profile.factory_id)
-      .eq("state", "re-print");
-    if (rollbackError) return { ok: false, error: "The lot was marked for re-print, but its audit entry could not be saved. Review this broker invoice before retrying." };
+      .eq("unsold", true);
+    if (rollbackError) return { ok: false, error: "The lot was marked un-sold, but its audit entry could not be saved. Review this broker invoice before retrying." };
     return { ok: false, error: friendlyError(auditError) };
   }
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
@@ -414,12 +421,140 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
   revalidatePath(`${AUC}/reprints`);
   return {
     ok: true,
-    notice: "Lot marked as re-print.",
+    notice: "Lot marked un-sold.",
     row: {
       state: updatedLot.state as string | null,
       sample_allowance: updatedLot.sample_allowance as string | number | null,
       net_wt: updatedLot.net_wt as string | number | null,
     },
+  };
+}
+
+/**
+ * Declares an unexpected acknowledgement lot to BE a re-print.
+ *
+ * An invoice the broker catalogued that this system has no record of is not
+ * evidence of a re-print — the operator is. When they know which sale it was
+ * first offered in, that sale's lot is created here so the chain reads the same
+ * way as one the documents produced; when they don't, the lot is simply flagged.
+ */
+export async function registerLotReprint(saleId: string, invoiceNo: string, formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (profile.role !== "owner") return { ok: false, error: "Only the owner can register a re-print." };
+
+  const { data: invoice, error: invoiceError } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_no, target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
+  if (!invoice) return { ok: false, error: "Broker invoice not found." };
+
+  const matchKey = invoiceMatchKey(invoiceNo);
+  const { data: brokerLots, error: brokerLotsError } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, reprint, auction_sales!inner(broker_id)")
+    .eq("factory_id", profile.factory_id)
+    .eq("auction_sales.broker_id", invoice.broker_id as string);
+  if (brokerLotsError) return { ok: false, error: friendlyError(brokerLotsError) };
+  const sameInvoice = (brokerLots ?? []).filter((row) => invoiceMatchKey(row.invoice_no as string) === matchKey);
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  // The lot this sale's acknowledgement created, if it has been confirmed yet.
+  const currentLot = sameInvoice.find((row) => groupIds.includes(row.sale_id as string));
+  if (currentLot?.reprint) return { ok: false, error: "This invoice is already registered as a re-print." };
+
+  const firstSaleNo = formatSaleNo(str(formData.get("first_sale_no")));
+  const grade = currentLot?.grade ?? str(formData.get("grade"));
+  const netWt = Number(currentLot?.net_wt ?? num(formData.get("net_wt")) ?? 0);
+  if (!grade) return { ok: false, error: "The acknowledgement row has no grade to register." };
+
+  // An earlier lot for this invoice IS the re-print source — never create a second.
+  let sourceLotId = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string))?.id as string | undefined;
+
+  if (!sourceLotId) {
+    const { data: brokerInvoices, error: brokerInvoiceError } = await supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no, entry_source")
+      .eq("factory_id", profile.factory_id)
+      .eq("sale_kind", "dispatch")
+      .eq("broker_id", invoice.broker_id as string);
+    if (brokerInvoiceError) return { ok: false, error: friendlyError(brokerInvoiceError) };
+    let sourceSaleId = (brokerInvoices ?? []).find((row) =>
+      firstSaleNo
+        ? saleNoMatches((row.target_sale_no as string | null) || (row.sale_no as string | null), firstSaleNo)
+        : row.entry_source === "reprint-register" && !row.target_sale_no,
+    )?.id as string | undefined;
+
+    if (!sourceSaleId) {
+      const prefix = parseCompositeInvoiceNo(invoice.sale_no as string | null)?.prefix;
+      if (!prefix) return { ok: false, error: "This broker invoice has no number prefix to open the earlier sale under." };
+      const { data: createdInvoice, error: createInvoiceError } = await supabase
+        .from("auction_sales")
+        .insert({
+          factory_id: profile.factory_id,
+          broker_id: invoice.broker_id,
+          sale_no: await nextDispatchNo(supabase, profile.factory_id, prefix),
+          target_sale_no: firstSaleNo || null,
+          sale_kind: "dispatch",
+          status: "invoiced",
+          entry_source: "reprint-register",
+        })
+        .select("id")
+        .single();
+      if (createInvoiceError || !createdInvoice) return { ok: false, error: friendlyError(createInvoiceError ?? { message: "Could not open the earlier sale." }) };
+      sourceSaleId = createdInvoice.id as string;
+    }
+
+    const { data: sourceLot, error: sourceLotError } = await supabase
+      .from("auction_lots")
+      .insert({
+        factory_id: profile.factory_id,
+        sale_id: sourceSaleId,
+        invoice_no: currentLot?.invoice_no ?? formatFourDigitNo(invoiceNo),
+        provisional_sale_no: firstSaleNo || null,
+        grade,
+        bags: currentLot?.bags ?? null,
+        kg_per_bag: currentLot?.kg_per_bag ?? null,
+        gross_wt: currentLot?.gross_wt ?? null,
+        sample_allowance: currentLot?.sample_allowance ?? null,
+        net_wt: netWt,
+        state: "invoiced",
+        reprint: true,
+        reprint_registered: true,
+        lot_source: "acknowledgement",
+      })
+      .select("id")
+      .single();
+    if (sourceLotError || !sourceLot) return { ok: false, error: friendlyError(sourceLotError ?? { message: "Could not create the earlier sale's lot." }) };
+    sourceLotId = sourceLot.id as string;
+  }
+
+  if (currentLot) {
+    const { error: updateError } = await supabase
+      .from("auction_lots")
+      .update({ reprint: true, reprint_registered: true, reprint_source_lot_id: sourceLotId })
+      .eq("id", currentLot.id as string)
+      .eq("factory_id", profile.factory_id);
+    if (updateError) return { ok: false, error: friendlyError(updateError) };
+  }
+
+  await writeAudit(supabase, profile.factory_id, {
+    saleId,
+    lotId: (currentLot?.id as string) ?? sourceLotId,
+    action: "Re-print registered",
+    detail: `Invoice ${formatFourDigitNo(invoiceNo)} was registered as a re-print${firstSaleNo ? `, first offered in sale ${firstSaleNo}` : " with no earlier sale recorded"}.`,
+    reason: str(formData.get("reason")) || "Catalogued by the broker but not present in this system.",
+    actor: profile.name,
+  });
+
+  revalidatePath(`${AUC}/${saleId}`);
+  revalidatePath(`${AUC}/reprints`);
+  return {
+    ok: true,
+    notice: firstSaleNo
+      ? `Registered as a re-print first offered in sale ${firstSaleNo}.`
+      : "Registered as a re-print.",
   };
 }
 
@@ -446,8 +581,8 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
   const invoiceNo = formatFourDigitNo(lot.invoice_no as string | null);
   if (!invoiceNo) return { ok: false, error: "A historic re-print needs an invoice number so its later reuse can be linked." };
   if (lot.reprint_source_lot_id) return { ok: false, error: "This lot is already part of a re-print chain." };
-  if (!['acknowledged', 'catalogued', 'valued', 'withdrawn'].includes(lot.state as string)) {
-    return { ok: false, error: "Only an acknowledged, valued, or withdrawn lot can be registered as a historic re-print." };
+  if (!["acknowledged", "valued"].includes(lot.state as string)) {
+    return { ok: false, error: "Only an acknowledged or valued lot can be registered as a historic re-print." };
   }
   if (((lot.sale_lines as unknown as { id: string }[] | null) ?? []).length > 0) {
     return { ok: false, error: "A lot with a recorded sale cannot be registered as a re-print." };
@@ -460,7 +595,7 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
   const nextNet = Number(Math.max(0, baseGross - cumulativeSample).toFixed(2));
   const { data: updatedLot, error: updateError } = await supabase
     .from("auction_lots")
-    .update({ state: "re-print", sample_allowance: cumulativeSample, net_wt: nextNet })
+    .update({ reprint: true, sample_allowance: cumulativeSample, net_wt: nextNet })
     .eq("id", lot.id)
     .eq("sale_id", lot.sale_id)
     .eq("factory_id", profile.factory_id)
@@ -481,11 +616,11 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
   if (auditError) {
     const { error: rollbackError } = await supabase
       .from("auction_lots")
-      .update({ state: lot.state, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
+      .update({ reprint: false, sample_allowance: lot.sample_allowance, net_wt: lot.net_wt })
       .eq("id", lot.id)
       .eq("sale_id", lot.sale_id)
       .eq("factory_id", profile.factory_id)
-      .eq("state", "re-print");
+      .eq("reprint", true);
     if (rollbackError) return { ok: false, error: "The historic re-print was saved but its audit entry could not be created. Review the Broker Invoice before retrying." };
     return { ok: false, error: friendlyError(auditError) };
   }
@@ -564,9 +699,20 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   // re-print may not have sold yet — and is recorded on the lot itself so the
   // chain can state it before any child lot exists.
   const soldSaleNo = formatSaleNo(str(formData.get("sold_sale_no")));
+  // A sale still ahead of this one cannot be where the lot already sold, and
+  // writing it here would place the lot in that sale before its broker has
+  // acknowledged anything. Only a later acknowledgement may carry it forward.
+  if (soldSaleNo && originalSaleNo && Number(saleNoKey(soldSaleNo)) > Number(saleNoKey(originalSaleNo))) {
+    await deleteTenantRow(supabase, "auction_lots", lotId);
+    if (resolved.created) await discardEmptyBrokerInvoice(resolved.saleId);
+    return {
+      ok: false,
+      error: `Sale ${soldSaleNo} has not happened yet. Leave the sold sale blank — the sale ${soldSaleNo} acknowledgement will carry this re-print forward.`,
+    };
+  }
   const { data: updatedLot, error: updateError } = await supabase
     .from("auction_lots")
-    .update({ state: "re-print", shutout_reason: null, final_sale_no: soldSaleNo || null })
+    .update({ reprint: true, unsold: false, shutout: false, shutout_reason: null, final_sale_no: soldSaleNo || null })
     .eq("id", lotId)
     .eq("factory_id", profile.factory_id)
     .select("id, state")
@@ -725,11 +871,13 @@ export async function createDispatchedLotForList(
     kg_per_bag: kgPerBag,
     sample_allowance: sampleKg,
     net_wt: netWt,
-    state: isBelowAppliedThreshold ? "shutout" : "invoiced",
+    state: "invoiced",
+    shutout: isBelowAppliedThreshold,
+    reprint: Boolean(reprintSource.sourceLotId),
     shutout_reason: isBelowAppliedThreshold ? `Below broker minimum ${threshold.toFixed(2)} kg for ${grade}` : null,
     lot_source: "factory",
     reprint_source_lot_id: reprintSource.sourceLotId,
-  }).select("id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout_reason, lot_source").single();
+  }).select("id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout, shutout_reason, lot_source").single();
   if (error || !createdLot) return { ok: false, error: friendlyError(error ?? { message: "Could not create the lot." }) };
   const { error: invoiceInsertError } = await supabase.from("lot_invoices").insert(invoiceList.map((invoice) => ({
     factory_id: profile.factory_id,
@@ -781,7 +929,14 @@ export async function createDispatchedLotForList(
       sample_allowance: createdLot.sample_allowance as string | number | null,
       net_wt: createdLot.net_wt as string | number | null,
       state: createdLot.state as string | null,
+      shutout: Boolean(createdLot.shutout),
       shutout_reason: createdLot.shutout_reason as string | null,
+      unsold: false,
+      reprint: Boolean(reprintSource.sourceLotId),
+      withdrawn: false,
+      not_valued: false,
+      missing: false,
+      settled: false,
       lot_source: createdLot.lot_source as string | null,
       reprint_target_sale_id: null,
       reprint_target_label: null,
@@ -909,8 +1064,8 @@ export async function deleteLot(id: string, saleId: string): Promise<ListMutatio
   if (!isDraft && !isOwner) {
     return { ok: false, error: "Only the owner can delete lots after the broker invoice is confirmed." };
   }
-  if (!isOwner && !["invoiced", "pending"].includes(lot.state as string)) {
-    return { ok: false, error: "Only invoiced/pending lots can be removed." };
+  if (!isOwner && lot.state !== "invoiced") {
+    return { ok: false, error: "Only invoiced lots can be removed." };
   }
   const { error: deleteError } = await deleteTenantRow(supabase, "auction_lots", id);
   if (deleteError) return { ok: false, error: deleteError };

@@ -1,6 +1,7 @@
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
+  invoiceMatchKey,
   reconcileAcknowledgement,
   relateAcknowledgementParseWarnings,
   type ParsedAcknowledgement,
@@ -44,7 +45,7 @@ export async function AckContent({
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, net_wt, state, lot_no, marks(code), lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, grade, net_wt, state, lot_no, lot_source, reprint, reprint_registered, marks(code), lot_invoices(invoice_no)")
     .in("sale_id", groupIds);
   const { data: auditRows } = await supabase
     .from("auction_audit")
@@ -82,12 +83,30 @@ export async function AckContent({
     rows: unexpectedRows.map((row) => ({ invoiceNo: row.invoiceNo, lotNo: row.ack?.lotNo ?? null })),
   });
 
+  // The lot a confirmed acknowledgement created for a row it could not place.
+  // Registering a re-print acts on that lot, so it only exists after confirm.
+  const ackLotByInvoice = new Map(
+    (lotRows ?? [])
+      .filter((lot) => lot.lot_source === "acknowledgement")
+      .map((lot) => [invoiceMatchKey(lot.invoice_no as string | null), lot]),
+  );
+
   const reviewRows: ReviewReconRow[] = recon.rows.map((row) => {
+    const ackLot = ackLotByInvoice.get(invoiceMatchKey(row.invoiceNo));
+    const registration = {
+      lotId: (ackLot?.id as string | undefined) ?? null,
+      reprintRegistered: Boolean(ackLot?.reprint_registered),
+      // Registering does not need the lot to exist: it records the EARLIER
+      // sale's lot, which the carry-forward resolver then links on confirm.
+      canRegister: row.status === "unexpected" && !ackLot?.reprint,
+    };
     const outcome = row.status === "unexpected" ? carryForward.get(row.invoiceNo) : undefined;
     if (outcome?.status === "matched") {
       const fromInvoice = formatFourDigitNo(outcome.lot.auction_sales?.sale_no ?? null) || "—";
       return {
         ...row,
+        ...registration,
+        canRegister: false,
         display: outcome.isReprint ? "re-print" : "rolled forward",
         carryForwardNote: outcome.isReprint
           ? `Registered re-print on broker invoice ${fromInvoice} — links as a re-print child`
@@ -96,9 +115,9 @@ export async function AckContent({
     }
     if (outcome?.status === "blocked") {
       const fromInvoice = formatFourDigitNo(outcome.lot.auction_sales?.sale_no ?? null) || "—";
-      return { ...row, display: "unexpected", carryForwardNote: `Matches a sold/settled lot on broker invoice ${fromInvoice} — resolve by hand` };
+      return { ...row, ...registration, canRegister: false, display: "unexpected", carryForwardNote: `Matches a sold/settled lot on broker invoice ${fromInvoice} — resolve by hand` };
     }
-    return { ...row, display: row.status, carryForwardNote: null };
+    return { ...row, ...registration, display: row.status, carryForwardNote: null };
   });
 
   const order: Record<ReviewReconRow["display"], number> = {
@@ -112,7 +131,7 @@ export async function AckContent({
   const lotById = new Map((lotRows ?? []).map((l) => [l.id as string, l]));
   const cataloguedLotNos = new Set(
     (lotRows ?? [])
-      .filter((l) => ["acknowledged", "catalogued"].includes(l.state as string) && l.lot_no)
+      .filter((l) => ["acknowledged", "valued", "sold"].includes(l.state as string) && l.lot_no)
       .map((l) => l.lot_no as string),
   );
   const markOf = (id: string) => (lotById.get(id)?.marks as unknown as { code: string } | null)?.code ?? null;
@@ -121,7 +140,7 @@ export async function AckContent({
     // Any not-yet-acknowledged invoiced lot is resolvable. Newly added
     // invoiced lots after ack confirmation count too; excluding them silently
     // hid the resolver for genuine orphans.
-    .filter((r) => ["invoiced", "dispatched", "pending"].includes(lotById.get(r.invoiced!.id)?.state as string))
+    .filter((r) => lotById.get(r.invoiced!.id)?.state === "invoiced")
     .map((r) => ({
       lotId: r.invoiced!.id,
       // The orphan's own dispatch — may be a sibling in the sale group, so
@@ -235,7 +254,7 @@ export async function AckContent({
       {/* Compare & resolve — link a pending invoice to an unexpected catalogue lot. */}
       <ComparePanel saleId={saleId} orphans={visibleOrphans} candidates={candidates} audit={visibleAudit} />
 
-      <ReconTable rows={visibleRows} warningInvoiceNos={warningInvoiceNos} />
+      <ReconTable rows={visibleRows} saleId={saleId} warningInvoiceNos={warningInvoiceNos} canRegisterReprint={profile.role === "owner"} />
 
       {!confirmed && (
         <div className="flex gap-3">

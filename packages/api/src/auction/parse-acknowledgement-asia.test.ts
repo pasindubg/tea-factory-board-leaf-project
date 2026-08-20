@@ -51,5 +51,48 @@ ok("inv 0958 → FGS 40kg/chest 400kg",
 const totalKg = ack.lots.reduce((s, l) => s + l.netWt, 0);
 ok("total parsed kg = 2867", totalKg === 2867, `${totalKg}`);
 
+// ── Sale 020: the S/V flag stands alone in the LotNo column ─────────────────
+// This layout held one lot back, and the row it prints has no catalogue number
+// at all — just the bare "B" prefix. Parsing it is what puts the lot on the
+// reconciliation screen as a shutout instead of dropping it silently.
+const sale20 = parseAcknowledgement(
+  readFileSync(new URL("./__fixtures__/ack-asia-siyaka-sale-020.txt", import.meta.url), "utf8"),
+);
+const s20 = (inv: string): AckLot | undefined => sale20.lots.find((l) => l.invoiceNo === inv);
+
+ok("sale 020: 7 lots parsed — 6 catalogued + 1 shutout",
+  sale20.lots.length === 7 && sale20.lots.filter((l) => l.section === "shutout").length === 1,
+  `${sale20.lots.length} lots, ${sale20.lots.filter((l) => l.section === "shutout").length} shutout`);
+
+const held = s20("0901");
+ok("sale 020: inv 0901 → shutout, no lot no, reason names the S flag",
+  !!held && held.section === "shutout" && held.lotNo === null && held.netWt === 496 &&
+    held.shutoutReason === "Shutout (S) in the acknowledgement",
+  held ? `section=${held.section} lot=${held.lotNo} net=${held.netWt} reason=${held.shutoutReason}` : "missing");
+
+// R is glued to the mark on that same row (RKUMUDU) and means re-print — it must
+// not be read as a second held-back flag, and the mark must still resolve.
+ok("sale 020: inv 0901 keeps mark KUMUDU despite the R re-print prefix",
+  !!held && held.markCode === "KUMUDU", held ? `mark=${held.markCode}` : "missing");
+
+ok("sale 020: inv 0901 is flagged as a re-print by the R prefix",
+  held?.reprint === true, `reprint=${held?.reprint}`);
+
+ok("sale 020: an unflagged row is not a re-print",
+  s20("0012")?.reprint === false, `reprint=${s20("0012")?.reprint}`);
+
+ok("sale 020: catalogued lots carry no shutout reason",
+  sale20.lots.filter((l) => l.section === "catalogued").every((l) => l.shutoutReason === null));
+
+// 0014/0015 sit under the ITTAPANA block, whose own Shutout & Violation
+// quantity is 0.00 — they are catalogued, not held back.
+ok("sale 020: inv 0014 and 0015 are catalogued",
+  s20("0014")?.section === "catalogued" && s20("0015")?.section === "catalogued",
+  `0014=${s20("0014")?.section} 0015=${s20("0015")?.section}`);
+
+// Held-back weight is excluded from the catalogued total the document prints
+// (1,890.00), which is what the parser's own self-check compares against.
+ok("sale 020: self-check clean", sale20.issues.length === 0, sale20.issues.join(" "));
+
 console.log(failures === 0 ? "\nASIA SIYAKA ACK PARSE: ALL CHECKS PASSED" : `\nASIA SIYAKA ACK: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -104,7 +104,21 @@ type RefreshLotRow = {
   reprint_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
   marks: { code: string; name: string | null } | null;
+} & LotFlagColumns;
+
+type LotFlagColumns = {
+  shutout?: boolean | null;
+  shutout_reason?: string | null;
+  unsold?: boolean | null;
+  reprint?: boolean | null;
+  reprint_registered?: boolean | null;
+  withdrawn?: boolean | null;
+  not_valued?: boolean | null;
+  missing?: boolean | null;
+  settled?: boolean | null;
 };
+
+const LOT_FLAG_SELECT = "shutout, shutout_reason, unsold, reprint, reprint_registered, withdrawn, not_valued, missing, settled";
 
 type RefreshInvoiceOverviewLot = {
   id: string;
@@ -131,7 +145,7 @@ type RefreshInvoiceOverviewLot = {
     brokers: { name: string } | null;
     marks: { code: string; name: string | null } | null;
   } | null;
-};
+} & LotFlagColumns;
 
 type RefreshDispatchLotRow = RefreshLotRow & {
   shutout_reason: string | null;
@@ -186,16 +200,16 @@ function groupIntoReprintChains<T extends { id: string; reprint_source_lot_id: s
 
 /**
  * How many times each lot's re-print chain has failed to sell so far, keyed
- * by every lot id in the chain (not just the root) — a lot currently sitting
- * in "re-print" state counts its own failure, unlike the old "how many lots
- * were re-printed FROM this one" count, which was always 0 for the lot that
- * just failed and hasn't been re-catalogued into a child yet.
+ * by every lot id in the chain (not just the root) — a lot currently flagged
+ * un-sold counts its own failure, unlike the old "how many lots were re-printed
+ * FROM this one" count, which was always 0 for the lot that just failed and
+ * hasn't been re-catalogued into a child yet.
  */
-function reprintCountsByLotId(lots: readonly { id: string; reprint_source_lot_id: string | null; state: string | null }[]): Map<string, number> {
+function reprintCountsByLotId(lots: readonly { id: string; reprint_source_lot_id: string | null; unsold?: boolean | null; reprint?: boolean | null }[]): Map<string, number> {
   const chains = groupIntoReprintChains(lots);
   const counts = new Map<string, number>();
   for (const chain of chains.values()) {
-    const chainReprintCount = chain.filter((node) => node.state === "re-print").length;
+    const chainReprintCount = chain.filter((node) => node.unsold || node.reprint).length;
     for (const node of chain) counts.set(node.id, chainReprintCount);
   }
   return counts;
@@ -208,7 +222,7 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
   return [...chains.entries()].map(([rootId, unsortedChain]) => {
     const chain = [...unsortedChain].sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
     const lot = lotById.get(rootId) ?? chain[0];
-    const terminal = [...chain].reverse().find((node) => node.state === "sold" || node.state === "settled" || (node.sale_lines?.length ?? 0) > 0);
+    const terminal = [...chain].reverse().find((node) => node.state === "sold" || (node.sale_lines?.length ?? 0) > 0);
     // One invoice, one entry. A re-print chain holds the SAME invoice number in
     // two notations: the factory stores its index-cycle prefix ("26I02-0909")
     // while the ACK-created child takes the bare number the broker printed
@@ -227,7 +241,7 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
       }
     }
     const invoices = [...invoiceByKey.values()];
-    const reprintNodes = chain.filter((node) => node.state === "re-print");
+    const reprintNodes = chain.filter((node) => node.unsold || node.reprint);
     const saleLabel = (node: RefreshReprintLot) => formatSaleNo(node.auction_sales?.target_sale_no ?? node.auction_sales?.sale_no ?? null) || "—";
     const state = stateBucket(terminal?.state ?? chain[chain.length - 1]?.state);
     const totalSampleKg = Math.max(0, ...chain.map((node) => Number(node.sample_allowance ?? 0)));
@@ -977,16 +991,16 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: dispatches, error: dispatchError }, { data: lots, error: lotError }] = await Promise.all([
         supabase
           .from("auction_sales")
-          .select("id, sale_no, target_sale_no, sale_date, status, brokers(name)")
+          .select("id, sale_no, target_sale_no, sale_date, status, entry_source, brokers(name)")
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select("id, sale_id, provisional_sale_no, final_sale_no, state"),
+          .select("id, sale_id, provisional_sale_no, final_sale_no, state, unsold"),
       ]);
       if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
 
-      type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; sale_date: string | null; status: string; brokers: { name: string } | null };
-      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null; state: string | null };
+      type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; sale_date: string | null; status: string; entry_source: string | null; brokers: { name: string } | null };
+      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null; state: string | null; unsold: boolean | null };
       const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
       const lotRows = (lots ?? []) as unknown as LotRow[];
       const dispatchById = new Map(dispatchRows.map((dispatch) => [dispatch.id, dispatch]));
@@ -997,6 +1011,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         brokers: Set<string>;
         saleDate: string | null;
         statuses: Set<string>;
+        entrySources: Set<string>;
       }>();
       function addSummary(key: string, dispatch: DispatchRow) {
         const current = summaries.get(key) ?? {
@@ -1005,11 +1020,13 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           brokers: new Set<string>(),
           saleDate: dispatch.sale_date,
           statuses: new Set<string>(),
+          entrySources: new Set<string>(),
         };
         current.dispatchNos.set(dispatch.id, formatFourDigitNo(dispatch.sale_no));
         if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
         current.saleDate ??= dispatch.sale_date;
         current.statuses.add(stateBucket(dispatch.status).label);
+        current.entrySources.add(dispatch.entry_source ?? "");
         summaries.set(key, current);
       }
       for (const dispatch of dispatchRows) {
@@ -1021,7 +1038,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         const dispatch = dispatchById.get(lot.sale_id);
         const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
         if (dispatch && key) addSummary(key, dispatch);
-        if (lot.state === "re-print" && !lot.final_sale_no) {
+        if (lot.unsold && !lot.final_sale_no) {
           const printedFor = formatSaleNo(saleNoKey(lot.provisional_sale_no));
           if (printedFor) unsoldSaleNos.add(printedFor);
         }
@@ -1038,6 +1055,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             saleDate: sale.saleDate,
             statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
             hasUnsold: unsoldSaleNos.has(sale.saleNo),
+            // The sale exists only to hold re-prints: every broker invoice under
+            // it was opened by the re-print register, never dispatched.
+            reprintRegister: [...sale.entrySources].every((source) => source === "reprint-register"),
           })),
       };
     },
@@ -1146,7 +1166,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: lots, error: lotError }, { data: thresholds, error: thresholdError }] = await Promise.all([
         supabase
           .from("auction_lots")
-          .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout_reason, lot_source, reprint_source_lot_id, marks(code, name), lot_invoices(invoice_no)")
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
           .eq("sale_id", saleId)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
@@ -1189,7 +1209,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             sample_allowance: lot.sample_allowance == null ? null : Number(lot.sample_allowance),
             net_wt: lot.net_wt == null ? null : Number(lot.net_wt),
             state: lot.state,
-            shutout_reason: lot.shutout_reason,
+            shutout: Boolean(lot.shutout),
+            shutout_reason: lot.shutout_reason ?? null,
+            unsold: Boolean(lot.unsold),
+            reprint: Boolean(lot.reprint) || Boolean(lot.reprint_source_lot_id),
+            withdrawn: Boolean(lot.withdrawn),
+            not_valued: Boolean(lot.not_valued),
+            missing: Boolean(lot.missing),
+            settled: Boolean(lot.settled),
             lot_source: lot.lot_source,
             reprint_target_sale_id: null,
             reprint_target_label: null,
@@ -1211,11 +1238,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, lot_source, reprint_source_lot_id, provisional_sale_no, final_sale_no, created_at, " +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, provisional_sale_no, final_sale_no, created_at, ` +
             "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, entry_source, brokers(name))",
         )
-        .or("state.eq.re-print,reprint_source_lot_id.not.is.null")
+        .or("unsold.is.true,reprint.is.true,reprint_source_lot_id.not.is.null")
         .order("created_at");
       if (error) return { ok: false, error: friendlyError(error) };
       return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
@@ -1233,7 +1260,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          "id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, reprint_source_lot_id, created_at, " +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, created_at, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name), marks(code, name))",
         )
@@ -1275,6 +1302,10 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             sampleKg: lot.sample_allowance == null ? null : Number(lot.sample_allowance),
             netWt: lot.net_wt == null ? null : Number(lot.net_wt),
             state: lot.state,
+            shutout: Boolean(lot.shutout),
+            shutoutReason: lot.shutout_reason ?? null,
+            unsold: Boolean(lot.unsold),
+            reprint: Boolean(lot.reprint) || Boolean(lot.reprint_source_lot_id),
             mark: markLabel(lot.marks),
             brokerInvoiceNo: formatFourDigitNo(invoice?.sale_no ?? null),
             saleNo: formatSaleNo(invoice?.target_sale_no ?? null) || null,
@@ -1479,7 +1510,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no), marks(code, name)")
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
       ]);
@@ -1513,9 +1544,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             // be known to compute a chain-wide count for any lot in it.
             supabase
               .from("auction_lots")
-              .select("id, reprint_source_lot_id, state")
+              .select("id, reprint_source_lot_id, unsold, reprint")
               .eq("factory_id", profile.factory_id)
-              .or("state.eq.re-print,reprint_source_lot_id.not.is.null"),
+              .or("unsold.is.true,reprint.is.true,reprint_source_lot_id.not.is.null"),
           ])
         : [{ data: [], error: null }, { data: [], error: null }];
       if (lineError || reprintError) return { ok: false, error: friendlyError(lineError ?? reprintError) };
@@ -1533,7 +1564,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .map((line) => [line.lot_id as string, line]),
       );
       const reprintCountByLotId = reprintCountsByLotId(
-        (reprintTouchedLots ?? []) as { id: string; reprint_source_lot_id: string | null; state: string | null }[],
+        (reprintTouchedLots ?? []) as { id: string; reprint_source_lot_id: string | null; unsold: boolean | null; reprint: boolean | null }[],
       );
 
       return {
@@ -1542,7 +1573,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           const line = lineByLotId.get(lot.id);
           const dispatch = dispatchById.get(lot.sale_id);
           const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
-          const state = stateBucket(lot.state === "re-print" && lot.final_sale_no ? "invoiced" : lot.state);
+          const state = stateBucket(lot.state);
           return {
             id: lot.id,
             saleId: lot.sale_id,
@@ -1556,6 +1587,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             state: lot.state ?? null,
             stateLabel: state.label,
             stateStyle: state.style,
+            shutout: Boolean(lot.shutout),
+            shutoutReason: lot.shutout_reason ?? null,
+            unsold: Boolean(lot.unsold),
             buyerName: line?.buyers?.name ?? null,
             buyerVatNo: line?.buyers?.vat_no ?? null,
             bags: lot.bags ?? null,
@@ -1566,19 +1600,13 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
             vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
             onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
-            reprint: Boolean(lot.reprint_source_lot_id) || lot.state === "re-print",
-            // The SEARCHABLE forms of the two booleans above.
-            //
-            // A list without a `search` config is filtered row-level on the
-            // server, and that filter compares a criterion against the row's
-            // own property — it cannot see the column's accessor. So a column
-            // whose accessor derives a label ("Guarantee" from `true`) matched
-            // in the browser and then matched NOTHING once the same search
-            // went through the server, because "true" does not contain
-            // "guarantee". Carrying the label on the row is what keeps the two
-            // sides filtering the same value.
+            reprint: Boolean(lot.reprint_source_lot_id) || Boolean(lot.reprint),
+            reprintRegistered: Boolean(lot.reprint_registered),
+            // Tri-state, so it still carries a label: the server row filter
+            // compares row PROPERTIES, and "true" does not contain "guarantee".
+            // Plain booleans need no such field — the framework matches Yes/No
+            // against the boolean itself.
             guaranteeLabel: line?.on_guarantee == null ? "Not sold" : line.on_guarantee ? "Guarantee" : "Cash",
-            reprintLabel: (Boolean(lot.reprint_source_lot_id) || lot.state === "re-print") ? "Yes" : "No",
             reprintCount: reprintCountByLotId.get(lot.id) ?? 0,
           };
         }),

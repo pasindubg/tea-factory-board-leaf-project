@@ -219,13 +219,31 @@ export function splitPage<Row>(rows: Row[], limit = DEFAULT_LIST_PAGE_SIZE): { r
  * can't push filtering into SQL (computed/aggregated views). Matches by the
  * row's own property name, so it needs no per-resource declaration.
  */
+/**
+ * Every form a row property can be searched by. A boolean answers to the Yes/No
+ * the column renders AND to true/false, so a boolean column needs no companion
+ * label field and a criterion saved before this existed still matches.
+ */
+function rowTexts(value: unknown): string[] {
+  if (typeof value === "boolean") return value ? ["yes", "true"] : ["no", "false"];
+  return [String(value ?? "").toLowerCase()];
+}
+
+function rowContains(value: unknown, needle: string): boolean {
+  return rowTexts(value).some((text) => text.includes(needle));
+}
+
+function rowEquals(value: unknown, needle: string): boolean {
+  return rowTexts(value).some((text) => text === needle);
+}
+
 export function filterRowsByCriteria<Row>(rows: Row[], criteria: ListSearchCriteria | undefined): Row[] {
   const entries = Object.entries(criteria ?? {}).filter(([, value]) => (value ?? "").trim() !== "");
   if (entries.length === 0) return rows;
   return rows.filter((row) =>
     entries.every(([key, value]) => {
       const raw = (row as Record<string, unknown>)[key];
-      return String(raw ?? "").toLowerCase().includes(value.toLowerCase());
+      return rowContains(raw, value.toLowerCase());
     }),
   );
 }
@@ -252,8 +270,8 @@ function matchesRowToken(row: unknown, token: string): boolean {
     if (Object.hasOwn(record, key)) {
       const raw = record[key];
       const value = rawValue.trim();
-      if (op === ":") return String(raw ?? "").toLowerCase().includes(value.toLowerCase());
-      if (op === "=") return String(raw ?? "").toLowerCase() === value.toLowerCase();
+      if (op === ":") return rowContains(raw, value.toLowerCase());
+      if (op === "=") return rowEquals(raw, value.toLowerCase());
       const left = Number(raw);
       const right = Number(value);
       if (Number.isNaN(left) || Number.isNaN(right)) return false;
@@ -266,5 +284,5 @@ function matchesRowToken(row: unknown, token: string): boolean {
     // as free text rather than silently matching everything.
   }
   const needle = token.toLowerCase();
-  return Object.values(record).some((value) => String(value ?? "").toLowerCase().includes(needle));
+  return Object.values(record).some((value) => rowContains(value, needle));
 }

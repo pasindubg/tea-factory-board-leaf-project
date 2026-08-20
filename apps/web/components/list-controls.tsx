@@ -27,9 +27,16 @@ export type ColumnDef<T> = {
   label: string;
   // Value used for sorting and filtering. Omit for action/checkbox columns
   // that are neither sortable nor filterable.
-  accessor?: (row: T) => string | number | null | undefined;
+  accessor?: (row: T) => string | number | boolean | null | undefined;
   sortable?: boolean;
   filter?: "text" | "select";
+  /**
+   * The accessor returns a boolean. The framework then renders a Yes/No pill,
+   * offers Yes/No as the search options, and matches "Yes"/"No" against the
+   * stored boolean — so a list carries the boolean itself and never a parallel
+   * display label.
+   */
+  boolean?: boolean;
   // When true (default), the search panel shows a LOV <select> for this
   // column populated from the data. Set to false for free-text/numeric
   // columns — they'll render as a text/date/number <input> instead.
@@ -99,6 +106,19 @@ export type ColumnDef<T> = {
 export function enumFilterOptions(values: readonly string[]): { value: string; label: string }[] {
   return values.map((value) => ({ value, label: value }));
 }
+
+/** The only two values a `boolean` column can be searched by. */
+export const BOOLEAN_FILTER_OPTIONS = [
+  { value: "Yes", label: "Yes" },
+  { value: "No", label: "No" },
+];
+
+/** How a boolean reads everywhere: search options, matching, and the pill. */
+export function booleanLabel(value: unknown): "Yes" | "No" {
+  return value ? "Yes" : "No";
+}
+
+export type AccessorValue = string | number | boolean | null | undefined;
 
 export type ListSelectionMode = "multi" | "single";
 
@@ -632,18 +652,42 @@ type SearchToken<T> =
   | { kind: "free"; value: string }
   | { kind: "column"; col: ColumnDef<T>; op: SearchOperator; value: string };
 
-function compareValues(a: string | number | null | undefined, b: string | number | null | undefined): number {
+/**
+ * The one place an accessor value becomes text. Booleans read as Yes/No, so
+ * sorting, searching, the select options and the cell all agree without a
+ * list ever carrying a parallel label field.
+ */
+export function accessorText(value: AccessorValue): string {
+  if (typeof value === "boolean") return booleanLabel(value);
+  return String(value ?? "");
+}
+
+function compareValues(a: AccessorValue, b: AccessorValue): number {
   const aEmpty = a == null || a === "";
   const bEmpty = b == null || b === "";
   if (aEmpty && bEmpty) return 0;
   if (aEmpty) return 1; // empty/null always sorts last
   if (bEmpty) return -1;
   if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  return accessorText(a).localeCompare(accessorText(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
-function searchableValue(value: string | number | null | undefined) {
-  return String(value ?? "").toLowerCase();
+function searchableValue(value: AccessorValue) {
+  return accessorText(value).toLowerCase();
+}
+
+/**
+ * Every lowercase form a value answers to. Booleans match Yes/No and
+ * true/false, the same pair the server-side row filter accepts, so a search
+ * behaves identically whichever side runs it.
+ */
+function searchableForms(value: AccessorValue): string[] {
+  if (typeof value === "boolean") return value ? ["yes", "true"] : ["no", "false"];
+  return [searchableValue(value)];
+}
+
+function valueContains(value: AccessorValue, needle: string) {
+  return searchableForms(value).some((form) => form.includes(needle));
 }
 
 function normalizeSearchKey(value: string) {
@@ -654,8 +698,9 @@ function tokeniseQuery(query: string) {
   return query.match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) ?? [];
 }
 
-function comparableNumber(value: string | number | null | undefined) {
+function comparableNumber(value: AccessorValue) {
   if (typeof value === "number") return value;
+  if (typeof value === "boolean") return Number.NaN;
   const text = String(value ?? "").trim();
   if (!text) return Number.NaN;
   const date = Date.parse(text);
@@ -683,12 +728,12 @@ function parseAdvancedQuery<T>(query: string, columns: ColumnDef<T>[]): SearchTo
 function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: ColumnDef<T>[]) {
   if (token.kind === "free") {
     const needle = token.value.toLowerCase();
-    return searchCols.some((col) => searchableValue(col.accessor!(row)).includes(needle));
+    return searchCols.some((col) => valueContains(col.accessor!(row), needle));
   }
 
   const raw = token.col.accessor!(row);
-  if (token.op === ":") return searchableValue(raw).includes(token.value.toLowerCase());
-  if (token.op === "=") return searchableValue(raw) === token.value.toLowerCase();
+  if (token.op === ":") return valueContains(raw, token.value.toLowerCase());
+  if (token.op === "=") return searchableForms(raw).includes(token.value.toLowerCase());
 
   const left = comparableNumber(raw);
   const right = comparableNumber(token.value);
@@ -835,8 +880,8 @@ export function useListControls<T>(
         activeCols.every((c) => {
           const raw = c.accessor!(row);
           const needle = filters[c.key]!;
-          if (c.filter === "select") return String(raw ?? "") === needle;
-          return String(raw ?? "").toLowerCase().includes(needle.toLowerCase());
+          if (c.filter === "select") return accessorText(raw) === needle;
+          return valueContains(raw, needle.toLowerCase());
         }),
       );
     }
@@ -845,11 +890,10 @@ export function useListControls<T>(
     if (activeColumnSearches.length > 0) {
       result = result.filter((row) =>
         activeColumnSearches.every((c) => {
-          const raw = searchableValue(c.accessor!(row));
           const needle = appliedColumnSearches[c.key]!.toLowerCase();
           // A column combines an LOV datalist with direct typing, so both
           // selection and partial manual entry use the same contains match.
-          return raw.includes(needle);
+          return valueContains(c.accessor!(row), needle);
         }),
       );
     }
@@ -873,11 +917,12 @@ export function useListControls<T>(
 
   function optionsFor(col: ColumnDef<T>): { value: string; label: string }[] {
     if (col.filterOptions) return col.filterOptions;
+    if (col.boolean) return BOOLEAN_FILTER_OPTIONS;
     if (!col.accessor) return [];
     const seen = new Set<string>();
     for (const row of rows) {
-      const v = col.accessor(row);
-      if (v != null && String(v).trim() !== "") seen.add(String(v));
+      const v = accessorText(col.accessor(row));
+      if (v.trim() !== "") seen.add(v);
     }
     return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((value) => ({ value, label: value }));
   }

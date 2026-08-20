@@ -15,7 +15,7 @@ import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
 import type { InvoicePrefixOption } from "../invoice-number";
 
-const REPRINTABLE_STATES = new Set(["acknowledged", "catalogued", "valued", "withdrawn"]);
+const REPRINTABLE_STATES = new Set(["acknowledged", "valued", "sold"]);
 const inputClass = "w-20 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
 const numberInputClass = `${inputClass} text-right`;
 const createInputClass = "min-h-9 w-full min-w-20 rounded-md border border-green-300 bg-white px-2 text-sm text-stone-900 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-600/15 dark:border-green-800 dark:bg-stone-900 dark:text-stone-100";
@@ -44,10 +44,7 @@ function statusCell(row: LotRow, soldLotIds: Set<string>) {
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      <span
-        className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`}
-        title={row.shutout_reason ? `${displayState}: ${row.shutout_reason}` : displayState ?? ""}
-      >
+      <span className={`rounded-full px-2 py-0.5 text-xs ${bucket.style}`} title={displayState ?? ""}>
         {bucket.label}
       </span>
       {hasMinimumWeightIssue && (
@@ -212,6 +209,53 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
             </select>
           )
         : undefined,
+    },
+    {
+      key: "shutout",
+      label: "Shutout",
+      accessor: (row) => row.shutout,
+      boolean: true,
+      sortable: true,
+      filter: "select",
+      edit: isOwner
+        ? (row, { formId }) => (
+            <select form={formId} name="shutout" defaultValue={row.shutout ? "true" : "false"} className={inputClass}>
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          )
+        : undefined,
+    },
+    {
+      key: "shutout_reason",
+      label: "Shutout reason",
+      accessor: (row) => row.shutout_reason ?? null,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      cellClassName: "text-xs text-stone-500 dark:text-stone-400",
+      render: (row) => row.shutout_reason ?? "—",
+      edit: isOwner
+        ? (row, { formId }) => (
+            <input form={formId} name="shutout_reason" defaultValue={row.shutout_reason ?? ""} className={inputClass} />
+          )
+        : undefined,
+    },
+    {
+      key: "unsold",
+      label: "Un-sold",
+      accessor: (row) => row.unsold,
+      boolean: true,
+      sortable: true,
+      filter: "select",
+    },
+    {
+      key: "reprint",
+      label: "Re-print",
+      accessor: (row) => row.reprint,
+      boolean: true,
+      sortable: true,
+      filter: "select",
     },
   ];
 }
@@ -389,7 +433,7 @@ export function DispatchedLotsTable({
     disabledReason: ({ selectedRows }) => {
       if (selectedRows.length !== 1) return "Select exactly one lot.";
       if (!REPRINTABLE_STATES.has(selectedRows[0]?.state ?? "")) {
-        return "Only acknowledged, catalogued, valued, or withdrawn lots can be marked as re-prints.";
+        return "Only an acknowledged, valued, or sold lot can be marked un-sold.";
       }
       return undefined;
     },
@@ -432,9 +476,9 @@ export function DispatchedLotsTable({
       canDelete={canEdit}
       deleteAction={canEdit ? {
         action: (ids) => deleteLots(ids, saleId),
-        disabled: (rows) => rows.some((row) => !isOwner && row.state !== "invoiced" && row.state !== "pending"),
+        disabled: (rows) => rows.some((row) => !isOwner && row.state !== "invoiced"),
         disabledReason: (rows) =>
-          rows.some((row) => !isOwner && row.state !== "invoiced" && row.state !== "pending")
+          rows.some((row) => !isOwner && row.state !== "invoiced")
             ? "Only owners can delete lots after invoicing."
             : undefined,
         title: (count) => `Delete ${count} lot${count === 1 ? "" : "s"}?`,

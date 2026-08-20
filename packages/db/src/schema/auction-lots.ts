@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, numeric, timestamp, index, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, numeric, boolean, timestamp, index, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
 import { auctionGrades } from "./auction-grades";
@@ -46,28 +46,28 @@ export const auctionLots = pgTable(
     lotSource: text("lot_source", { enum: ["factory", "acknowledgement"] })
       .default("factory")
       .notNull(),
-    // Lifecycle: invoiced → acknowledged | pending | shutout → valued → sold |
-    // re-print | withdrawn → settled. `pending` = invoiced but absent from the
-    // current (partial) acknowledgement, may roll to a later sale.
-    // `re-print` = unsold, re-sampled, rolled to the next sale.
+    // Lifecycle: invoiced → acknowledged → valued → sold. Everything else a lot
+    // can be is a flag below, not a rung here.
     state: text("state", {
-      enum: [
-        "invoiced",
-        "acknowledged",
-        "pending",
-        "missing", // explicit human decision: expected & overdue, no catalogue counterpart
-        "shutout",
-        "not-valued",
-        "valued",
-        "sold",
-        "re-print",
-        "withdrawn",
-        "settled",
-      ],
+      enum: ["invoiced", "acknowledged", "valued", "sold"],
     })
       .default("invoiced")
       .notNull(),
+    shutout: boolean("shutout").default(false).notNull(),
     shutoutReason: text("shutout_reason"),
+    // Only the sellers contract sets this: it says the lot did not sell in the
+    // sale it is in now. Rolling into a later sale clears it and raises
+    // `reprint` instead.
+    unsold: boolean("unsold").default(false).notNull(),
+    reprint: boolean("reprint").default(false).notNull(),
+    // An operator declared this lot a re-print by hand, because the system had
+    // no record of the invoice. Kept apart from `reprint` so a declared history
+    // is never mistaken for one the documents actually evidence.
+    reprintRegistered: boolean("reprint_registered").default(false).notNull(),
+    withdrawn: boolean("withdrawn").default(false).notNull(),
+    notValued: boolean("not_valued").default(false).notNull(),
+    missing: boolean("missing").default(false).notNull(),
+    settled: boolean("settled").default(false).notNull(),
     // Preserve the re-print row if its source is removed; the relationship is
     // historical context, not ownership.
     reprintSourceLotId: uuid("reprint_source_lot_id").references(

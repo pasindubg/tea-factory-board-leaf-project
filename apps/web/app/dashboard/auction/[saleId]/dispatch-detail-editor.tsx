@@ -125,9 +125,9 @@ export function DispatchDetailEditor({
   const canEditDetails = isOwner || isDraftStatus;
   const canConfirmDraft = !creatingInvoice && !isEditing && isDraftStatus;
   const canAddLots = isOwner || isDraftStatus;
-  const cataloguedLots = liveRows.filter((row) => ["acknowledged", "pending", "missing", "shutout", "not-valued", "withdrawn", "re-print", "valued", "sold", "settled"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
-  const issueLots = liveRows.filter((row) => ["pending", "missing", "shutout", "not-valued", "withdrawn"].includes(row.state ?? "")).length;
-  const reprintLots = liveRows.filter((row) => row.state === "re-print").length;
+  const cataloguedLots = liveRows.filter((row) => ["acknowledged", "valued", "sold"].includes(row.state ?? "") || soldLotIds.includes(row.id)).length;
+  const issueLots = liveRows.filter((row) => row.shutout || row.missing || row.not_valued || row.withdrawn).length;
+  const reprintLots = liveRows.filter((row) => row.reprint).length;
   const appliedThresholdGrades = new Set(liveRows.filter((row) => row.threshold_applies).map((row) => row.grade).filter(Boolean));
   const invoiceCount = new Set(
     liveRows.flatMap((row) =>

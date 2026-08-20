@@ -655,7 +655,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
   if (lotIds.length === 0) back(detail, "Select at least one lot to edit.");
 
   const requestedState = str(formData.get("state"));
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["invoiced", "acknowledged", "valued", "sold"]);
   const state = validStates.has(requestedState) ? requestedState : "";
   const invoiceText = str(formData.get("invoice_no"));
   const invoiceList = invoiceText
@@ -764,7 +764,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
   if (nextState) {
     await supabase
       .from("auction_lots")
-      .update({ state: nextState, shutout_reason: nextState === "shutout" ? "Manual override" : null })
+      .update({ state: nextState })
       .eq("factory_id", profile.factory_id)
       .in("id", lotIds);
   }
@@ -843,7 +843,7 @@ export async function updateSaleLotsBulk(saleId: string, formData: FormData) {
 export async function updateSaleLotsInline(saleId: string, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requireProfile(["owner"]);
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
-  const validStates = new Set(["acknowledged", "pending", "missing", "shutout", "not-valued", "valued", "withdrawn", "re-print", "sold", "settled"]);
+  const validStates = new Set(["invoiced", "acknowledged", "valued", "sold"]);
   const lotIds = formData.getAll("lot_id").map((value) => str(value)).filter(Boolean);
   if (lotIds.length === 0) return { ok: false, error: "Select at least one lot to edit." };
 
@@ -855,6 +855,9 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
     kgPerBag: formData.getAll("kg_per_bag").map((value) => str(value)),
     sampleKg: formData.getAll("sample_allowance").map((value) => str(value)),
     state: formData.getAll("state").map((value) => str(value)),
+    shutout: formData.getAll("shutout").map((value) => str(value)),
+    shutoutReason: formData.getAll("shutout_reason").map((value) => str(value)),
+    unsold: formData.getAll("unsold").map((value) => str(value)),
     buyerName: formData.getAll("buyer_name").map((value) => str(value)),
     buyerVatNo: formData.getAll("buyer_vat_no").map((value) => str(value)),
     pricePerKg: formData.getAll("price_per_kg").map((value) => str(value)),
@@ -880,6 +883,9 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
       kgPerBag: Number(values.kgPerBag[index] ?? 0),
       sampleKg: Math.max(0, Number(values.sampleKg[index] ?? 0) || 0),
       state: validStates.has(state) ? state : "",
+      shutout: (values.shutout[index] ?? "") === "true",
+      shutoutReason: values.shutoutReason[index] ?? "",
+      unsold: (values.unsold[index] ?? "") === "true",
       buyerName: values.buyerName[index] ?? "",
       buyerVatNo: values.buyerVatNo[index] ?? "",
       pricePerKg: values.pricePerKg[index] === "" ? null : Number(values.pricePerKg[index]),
@@ -961,7 +967,7 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
   }
 
   for (const row of submittedRows) {
-    if (row.state !== "re-print") continue;
+    if (!row.unsold) continue;
     const contractBlocked = await unsoldBlockedReason(supabase, profile.factory_id, saleIdByLotId.get(row.id) ?? saleId);
     if (contractBlocked) return { ok: false, error: contractBlocked };
   }
@@ -979,7 +985,9 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
         sample_allowance: row.sampleKg,
         net_wt: netWt,
         state: row.state,
-        shutout_reason: row.state === "shutout" ? "Manual override" : null,
+        shutout: row.shutout,
+        shutout_reason: row.shutout ? row.shutoutReason || "Manual override" : null,
+        unsold: row.unsold,
       })
       .eq("id", row.id)
       .eq("factory_id", profile.factory_id);
@@ -998,7 +1006,7 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
     })));
     if (invoiceInsertError) return { ok: false, error: friendlyError(invoiceInsertError) };
 
-    if (row.state === "re-print") {
+    if (row.unsold) {
       const { data: staleLines, error: staleLineReadError } = await supabase
         .from("sale_lines")
         .select("id")
@@ -1023,8 +1031,8 @@ export async function updateSaleLotsInline(saleId: string, formData: FormData): 
       await writeAudit(supabase, profile.factory_id, {
         saleId: saleIdByLotId.get(row.id) ?? saleId,
         lotId: row.id,
-        action: "Manual re-print",
-        detail: `Invoice ${row.invoiceList.join(", ")} was manually moved to re-print with ${row.sampleKg.toFixed(2)} kg cumulative sample allowance and ${netWt.toFixed(2)} kg remaining net weight.`,
+        action: "Manual un-sold",
+        detail: `Invoice ${row.invoiceList.join(", ")} was manually marked un-sold with ${row.sampleKg.toFixed(2)} kg cumulative sample allowance and ${netWt.toFixed(2)} kg remaining net weight.`,
         reason: "Owner correction or manual workflow without document analysis.",
         actor: profile.name,
       });

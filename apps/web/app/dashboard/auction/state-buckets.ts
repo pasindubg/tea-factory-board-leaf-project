@@ -11,21 +11,16 @@ const ISSUE = "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-400
 export const STATE_BUCKET: Record<string, StateBucket> = {
   invoiced:   { label: "Invoiced", style: PENDING },
   dispatched: { label: "Pending", style: PENDING },
-  pending:    { label: "Pending", style: PENDING },
   draft:      { label: "Draft", style: PENDING },
   grn:        { label: "GRN", style: ACTIVE },
   acknowledged: { label: "Acknowledged", style: ACTIVE },
   catalogued: { label: "Catalogued",  style: ACTIVE },
   valued:     { label: "Valued",  style: ACTIVE },
   sold:       { label: "Sold",    style: SOLD },
-  settled:    { label: "Sold",    style: SOLD },
   broker_statement: { label: "Broker statement", style: SOLD },
-  shutout:    { label: "Shutout",   style: ISSUE },
-  "not-valued": { label: "Not Valued", style: ISSUE },
-  withdrawn:  { label: "Withdrawn",   style: ISSUE },
-  "re-print": { label: "Un-sold",   style: ISSUE },
-  missing:    { label: "Missing",   style: ISSUE },
 };
+
+export const FLAG_STYLE = ISSUE;
 
 // Fallback for an unrecognised state — shows the raw value in the neutral style.
 export function stateBucket(state: string | null | undefined): StateBucket {

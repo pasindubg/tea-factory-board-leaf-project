@@ -48,6 +48,13 @@ type LotRow = {
   sample_allowance: number | string | null;
   net_wt: number | string | null;
   state: string | null;
+  shutout: boolean | null;
+  unsold: boolean | null;
+  reprint: boolean | null;
+  withdrawn: boolean | null;
+  not_valued: boolean | null;
+  missing: boolean | null;
+  settled: boolean | null;
   reprint_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
 };
@@ -104,14 +111,14 @@ function lotCount(lots: LotRow[], states: readonly string[]) {
 // A valuation confirm only ever updates auction_lots.state — auction_sales.status
 // never advances past "catalogued" — so lot state, not dispatch status, is the
 // only real signal that a broker's valuation (or sale) has been recorded.
-const VALUED_LOT_STATES = new Set(["valued", "sold", "settled", "withdrawn", "re-print"]);
+const VALUED_LOT_STATES = new Set(["valued", "sold"]);
 
 function lotIsValued(lot: LotRow) {
   return VALUED_LOT_STATES.has(lot.state ?? "");
 }
 
 function lotIsSold(lot: LotRow) {
-  return lot.state === "sold" || lot.state === "settled";
+  return lot.state === "sold";
 }
 
 function dispatchCount(dispatches: DispatchRow[], statuses: readonly string[]) {
@@ -155,7 +162,7 @@ export default async function SaleDetailPage({
   const allDispatchRows = (allDispatches ?? []) as unknown as DispatchRow[];
   const { data: allLots, error: lotsError } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, reprint_source_lot_id, lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout, shutout_reason, unsold, reprint, withdrawn, not_valued, missing, settled, reprint_source_lot_id, lot_invoices(invoice_no)")
     .order("invoice_no");
   if (lotsError) throw new Error(`Could not load auction sale lots: ${lotsError.message}`);
   const allLotRows = (allLots ?? []) as unknown as LotRow[];
@@ -181,7 +188,15 @@ export default async function SaleDetailPage({
   );
 
   if (dispatches.length === 0 && lotRows.length === 0) notFound();
-  const saleLineResourceId = dispatches[0]?.id ?? lotRows[0]?.sale_id;
+  // The Invoices tab re-derives its sale from this broker invoice's own target,
+  // so it must be one that BELONGS to this sale. A dispatch pulled in only
+  // because one of its lots was assigned here (a re-print register entry, say)
+  // targets a different sale, and picking it emptied the tab down to that lot.
+  const saleLineResourceId =
+    dispatches.find((dispatch) => saleNoMatches(dispatch.target_sale_no, saleNo))?.id
+    ?? dispatches.find((dispatch) => !dispatch.target_sale_no && saleNoMatches(dispatch.sale_no, saleNo))?.id
+    ?? dispatches[0]?.id
+    ?? lotRows[0]?.sale_id;
 
   const { data: docImports, error: docImportsError } = dispatchIds.size > 0
     ? await supabase
@@ -337,9 +352,9 @@ export default async function SaleDetailPage({
   const totalRevenue = settlements.reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0);
   const bankCredit = settlements.reduce((sum, row) => sum + Number(row.total_net_proceeds ?? 0), 0);
   const reprintsSoldCount = lotRows.filter((lot) => lot.reprint_source_lot_id && soldLotIds.has(lot.id)).length;
-  const notSoldCount = lotCount(lotRows, ["re-print"]);
+  const notSoldCount = lotRows.filter((lot) => lot.unsold).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
-  const valuedCount = lotCount(lotRows, ["valued", "sold", "settled", "withdrawn", "re-print"]);
+  const valuedCount = lotCount(lotRows, ["valued", "sold"]);
   const soldCount = soldLotIds.size;
   // Weight offered in this sale, over the same lots the "Lots sold" ratio
   // counts, so the two figures always describe one population.
@@ -375,14 +390,14 @@ export default async function SaleDetailPage({
       metric: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
     },
   ];
+  const flagCount = (flag: keyof LotRow) => lotRows.filter((lot) => lot[flag]).length;
   const issueSteps = [
-    { label: "Pending", count: lotCount(lotRows, ["pending"]) },
-    { label: "Not Valued", count: lotCount(lotRows, ["not-valued"]) },
-    { label: "Shutout", count: lotCount(lotRows, ["shutout"]) },
-    { label: "Withdrawn", count: lotCount(lotRows, ["withdrawn"]) },
+    { label: "Not Valued", count: flagCount("not_valued") },
+    { label: "Shutout", count: flagCount("shutout") },
+    { label: "Withdrawn", count: flagCount("withdrawn") },
     { label: "Not sold", count: notSoldCount },
     { label: "Re-prints sold", count: reprintsSoldCount },
-    { label: "Missing", count: lotCount(lotRows, ["missing"]) },
+    { label: "Missing", count: flagCount("missing") },
   ].filter((item) => item.count > 0);
   // Shared with the side rail's own client-side refetch on search — one
   // source of truth for the sale-grouping aggregation instead of duplicating
@@ -403,7 +418,7 @@ export default async function SaleDetailPage({
       lotsCount: dispatchLots.length,
       statusChips: statusBreakdown(dispatchLots),
       soldLots: dispatchLots.filter((lot) => soldLotIds.has(lot.id)).length,
-      reprintLots: dispatchLots.filter((lot) => lot.state === "re-print" || lot.reprint_source_lot_id).length,
+      reprintLots: dispatchLots.filter((lot) => lot.reprint || lot.reprint_source_lot_id).length,
       statusLabel: state.label,
       statusStyle: state.style,
       entrySource: dispatch.entry_source,
@@ -423,6 +438,8 @@ export default async function SaleDetailPage({
       ackDone: false,
       valuationDone: false,
       soldDone: false,
+      valuationConfirmed: false,
+      contractConfirmed: false,
       stageLabel: "Draft",
       dispatchRank: -1,
       dispatchStageLabel: "Draft",
@@ -442,6 +459,13 @@ export default async function SaleDetailPage({
     }
     if (dispatchLots.some(lotIsValued)) current.valuationDone = true;
     if (dispatchLots.some(lotIsSold)) current.soldDone = true;
+    // A confirmed document locks every earlier one for this broker, exactly as
+    // documentOrderBlockedReason does on the server.
+    for (const doc of docImportRows) {
+      if (doc.sale_id !== dispatch.id || doc.status !== "confirmed") continue;
+      if (doc.doc_type === "valuation") current.valuationConfirmed = true;
+      if (doc.doc_type === "contract") current.contractConfirmed = true;
+    }
     reconciliationGroupsByBroker.set(key, current);
   }
   for (const group of reconciliationGroupsByBroker.values()) {

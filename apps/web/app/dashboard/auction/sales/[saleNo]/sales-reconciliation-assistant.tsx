@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useActionState, useState } from "react";
 import { FileText, Upload } from "lucide-react";
 import { EntityList, type EntityListContext } from "@/components/entity-list";
 import { ListSearchPanel, ListSurface, SortButton, type ColumnDef, type ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import { AppDrawer } from "@/components/ui/drawer";
+import { showAppToast } from "@/components/action-feedback";
 import { ingestAcknowledgement, ingestContract, ingestValuation } from "../../actions";
 
 export type SalesReconciliationGroup = {
@@ -16,9 +17,12 @@ export type SalesReconciliationGroup = {
   lotCount: number;
   /** Broker invoice reached "catalogued" — the ack covers the whole group. */
   ackDone: boolean;
-  /** Any lot moved to valued/sold/settled/withdrawn/re-print. */
+  /** Any lot moved to valued/sold. */
   valuationDone: boolean;
   soldDone: boolean;
+  /** Documents this broker has CONFIRMED for the sale — later ones lock earlier. */
+  valuationConfirmed: boolean;
+  contractConfirmed: boolean;
   stageLabel: string;
 };
 
@@ -29,7 +33,7 @@ type DocTypeRow = {
   title: string;
   accept: string;
   pendingText: string;
-  action: (saleId: string, formData: FormData) => void | Promise<void>;
+  action: (saleId: string, formData: FormData) => Promise<{ error: string } | undefined>;
   unlocked: boolean;
   statusLabel: string;
 };
@@ -38,7 +42,14 @@ type DocTypeRow = {
 // sale — each one only makes sense once the previous reconciliation step has
 // actually happened, so valuation/contract stay locked until then.
 function docTypesFor(group: SalesReconciliationGroup): DocTypeRow[] {
-  const { ackDone, valuationDone } = group;
+  const { ackDone, valuationDone, valuationConfirmed, contractConfirmed } = group;
+  // Superseded by a later confirmed document: uploading it again would reopen a
+  // reconciliation that document has already settled. Mirrors the same rule the
+  // ingest actions enforce (documentOrderBlockedReason).
+  const supersededBy = (later: boolean, label: string) =>
+    later ? `Superseded — the ${label} is already confirmed` : null;
+  const ackSuperseded = supersededBy(contractConfirmed, "sellers contract") ?? supersededBy(valuationConfirmed, "valuation");
+  const valuationSuperseded = supersededBy(contractConfirmed, "sellers contract");
   return [
     {
       key: "ack",
@@ -46,8 +57,8 @@ function docTypesFor(group: SalesReconciliationGroup): DocTypeRow[] {
       accept: "application/pdf",
       pendingText: "Reading…",
       action: ingestAcknowledgement,
-      unlocked: true,
-      statusLabel: "Available",
+      unlocked: !ackSuperseded,
+      statusLabel: ackSuperseded ?? "Available",
     },
     {
       key: "valuation",
@@ -55,8 +66,8 @@ function docTypesFor(group: SalesReconciliationGroup): DocTypeRow[] {
       accept: "application/pdf",
       pendingText: "Reading…",
       action: ingestValuation,
-      unlocked: ackDone,
-      statusLabel: ackDone ? "Available" : "Requires the acknowledgement to be confirmed first",
+      unlocked: ackDone && !valuationSuperseded,
+      statusLabel: valuationSuperseded ?? (ackDone ? "Available" : "Requires the acknowledgement to be confirmed first"),
     },
     {
       key: "contract",
@@ -201,19 +212,7 @@ function DocTypeWorkflow({
       description={`${broker} — select a document type to upload it.`}
       actions={
         selected && selected.unlocked ? (
-          <form action={selected.action.bind(null, saleId)} className="flex items-center gap-2">
-            <input id={inputId} type="file" name="file" accept={selected.accept} required className="peer sr-only" />
-            <label
-              htmlFor={inputId}
-              className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-700 shadow-sm transition hover:bg-green-50 hover:text-green-800 hover:border-green-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300 dark:hover:border-green-700"
-            >
-              <Upload aria-hidden="true" className="h-3.5 w-3.5" />
-              Choose file
-            </label>
-            <SubmitButton pendingText={selected.pendingText} variant="primary" className="h-9 rounded-full px-4 text-xs">
-              Upload
-            </SubmitButton>
-          </form>
+          <UploadForm key={selected.key} saleId={saleId} doc={selected} inputId={inputId} />
         ) : undefined
       }
     >
@@ -251,5 +250,37 @@ function DocTypeWorkflow({
         </table>
       </div>
     </ListSurface>
+  );
+}
+
+function UploadForm({ saleId, doc, inputId }: { saleId: string; doc: DocTypeRow; inputId: string }) {
+  const [, formAction] = useActionState(async (_previous: string | null, formData: FormData) => {
+    try {
+      const result = await doc.action(saleId, formData);
+      if (!result?.error) return null;
+      showAppToast(result.error, "error");
+      return result.error;
+    } catch (thrown) {
+      if ((thrown as { digest?: string })?.digest?.startsWith("NEXT_REDIRECT")) throw thrown;
+      const message = thrown instanceof Error ? thrown.message : "The document could not be read.";
+      showAppToast(message, "error");
+      return message;
+    }
+  }, null);
+
+  return (
+    <form action={formAction} className="flex flex-wrap items-center justify-end gap-2">
+      <input id={inputId} type="file" name="file" accept={doc.accept} required className="peer sr-only" />
+      <label
+        htmlFor={inputId}
+        className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-700 shadow-sm transition hover:bg-green-50 hover:text-green-800 hover:border-green-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300 dark:hover:border-green-700"
+      >
+        <Upload aria-hidden="true" className="h-3.5 w-3.5" />
+        Choose file
+      </label>
+      <SubmitButton pendingText={doc.pendingText} variant="primary" className="h-9 rounded-full px-4 text-xs">
+        Upload
+      </SubmitButton>
+    </form>
   );
 }

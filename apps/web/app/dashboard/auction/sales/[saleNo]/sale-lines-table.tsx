@@ -15,18 +15,7 @@ import { money } from "../../format";
 
 export type SaleLineRow = AuctionSaleLineListRow;
 
-const EDITABLE_STATES = [
-  "acknowledged",
-  "pending",
-  "missing",
-  "shutout",
-  "not-valued",
-  "valued",
-  "withdrawn",
-  "re-print",
-  "sold",
-  "settled",
-];
+const EDITABLE_STATES = ["invoiced", "acknowledged", "valued", "sold"];
 const rightAligned = "text-right tabular-nums";
 
 const COLUMNS: EntityListColumn<SaleLineRow>[] = [
@@ -55,6 +44,32 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     sortable: true,
     filter: "select",
     render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${row.stateStyle}`}>{row.stateLabel}</span>,
+  },
+  {
+    key: "shutout",
+    label: "Shutout",
+    accessor: (row) => row.shutout,
+    boolean: true,
+    sortable: true,
+    filter: "select",
+  },
+  {
+    key: "shutoutReason",
+    label: "Shutout reason",
+    accessor: (row) => row.shutoutReason ?? null,
+    sortable: true,
+    filter: "text",
+    lov: false,
+    cellClassName: "text-xs text-stone-500 dark:text-stone-400",
+    render: (row) => row.shutoutReason ?? "—",
+  },
+  {
+    key: "unsold",
+    label: "Un-sold",
+    accessor: (row) => row.unsold,
+    boolean: true,
+    sortable: true,
+    filter: "select",
   },
   {
     key: "buyerName",
@@ -162,17 +177,20 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     ),
   },
   {
-    key: "reprintLabel",
+    key: "reprint",
     label: "Re-print",
-    accessor: (row) => row.reprintLabel,
+    accessor: (row) => row.reprint,
+    boolean: true,
     sortable: true,
     filter: "select",
-    filterOptions: [{ value: "Yes", label: "Yes" }, { value: "No", label: "No" }],
-    render: (row) => (
-      <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.reprintLabel === "Yes" ? "bg-blue-600" : "bg-stone-400 dark:bg-stone-600"}`}>
-        {row.reprintLabel}
-      </span>
-    ),
+  },
+  {
+    key: "reprintRegistered",
+    label: "Re-print registered",
+    accessor: (row) => row.reprintRegistered,
+    boolean: true,
+    sortable: true,
+    filter: "select",
   },
   {
     key: "reprintCount",

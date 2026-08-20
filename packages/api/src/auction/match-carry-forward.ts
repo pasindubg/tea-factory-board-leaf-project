@@ -25,7 +25,7 @@ import { invoiceNumbersMatch } from "./invoice-key";
 
 /** States a lot can never be carried forward out of: the money is already
  * recorded against it. */
-export const CARRY_FORWARD_BLOCKED_STATES: ReadonlySet<string> = new Set(["sold", "settled"]);
+export const CARRY_FORWARD_BLOCKED_STATES: ReadonlySet<string> = new Set(["sold"]);
 
 /**
  * PostgREST `or=` terms that FETCH the lots this matcher should judge.

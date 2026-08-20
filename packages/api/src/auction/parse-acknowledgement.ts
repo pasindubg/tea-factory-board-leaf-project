@@ -23,6 +23,8 @@ export type AckLot = {
   bags: number;
   kgPerBag: number;
   netWt: number;
+  shutoutReason: string | null; // null in the catalogued section
+  reprint: boolean; // the broker flagged the row as a re-print (R)
 };
 
 export type ParsedAcknowledgement = {
@@ -84,6 +86,8 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
         bags: Number(r[4]),
         kgPerBag: num(r[5]),
         netWt: num(r[6]),
+        shutoutReason: null,
+        reprint: false,
       });
     }
     for (const r of shutoutPart.matchAll(SHUTOUT_ROW)) {
@@ -98,6 +102,8 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
         bags: Number(r[3]),
         kgPerBag: num(r[4]),
         netWt: num(r[5]),
+        shutoutReason: "Listed under Shutout/Violation in the acknowledgement",
+        reprint: false,
       });
     }
   }
@@ -126,33 +132,39 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
 
 // ─── Asia Siyaka variant ────────────────────────────────────────────────────
 // One merged line per lot (no per-mark section headers, no MF mark codes):
-//   {ReceivedDate}{[flag]MARK} {Inv#} {Grade} {Chs} {kg/chest} {TotalWt} {MfdDate} {DaysHeld} {Last4Avg}{LotNo}
+//   [S|V] {ReceivedDate}{[R]MARK} {Inv#} {Grade} {Chs} {kg/chest} {TotalWt} {MfdDate} {DaysHeld} {Last4Avg}{LotNo}
 //   30/04/2026KUMUDU 0951 BOP1 10 30.00 300 23/04/2026 27 1,850.00B0877
-// The mark is its NAME (e.g. KUMUDU), optionally prefixed by a flag letter glued
-// on (S=Shutout, V=Violation per the legend; R=re-print). Lot numbers carry a
-// letter prefix (B0877). TotalWt may be below chs×kg (sample already deducted),
-// so the bags×kg self-check does not apply here. Sale no. is the number after
-// the ACKNOWLEDGEMENT title; sale date is the first day of the "SALE OF a - b" range.
+//   S 07/04/2026RKUMUDU 0901 DUST1 10 50.00 496 06/04/2026 50 0.00B
+// S/V (held back) stand alone in the LotNo column and leave the lot number as a
+// bare letter prefix; R is glued to the mark name and means re-print. TotalWt may
+// be below chs×kg (sample already deducted), so the bags×kg self-check does not
+// apply here. Sale no. is the number after the ACKNOWLEDGEMENT title; sale date
+// is the first day of the "SALE OF a - b" range.
 const ASIA_ROW =
-  /(\d{2}\/\d{2}\/\d{4})([A-Z]+)\s+(\d{1,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+([\d.]+)\s+([\d,]+(?:\.\d+)?)\s+\d{2}\/\d{2}\/\d{4}\s+\d+\s+[\d,]+\.\d{2}([A-Z]\d+)/g;
+  /(?:([SV])\s+)?(\d{2}\/\d{2}\/\d{4})([A-Z]+)\s+(\d{1,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+([\d.]+)\s+([\d,]+(?:\.\d+)?)\s+\d{2}\/\d{2}\/\d{4}\s+\d+\s+[\d,]+\.\d{2}([A-Z]\d*)/g;
+
+const ASIA_FLAG_REASON: Record<string, string> = {
+  S: "Shutout (S) in the acknowledgement",
+  V: "Violation (V) in the acknowledgement",
+};
 
 function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
   const saleNo = text.match(/ACKNOWLEDGEMENT\s+(\d{1,4})\b/i)?.[1] ?? null;
   const saleDate = text.match(/SALE OF\s+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? null;
 
   const raw = [...text.matchAll(ASIA_ROW)].map((r) => ({
-    markToken: r[2],
-    dispatchDate: r[1],
-    invoiceNo: r[3],
-    grade: r[4],
-    bags: Number(r[5]),
-    kgPerBag: num(r[6]),
-    netWt: num(r[7]),
-    lotNo: r[8],
+    heldBackFlag: r[1] ?? null,
+    markToken: r[3],
+    dispatchDate: r[2],
+    invoiceNo: r[4],
+    grade: r[5],
+    bags: Number(r[6]),
+    kgPerBag: num(r[7]),
+    netWt: num(r[8]),
+    lotNo: /\d/.test(r[9]) ? r[9] : null,
   }));
 
-  // Flag letters are glued onto the mark name (RKUMUDU = flagged KUMUDU). A
-  // leading S/V/R is a flag only when the remainder also appears as a plain
+  // A leading S/V/R is a flag only when the remainder also appears as a plain
   // mark token elsewhere in the document.
   const plainTokens = new Set(raw.map((r) => r.markToken));
   const splitMark = (token: string): { mark: string; flag: string | null } => {
@@ -164,8 +176,9 @@ function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
 
   const lots: AckLot[] = raw.map((r) => {
     const { mark, flag } = splitMark(r.markToken);
+    const heldBackFlag = r.heldBackFlag ?? (flag === "S" || flag === "V" ? flag : null);
     return {
-      section: flag === "S" || flag === "V" ? "shutout" : "catalogued",
+      section: heldBackFlag ? "shutout" : "catalogued",
       markCode: mark, // the document only prints the mark NAME — resolved by code OR name downstream
       markName: mark,
       dispatchDate: r.dispatchDate,
@@ -175,6 +188,8 @@ function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
       bags: r.bags,
       kgPerBag: r.kgPerBag,
       netWt: r.netWt,
+      shutoutReason: heldBackFlag ? ASIA_FLAG_REASON[heldBackFlag] : null,
+      reprint: flag === "R",
     };
   });
 

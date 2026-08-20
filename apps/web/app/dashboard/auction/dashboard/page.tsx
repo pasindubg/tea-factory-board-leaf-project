@@ -17,15 +17,9 @@ const KG = (n: number) => n.toLocaleString("en-LK", { maximumFractionDigits: 2 }
 const STATE_ORDER: { key: string; label: string; bar: string; chip: string }[] = [
   { key: "invoiced", label: "Invoiced", bar: "bg-stone-400 dark:bg-stone-500", chip: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300" },
   { key: "dispatched", label: "Invoiced", bar: "bg-stone-400 dark:bg-stone-500", chip: "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300" },
-  { key: "pending", label: "Pending", bar: "bg-sky-500", chip: "bg-sky-100 dark:bg-sky-900 text-sky-800 dark:text-sky-300" },
   { key: "acknowledged", label: "Acknowledged", bar: "bg-blue-500", chip: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300" },
-  { key: "catalogued", label: "Acknowledged", bar: "bg-blue-500", chip: "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300" },
   { key: "valued", label: "Valued", bar: "bg-amber-500", chip: "bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-300" },
   { key: "sold", label: "Sold", bar: "bg-green-600", chip: "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300" },
-  { key: "re-print", label: "Re-print", bar: "bg-orange-500", chip: "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-300" },
-  { key: "shutout", label: "Shutout", bar: "bg-red-500", chip: "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300" },
-  { key: "withdrawn", label: "Withdrawn", bar: "bg-stone-300 dark:bg-stone-600", chip: "bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400" },
-  { key: "settled", label: "Settled", bar: "bg-emerald-600", chip: "bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300" },
 ];
 
 export default async function AuctionDashboardPage() {
@@ -33,7 +27,7 @@ export default async function AuctionDashboardPage() {
 
   const [{ data: lots }, { data: sales }, { data: lines }, { data: vals }, { data: settlements }, { data: bank }] =
     await Promise.all([
-      supabase.from("auction_lots").select("id, sale_id, state, net_wt, grade"),
+      supabase.from("auction_lots").select("id, sale_id, state, unsold, reprint, shutout, net_wt, grade"),
       supabase.from("auction_sales").select("id, sale_no, target_sale_no, status, sale_date, prompt_date, brokers(name)").eq("sale_kind", "dispatch").order("sale_date", { ascending: false }),
       supabase.from("sale_lines").select("sale_id, lot_id, proceeds, vat_amount, on_guarantee, net_wt"),
       supabase.from("valuations").select("lot_id, projected_proceeds"),
@@ -100,8 +94,10 @@ export default async function AuctionDashboardPage() {
     settlementBySale.set(st.sale_id as string, (settlementBySale.get(st.sale_id as string) ?? 0) + Number(st.total_net_proceeds ?? 0));
   }
 
-  const reprintCount = byState.get("re-print")?.count ?? 0;
-  const pendingKg = byState.get("pending")?.kg ?? 0;
+  const reprintCount = allLots.filter((l) => l.reprint).length;
+  const pendingKg = allLots
+    .filter((l) => l.state === "invoiced")
+    .reduce((sum, l) => sum + Number(l.net_wt ?? 0), 0);
 
   const cards: { label: string; value: string; sub?: string }[] = [
     { label: "Lot invoices", value: String(totalLots), sub: KG(totalKg) + " net" },

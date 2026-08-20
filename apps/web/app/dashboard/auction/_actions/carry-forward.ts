@@ -27,6 +27,8 @@ export type CarryForwardLot = {
   sample_allowance: number | string | null;
   net_wt: number | string | null;
   state: string | null;
+  unsold: boolean | null;
+  reprint: boolean | null;
   auction_sales: {
     broker_id: string;
     sale_no: string | null;
@@ -80,7 +82,7 @@ export async function resolveAckCarryForward(
 
   const { data: storedRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
     .eq("factory_id", factoryId)
     .or(parts.join(","));
   const storedLots = (storedRows ?? []) as unknown as CarryForwardLot[];
@@ -114,7 +116,7 @@ export async function resolveAckCarryForward(
     if (match.status === "matched") {
       used.add(match.candidate.id);
       const lot = lotById.get(match.candidate.id)!;
-      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: lot.state === "re-print" });
+      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: Boolean(lot.unsold) || Boolean(lot.reprint) });
     } else if (match.status === "blocked") {
       outcomes.set(row.invoiceNo, { status: "blocked", lot: lotById.get(match.candidate.id)! });
     } else {

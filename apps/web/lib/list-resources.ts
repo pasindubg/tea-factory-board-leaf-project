@@ -99,6 +99,9 @@ export type AuctionSaleLineListRow = {
   state: string | null;
   stateLabel: string;
   stateStyle: string;
+  shutout: boolean;
+  shutoutReason: string | null;
+  unsold: boolean;
   buyerName: string | null;
   buyerVatNo: string | null;
   bags: number | null;
@@ -110,13 +113,12 @@ export type AuctionSaleLineListRow = {
   vatAmount: number | null;
   onGuarantee: boolean | null;
   reprint: boolean;
+  reprintRegistered: boolean;
   /**
-   * Display labels for the two booleans above, carried on the row because the
-   * server-side row filter matches row PROPERTIES, not column accessors — a
-   * column keyed on the raw boolean cannot be searched by its label.
+   * Guarantee is tri-state (Guarantee / Cash / Not sold), so it carries its own
+   * label; plain booleans do not — the framework matches those on the boolean.
    */
   guaranteeLabel: string;
-  reprintLabel: string;
   reprintCount: number;
 };
 
@@ -160,6 +162,7 @@ export type AuctionSalesSideListRow = {
   saleDate: string | null;
   statuses: string[];
   hasUnsold: boolean;
+  reprintRegister: boolean;
 };
 
 /** Every staged/confirmed auction document, factory-wide — the Document Details side rail. */
@@ -198,7 +201,14 @@ export type AuctionDispatchLotListRow = {
   sample_allowance: string | number | null;
   net_wt: string | number | null;
   state: string | null;
+  shutout: boolean;
   shutout_reason: string | null;
+  unsold: boolean;
+  reprint: boolean;
+  withdrawn: boolean;
+  not_valued: boolean;
+  missing: boolean;
+  settled: boolean;
   lot_source: string | null;
   reprint_target_sale_id: string | null;
   reprint_target_label: string | null;
@@ -226,6 +236,10 @@ export type AuctionInvoiceOverviewListRow = {
   sampleKg: number | null;
   netWt: number | null;
   state: string | null;
+  shutout: boolean;
+  shutoutReason: string | null;
+  unsold: boolean;
+  reprint: boolean;
   mark: string | null;
   brokerInvoiceNo: string;
   saleNo: string | null;

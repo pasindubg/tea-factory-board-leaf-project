@@ -16,7 +16,7 @@ export type ReconRow = {
   invoiceNo: string;
   status: ReconStatus;
   invoiced: { id: string; grade: string; netWt: number } | null;
-  ack: { lotNo: string | null; markCode: string; grade: string; netWt: number } | null;
+  ack: { lotNo: string | null; markCode: string; grade: string; netWt: number; shutoutReason: string | null; reprint: boolean } | null;
   weightDelta: number | null; // ack.netWt − invoiced.netWt
   gradeMismatch: boolean;
 };
@@ -106,7 +106,7 @@ export function reconcileAcknowledgement(
 
   for (const lot of ack.lots) {
     const inv = byInvoice.get(invoiceMatchKey(lot.invoiceNo));
-    const ackSide = { lotNo: lot.lotNo, markCode: lot.markCode, grade: lot.grade, netWt: lot.netWt };
+    const ackSide = { lotNo: lot.lotNo, markCode: lot.markCode, grade: lot.grade, netWt: lot.netWt, shutoutReason: lot.shutoutReason, reprint: lot.reprint };
     if (inv) {
       matched.add(invoiceMatchKey(inv.invoiceNo));
       rows.push({
