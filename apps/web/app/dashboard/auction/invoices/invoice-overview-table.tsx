@@ -51,14 +51,9 @@ function isMutable(row: InvoiceOverviewRow, isOwner: boolean) {
  * sold lots are ticked, re-prints are labelled as such. Add an entry here to
  * introduce a new marker — anything unmapped simply shows a dash.
  */
-const CHECK_MARKERS: Record<string, string> = {
-  sold: "Y",
-  settled: "Y",
-  "re-print": "Reprint",
-};
-
-function checkMarker(state: string | null) {
-  return CHECK_MARKERS[state ?? ""] ?? "—";
+function checkMarker(row: { state: string | null; reprint: boolean }) {
+  if (row.reprint) return "Reprint";
+  return row.state === "sold" ? "Y" : "—";
 }
 
 /**
@@ -249,10 +244,10 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
     {
       key: "check",
       label: "Check",
-      accessor: (row) => checkMarker(row.state),
+      accessor: (row) => checkMarker(row),
       sortable: true,
       filter: "select",
-      render: (row) => checkMarker(row.state),
+      render: (row) => checkMarker(row),
     },
     {
       key: "lotNo",
@@ -292,6 +287,40 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       filter: "select",
       filterOptions: stateBucketOptions(LOT_STATES),
       render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(row.state).style}`}>{stateBucket(row.state).label}</span>,
+    },
+    {
+      key: "shutout",
+      label: "Shutout",
+      accessor: (row) => row.shutout,
+      boolean: true,
+      sortable: true,
+      filter: "select",
+    },
+    {
+      key: "shutoutReason",
+      label: "Shutout reason",
+      accessor: (row) => row.shutoutReason ?? null,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      cellClassName: "text-xs text-stone-500 dark:text-stone-400",
+      render: (row) => row.shutoutReason ?? "—",
+    },
+    {
+      key: "unsold",
+      label: "Un-sold",
+      accessor: (row) => row.unsold,
+      boolean: true,
+      sortable: true,
+      filter: "select",
+    },
+    {
+      key: "reprint",
+      label: "Re-print",
+      accessor: (row) => row.reprint,
+      boolean: true,
+      sortable: true,
+      filter: "select",
     },
     {
       key: "biStatus",

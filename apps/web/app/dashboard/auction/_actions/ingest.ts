@@ -10,6 +10,7 @@ import {
   back,
   canonicalGrade,
   colomboToday,
+  documentOrderBlockedReason,
   extractPdf,
   gradeAliasMap,
   stageImport,
@@ -20,6 +21,7 @@ import {
   writeAudit,
 } from "./_shared";
 import { buildInvoicedLots } from "../recon-helpers";
+import { buildCompositeInvoiceNo, parseCompositeInvoiceNo } from "../invoice-number";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 import { resolveAckCarryForward } from "./carry-forward";
@@ -39,28 +41,31 @@ function invoiceKeys(row: { invoice_no?: string | null; lot_invoices?: { invoice
 // ---------- Acknowledgement (① catalogue & reconcile) ----------
 export async function ingestAcknowledgement(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const file = formData.get("file");
   const text = await extractPdf(file);
-  if (text === null) return back(detail, "Choose a valid Acknowledgement PDF to upload.");
-  if (!isAcknowledgement(text)) return back(detail, "That doesn't look like an Acknowledgement document.");
+  if (text === null) return { error: "Choose a valid Acknowledgement PDF to upload." };
+  if (!isAcknowledgement(text)) return { error: "That doesn't look like an Acknowledgement document." };
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "acknowledgement");
+  if (outOfOrder) return { error: outOfOrder };
   // The file must be THIS broker's document. Without this a wrong-broker
   // upload stages cleanly and only fails later as an invoice-matching error,
   // which reads like a data problem rather than the wrong file.
   const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
   if (brokerName) {
     const mismatch = brokerDocumentMismatch(text, brokerName, "Acknowledgement");
-    if (mismatch) return back(detail, mismatch);
+    if (mismatch) return { error: mismatch };
   }
   const parsed = parseAcknowledgement(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "acknowledgement", file as File, parsed);
-  if (!staged.ok) return back(detail, staged.error);
+  if (!staged.ok) return { error: staged.error };
   redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmAcknowledgement(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "acknowledgement");
+  if (outOfOrder) return back(`${AUC}/documents/${importId}`, outOfOrder);
   const { data: imp } = await supabase
     .from("doc_imports")
     .select("id, parsed_json")
@@ -138,9 +143,12 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
             .update({
               lot_no: row.ack?.lotNo ?? null,
               mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
-              state: row.status === "catalogued" ? "acknowledged" : "shutout",
+              state: "acknowledged",
+              shutout: row.status === "shutout",
               shutout_reason:
-                row.status === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
+                row.status === "shutout"
+                  ? row.ack?.shutoutReason ?? "Listed under Shutout/Violation in the acknowledgement"
+                  : null,
             })
             .eq("id", row.invoiced!.id),
         ),
@@ -176,12 +184,30 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         kg_per_bag: ackLot.kgPerBag,
         net_wt: ackLot.netWt,
         lot_source: "acknowledgement",
-        state: ackLot.section === "catalogued" ? "acknowledged" : "shutout",
+        state: "acknowledged",
+        shutout: ackLot.section === "shutout",
         shutout_reason:
-          ackLot.section === "shutout" ? "Listed under Shutout/Violation in the acknowledgement" : null,
+          ackLot.section === "shutout"
+            ? ackLot.shutoutReason ?? "Listed under Shutout/Violation in the acknowledgement"
+            : null,
+        // NOT from the broker's R flag: a lot is a re-print only when OUR
+        // records show it was offered before (resolveAckCarryForward finds it).
+        // Anything else is an unexpected lot until an operator registers it.
+        reprint: false,
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  // A broker prints the bare sequence ("0901"); the factory numbers the same
+  // invoice with its index-cycle prefix ("26I02-0901"). A lot created from the
+  // acknowledgement alone had no prefix at all, so it read as a different
+  // invoice from every sibling on the same broker invoice. Matching stays on
+  // the bare number (invoiceMatchKey) — this only decides what is STORED.
+  const groupPrefix = (lotRows ?? [])
+    .map((lot) => parseCompositeInvoiceNo(lot.invoice_no as string | null)?.prefix)
+    .find(Boolean) ?? null;
+  const withGroupPrefix = (invoiceNo: string) =>
+    groupPrefix && !parseCompositeInvoiceNo(invoiceNo) ? buildCompositeInvoiceNo(groupPrefix, invoiceNo) : invoiceNo;
 
   // A broker can catalogue the same invoice/lot again in a later sale. Before
   // creating an ACK-sourced "unexpected" lot, move the existing unsold lot
@@ -211,7 +237,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     }
 
     const candidate = outcome.lot;
-    if (candidate.state === "re-print") {
+    if (candidate.unsold || candidate.reprint) {
       rowsToCreate.push({
         ...row,
         invoice_no: candidate.invoice_no ?? row.invoice_no,
@@ -221,6 +247,8 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         sample_allowance: candidate.sample_allowance,
         net_wt: candidate.net_wt ?? row.net_wt,
         reprint_source_lot_id: candidate.id,
+        reprint: true,
+        unsold: false,
       });
       await writeAudit(supabase, profile.factory_id, {
         saleId: row.sale_id,
@@ -243,7 +271,12 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       kg_per_bag: row.kg_per_bag,
       net_wt: row.net_wt,
       state: row.state,
+      shutout: row.shutout,
       shutout_reason: row.shutout_reason,
+      // Rolled into a new sale: it is a re-print from here on, and whatever the
+      // previous sale's contract said about it no longer applies.
+      reprint: true,
+      unsold: false,
     };
     await supabase.from("auction_lots").update(patch).eq("id", candidate.id);
 
@@ -272,7 +305,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   if (rowsToCreate.length > 0) {
     const { data: createdLots } = await supabase
       .from("auction_lots")
-      .insert(rowsToCreate.map(({ ackLot: _ackLot, ...row }) => row))
+      .insert(rowsToCreate.map(({ ackLot: _ackLot, ...row }) => ({ ...row, invoice_no: withGroupPrefix(row.invoice_no) })))
       .select("id, sale_id, invoice_no, state");
     if (createdLots && createdLots.length > 0) {
       createdLotsFromAck = createdLots as { id: string; sale_id: string; invoice_no: string; state: string }[];
@@ -286,14 +319,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     }
   }
 
-  // Remaining invoiced lots not in this ack → pending (may be in a later ack).
-  // Group-wide: the ack is the broker's full statement for this sale.
-  const { error: pendingSweepError } = await supabase
-    .from("auction_lots")
-    .update({ state: "pending" })
-    .in("sale_id", groupIds)
-    .eq("state", "invoiced");
-  if (pendingSweepError) return back(detail, friendlyError(pendingSweepError));
 
   const { error: confirmError } = await supabase
     .from("doc_imports")
@@ -338,28 +363,31 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
 // ---------- Valuation (② valuation ↔ realised) ----------
 export async function ingestValuation(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const file = formData.get("file");
   const text = await extractPdf(file);
-  if (text === null) return back(detail, "Choose a valid Valuation PDF to upload.");
-  if (!isValuation(text)) return back(detail, "That doesn't look like a Valuation Report.");
+  if (text === null) return { error: "Choose a valid Valuation PDF to upload." };
+  if (!isValuation(text)) return { error: "That doesn't look like a Valuation Report." };
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "valuation");
+  if (outOfOrder) return { error: outOfOrder };
   // The file must be THIS broker's document. Without this a wrong-broker
   // upload stages cleanly and only fails later as an invoice-matching error,
   // which reads like a data problem rather than the wrong file.
   const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
   if (brokerName) {
     const mismatch = brokerDocumentMismatch(text, brokerName, "Valuation Report");
-    if (mismatch) return back(detail, mismatch);
+    if (mismatch) return { error: mismatch };
   }
   const parsed = parseValuation(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "valuation", file as File, parsed);
-  if (!staged.ok) return back(detail, staged.error);
+  if (!staged.ok) return { error: staged.error };
   redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmValuation(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "valuation");
+  if (outOfOrder) return back(`${AUC}/documents/${importId}`, outOfOrder);
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedValuation;
@@ -382,7 +410,9 @@ export async function confirmValuation(importId: string, saleId: string) {
     p_sale_no: reportSaleNo,
     p_parsed: parsed,
   });
-  if (error) return back(detail, `Could not confirm valuation: ${error.message}`);
+  // The document page, not the sale: a rejected report is fixed where it is
+  // reviewed, and the message names what is wrong with THIS document.
+  if (error) return back(`${AUC}/documents/${importId}`, `Could not confirm valuation: ${error.message}`);
   const result = (Array.isArray(resultRows) ? resultRows[0] : resultRows) as {
     matched_count?: number;
     not_valued_count?: number;
@@ -399,28 +429,31 @@ export async function confirmValuation(importId: string, saleId: string) {
 // ---------- Sellers Contract (sale lines, settlements, VAT — A3) ----------
 export async function ingestContract(saleId: string, formData: FormData) {
   const { supabase, profile } = await requireModuleAccess("auction");
-  const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
   const file = formData.get("file");
   const text = await extractPdf(file);
-  if (text === null) return back(detail, "Choose a valid Sellers Contract PDF to upload.");
-  if (!isContract(text)) return back(detail, "That doesn't look like a Sellers Contract & Account Sales document.");
+  if (text === null) return { error: "Choose a valid Sellers Contract PDF to upload." };
+  if (!isContract(text)) return { error: "That doesn't look like a Sellers Contract & Account Sales document." };
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "contract");
+  if (outOfOrder) return { error: outOfOrder };
   // The file must be THIS broker's document. Without this a wrong-broker
   // upload stages cleanly and only fails later as an invoice-matching error,
   // which reads like a data problem rather than the wrong file.
   const brokerName = await saleBrokerName(supabase, profile.factory_id, saleId);
   if (brokerName) {
     const mismatch = brokerDocumentMismatch(text, brokerName, "Sellers Contract");
-    if (mismatch) return back(detail, mismatch);
+    if (mismatch) return { error: mismatch };
   }
   const parsed = parseContract(text);
   const staged = await stageImport(supabase, profile.factory_id, saleId, "contract", file as File, parsed);
-  if (!staged.ok) return back(detail, staged.error);
+  if (!staged.ok) return { error: staged.error };
   redirect(`${AUC}/documents/${staged.importId}`);
 }
 
 export async function confirmContract(importId: string, saleId: string) {
   const { supabase, profile } = await requireModuleAccess("auction");
   const detail = await saleDetailPath(supabase, profile.factory_id, saleId);
+  const outOfOrder = await documentOrderBlockedReason(supabase, profile.factory_id, saleId, "contract");
+  if (outOfOrder) return back(`${AUC}/documents/${importId}`, outOfOrder);
   const { data: imp } = await supabase.from("doc_imports").select("parsed_json").eq("id", importId).single();
   if (!imp?.parsed_json) return back(detail, "Staged import not found.");
   const rawParsed = imp.parsed_json as ParsedContract;
@@ -519,7 +552,7 @@ export async function confirmContract(importId: string, saleId: string) {
 
   for (const { line, lot } of notSoldMatches) {
     if (alreadyApplied.has(lot.id)) {
-      await supabase.from("auction_lots").update({ state: "re-print" }).eq("id", lot.id);
+      await supabase.from("auction_lots").update({ state: "valued", unsold: true }).eq("id", lot.id);
       continue;
     }
     const existingSample = Math.max(0, Number(lot.sample_allowance ?? 0));
@@ -530,7 +563,7 @@ export async function confirmContract(importId: string, saleId: string) {
     const nextNet = Number(Math.max(0, baseGross - cumulativeSample).toFixed(2));
     await supabase
       .from("auction_lots")
-      .update({ state: "re-print", sample_allowance: cumulativeSample, net_wt: nextNet })
+      .update({ state: "valued", unsold: true, sample_allowance: cumulativeSample, net_wt: nextNet })
       .eq("id", lot.id);
     await writeAudit(supabase, profile.factory_id, {
       saleId: lot.sale_id,
@@ -579,7 +612,7 @@ export async function confirmContract(importId: string, saleId: string) {
     if (saleLineUpsertError) return back(detail, friendlyError(saleLineUpsertError));
     const { error: lotStateError } = await supabase
       .from("auction_lots")
-      .update({ state: "sold" })
+      .update({ state: "sold", unsold: false })
       .in("id", [...saleLineByLot.keys()]);
     if (lotStateError) return back(detail, friendlyError(lotStateError));
   }

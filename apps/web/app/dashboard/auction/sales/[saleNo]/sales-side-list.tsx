@@ -14,6 +14,7 @@ const COLUMNS: ColumnDef<SaleSideListRow>[] = [
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date" },
   { key: "statuses", label: "Status", accessor: (row) => row.statuses.join(", ") || null, sortable: true, filter: "text" },
   { key: "hasUnsold", label: "Un-solds", accessor: (row) => (row.hasUnsold ? "Yes" : "No"), sortable: true, filter: "select" },
+  { key: "reprintRegister", label: "Re-print register", accessor: (row) => row.reprintRegister, boolean: true, sortable: true, filter: "select" },
 ];
 
 export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
@@ -40,6 +41,11 @@ export function SalesSideList({ rows, currentSaleNo, searchPanelId }: {
             <div className="flex items-start justify-between gap-2">
               <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{sale.saleNo}</span>
               <span className="flex items-center gap-2">
+                {sale.reprintRegister && (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                    Re-print reg.
+                  </span>
+                )}
                 {sale.hasUnsold && (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                     Un-solds

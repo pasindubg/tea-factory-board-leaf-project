@@ -50,15 +50,16 @@ ok("0909 is lot B1265, BOPA, 297.00 kg", row0909?.ack?.lotNo === "B1265" && row0
 
 const ackRow = { invoiceNo: "0909", lotNo: "B1265" };
 
-/** An outstanding re-print as the Re-prints page registers it: a real lot in
- * `re-print`, under its own Broker Invoice, for the broker holding it. */
+/** An outstanding re-print as the Re-prints page registers it: a real
+ * acknowledged lot carrying the un-sold flag, under its own Broker Invoice,
+ * for the broker holding it. */
 function registerEntry(overrides: Partial<CarryForwardCandidate> = {}): CarryForwardCandidate {
   return {
     id: "lot-0909-register",
     saleId: REGISTER_SALE,
     invoiceNo: "26I01-0909",
     lotNo: null,
-    state: "re-print",
+    state: "acknowledged",
     brokerId: ASIA_SIYAKA,
     dispatchDate: "2026-04-02",
     invoiceNos: ["26I01-0909"],
@@ -85,8 +86,8 @@ const matched = matchCarryForwardLot(ackRow, eligible([registerEntry()]));
 ok("registered → 0909 matches the register entry",
   matched.status === "matched" && matched.candidate.id === "lot-0909-register",
   matched.status);
-ok("the matched lot is in `re-print`, so the ACK creates a CHILD lot with reprint_source_lot_id set",
-  matched.status === "matched" && matched.candidate.state === "re-print",
+ok("the matched lot is movable, so the ACK can chain a CHILD lot onto it",
+  matched.status === "matched" && matched.candidate.state === "acknowledged",
   matched.status === "matched" ? String(matched.candidate.state) : matched.status);
 
 // The register stores the factory's prefixed number; the broker prints it bare.

@@ -105,14 +105,14 @@ type OrphanStateInput = { saleId: string; lotId: string; reason?: string };
 
 async function setOrphanState(
   input: OrphanStateInput,
-  patch: Record<string, string | null>,
+  patch: Record<string, string | boolean | null>,
   action: string,
   notice: string,
 ): Promise<ListMutationResult> {
   const { supabase, profile } = await requireModuleAccess("auction");
   const { data: lot, error: lotError } = await supabase
     .from("auction_lots")
-    .select("id, invoice_no, state, shutout_reason")
+    .select("id, invoice_no, state, shutout, shutout_reason, missing")
     .eq("id", input.lotId)
     .eq("sale_id", input.saleId)
     .eq("factory_id", profile.factory_id)
@@ -142,11 +142,10 @@ async function setOrphanState(
   if (auditError) {
     const { error: rollbackError } = await supabase
       .from("auction_lots")
-      .update({ state: lot.state, shutout_reason: lot.shutout_reason })
+      .update({ state: lot.state, shutout: lot.shutout, shutout_reason: lot.shutout_reason, missing: lot.missing })
       .eq("id", input.lotId)
       .eq("sale_id", input.saleId)
-      .eq("factory_id", profile.factory_id)
-      .eq("state", patch.state);
+      .eq("factory_id", profile.factory_id);
     if (rollbackError) {
       return { ok: false, error: "The invoice outcome changed, but its audit entry could not be saved. Review this reconciliation before retrying." };
     }
@@ -158,15 +157,25 @@ async function setOrphanState(
 }
 
 export async function markShutout(input: OrphanStateInput): Promise<ListMutationResult> {
-  return setOrphanState(input, { state: "shutout", shutout_reason: "Marked shut out" }, "Marked shut out", "Invoice marked as shut out.");
+  return setOrphanState(
+    input,
+    { state: "acknowledged", shutout: true, shutout_reason: "Marked shut out", missing: false },
+    "Marked shut out",
+    "Invoice marked as shut out.",
+  );
 }
 
 export async function markMissing(input: OrphanStateInput): Promise<ListMutationResult> {
-  return setOrphanState(input, { state: "missing" }, "Marked missing", "Invoice marked as missing.");
+  return setOrphanState(input, { missing: true }, "Marked missing", "Invoice marked as missing.");
 }
 
 export async function markPending(input: OrphanStateInput): Promise<ListMutationResult> {
-  return setOrphanState(input, { state: "pending", shutout_reason: null }, "Left unresolved", "Invoice left unresolved.");
+  return setOrphanState(
+    input,
+    { shutout: false, shutout_reason: null, missing: false },
+    "Left unresolved",
+    "Invoice left unresolved.",
+  );
 }
 
 export async function rejectCandidate(input: {

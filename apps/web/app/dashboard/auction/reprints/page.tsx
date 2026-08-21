@@ -22,7 +22,7 @@ export default async function ReprintOverviewPage() {
         .eq("factory_id", profile.factory_id)
         .not("invoice_no", "is", null)
         .is("reprint_source_lot_id", null)
-        .in("state", ["acknowledged", "catalogued", "valued", "withdrawn"])
+        .in("state", ["acknowledged", "valued"])
         .order("created_at")
       : { data: [], error: null },
     supabase

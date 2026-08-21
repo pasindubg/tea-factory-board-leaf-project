@@ -17,6 +17,8 @@ import {
   ListSurface,
   SortButton,
   TabbedListSurface,
+  accessorText,
+  booleanLabel,
   useFrameworkListData,
   useListControls,
   useListSelection,
@@ -113,8 +115,17 @@ const MIN_RESIZE_WIDTH = 56;
 function cellTitle<Row>(column: EntityListColumn<Row>, row: Row): string | undefined {
   const value = column.accessor?.(row);
   if (value == null) return undefined;
-  const text = String(value).trim();
+  const text = accessorText(value).trim();
   return text === "" ? undefined : text;
+}
+
+/** Every `boolean` column renders through this — declare the column, not the pill. */
+function BooleanPill({ value }: { value: unknown }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs text-white ${value ? "bg-blue-600" : "bg-stone-400 dark:bg-stone-600"}`}>
+      {booleanLabel(value)}
+    </span>
+  );
 }
 
 /**
@@ -1105,9 +1116,11 @@ function EntityListPanel<Row>({
                         ? editCellContent(column, row, formId)
                         : column.render
                           ? column.render(row, cellContext)
-                          : column.prefixColumn
-                            ? displayInvoiceNo(String(column.accessor?.(row) ?? ""), prefixVisible) || "—"
-                            : String(column.accessor?.(row) ?? "—")}
+                          : column.boolean
+                            ? <BooleanPill value={column.accessor?.(row)} />
+                            : column.prefixColumn
+                              ? displayInvoiceNo(accessorText(column.accessor?.(row)), prefixVisible) || "—"
+                              : accessorText(column.accessor?.(row)) || "—"}
                     </td>
                   ))}
                 </tr>

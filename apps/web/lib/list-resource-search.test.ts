@@ -61,25 +61,25 @@ describe("search config integrity", () => {
 });
 
 /**
- * A column whose accessor DERIVES a label from a differently-typed row field
- * could be searched in the browser but matched nothing once the same criteria
- * went through the server.
- *
  * The server-side fallback filter compares a criterion against the row's own
- * property; it has no access to the column's accessor. So a column keyed on a
- * boolean (`onGuarantee`) offering the label "Guarantee" asked the server for
- * rows whose `onGuarantee` contains "guarantee" — and `true`/`false`/`null`
- * never do. The fix is to carry the label on the row and key the column on it.
+ * property, with no access to the column's accessor. A boolean property is
+ * matched as the Yes/No the column renders, so a `boolean` column needs no
+ * companion label field. A value that is NOT a plain boolean (guarantee is
+ * tri-state: Guarantee / Cash / Not sold) still has to carry its label.
  */
-describe("row-level criteria against derived display values", () => {
+describe("row-level criteria against boolean and derived display values", () => {
   const rows = [
-    { id: "a", onGuarantee: true, guaranteeLabel: "Guarantee", reprint: true, reprintLabel: "Yes" },
-    { id: "b", onGuarantee: false, guaranteeLabel: "Cash", reprint: false, reprintLabel: "No" },
-    { id: "c", onGuarantee: null, guaranteeLabel: "Not sold", reprint: false, reprintLabel: "No" },
+    { id: "a", onGuarantee: true, guaranteeLabel: "Guarantee", reprint: true },
+    { id: "b", onGuarantee: false, guaranteeLabel: "Cash", reprint: false },
+    { id: "c", onGuarantee: null, guaranteeLabel: "Not sold", reprint: false },
   ];
 
-  it("cannot match a label against the raw boolean it was derived from", () => {
-    // The defect, pinned: this is what the list used to ask the server for.
+  it("matches a boolean property on the Yes/No the column shows", () => {
+    expect(filterRowsByCriteria(rows, { reprint: "Yes" }).map((r) => r.id)).toEqual(["a"]);
+    expect(filterRowsByCriteria(rows, { reprint: "No" }).map((r) => r.id)).toEqual(["b", "c"]);
+  });
+
+  it("does not match a boolean against an unrelated label", () => {
     expect(filterRowsByCriteria(rows, { onGuarantee: "Guarantee" })).toHaveLength(0);
     expect(filterRowsByCriteria(rows, { onGuarantee: "Cash" })).toHaveLength(0);
   });
@@ -88,12 +88,6 @@ describe("row-level criteria against derived display values", () => {
     expect(filterRowsByCriteria(rows, { guaranteeLabel: "Guarantee" }).map((r) => r.id)).toEqual(["a"]);
     expect(filterRowsByCriteria(rows, { guaranteeLabel: "Cash" }).map((r) => r.id)).toEqual(["b"]);
     expect(filterRowsByCriteria(rows, { guaranteeLabel: "Not sold" }).map((r) => r.id)).toEqual(["c"]);
-  });
-
-  it("matches the re-print label the same way", () => {
-    expect(filterRowsByCriteria(rows, { reprint: "Yes" })).toHaveLength(0);
-    expect(filterRowsByCriteria(rows, { reprintLabel: "Yes" }).map((r) => r.id)).toEqual(["a"]);
-    expect(filterRowsByCriteria(rows, { reprintLabel: "No" }).map((r) => r.id)).toEqual(["b", "c"]);
   });
 
   it("still returns everything when no criteria are set", () => {

@@ -62,9 +62,17 @@ export async function ValuationContent({
   };
   const confirmed = imp.status === "confirmed";
   const reportSaleNo = formatSaleNo(parsed.saleNo);
+  const invoiceSaleNo = formatSaleNo((sale?.target_sale_no as string | null) ?? (sale?.sale_no as string | null));
   const proceedsValidation = validateValuationProceeds(parsed.lots);
   const proceedsByInvoice = new Map(proceedsValidation.rows.map((row) => [`${row.invoiceNo}:${row.lotNo}`, row]));
   const matched = parsed.lots.filter((l) => known.has(invoiceMatchKey(l.invoiceNo))).length;
+  // Matching is broker-wide, so a hit on another sale's lot is not evidence the
+  // report belongs here — confirm_auction_valuation refuses on exactly this.
+  const matchedHere = parsed.lots.filter((l) => {
+    const assignment = known.get(invoiceMatchKey(l.invoiceNo));
+    if (!assignment) return false;
+    return saleNoKey(formatSaleNo(assignment.finalSaleNo ?? assignment.provisionalSaleNo)) === saleNoKey(invoiceSaleNo);
+  }).length;
   const tableRows: ValuationTableRow[] = parsed.lots.map((l) => ({
     ...(() => {
       const assignment = known.get(invoiceMatchKey(l.invoiceNo));
@@ -93,9 +101,25 @@ export async function ValuationContent({
       <div>
         <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Valuation review</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          {parsed.lots.length} lots · {matched} match an acknowledged lot
+          Report for sale {reportSaleNo || "—"} · on broker invoice sale {invoiceSaleNo || "—"} · {parsed.lots.length} lots · {matched} match an acknowledged lot
         </p>
       </div>
+
+      {!confirmed && matchedHere === 0 && (
+        <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+          <p className="font-medium">This report cannot be confirmed against this broker invoice.</p>
+          <p className="mt-1">
+            None of its {parsed.lots.length} invoice(s) match a lot in sale {invoiceSaleNo || "—"}
+            {matched > 0 ? ` (${matched} matched lots in other sales)` : ""}. The report itself is for
+            sale {reportSaleNo || "—"}. Upload this broker&apos;s valuation for sale {invoiceSaleNo || "—"}, or reject this document.
+          </p>
+        </div>
+      )}
+      {!confirmed && matchedHere > 0 && matched < parsed.lots.length && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+          {parsed.lots.length - matched} of {parsed.lots.length} invoice(s) in this report have no lot on this broker — only the {matched} matched will be recorded.
+        </p>
+      )}
 
       {confirmed && (
         <p className="rounded-md bg-green-50 dark:bg-green-950 px-3 py-2 text-sm text-green-800 dark:text-green-400">
@@ -133,15 +157,17 @@ export async function ValuationContent({
 
       {!confirmed && (
         <div className="flex gap-3">
-          <form action={confirmValuation.bind(null, importId, saleId)}>
-            <SubmitButton
-              pendingText="Saving…"
-              variant="primary"
-              className="rounded-md px-4 py-2 text-sm"
-            >
-              Confirm — record {matched} valuation(s)
-            </SubmitButton>
-          </form>
+          {matchedHere > 0 && (
+            <form action={confirmValuation.bind(null, importId, saleId)}>
+              <SubmitButton
+                pendingText="Saving…"
+                variant="primary"
+                className="rounded-md px-4 py-2 text-sm"
+              >
+                Confirm — record {matched} valuation(s)
+              </SubmitButton>
+            </form>
+          )}
           <form action={rejectImport.bind(null, importId, saleId)}>
             <ConfirmSubmitButton
               title="Reject Valuation Report?"
