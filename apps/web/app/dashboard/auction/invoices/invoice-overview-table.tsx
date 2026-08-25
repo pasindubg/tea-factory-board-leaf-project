@@ -242,6 +242,14 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       render: (row) => row.nextSaleNo ?? "—",
     },
     {
+      key: "previousSaleNo",
+      label: "Previous Sale No.",
+      accessor: (row) => row.previousSaleNo,
+      sortable: true,
+      filter: "text",
+      render: (row) => row.previousSaleNo ?? "—",
+    },
+    {
       key: "check",
       label: "Check",
       accessor: (row) => checkMarker(row),

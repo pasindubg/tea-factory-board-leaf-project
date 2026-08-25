@@ -57,29 +57,39 @@ const invoicedClean: InvoicedLot[] = ack.lots.map((l) => ({
   netWt: l.netWt,
 }));
 const recon = reconcileAcknowledgement(invoicedClean, ack);
-ok("clean recon: 12 catalogued, 2 shutout, 0 pending/unexpected",
+ok("clean recon: 12 catalogued, 2 shutout, 0 not-acknowledged",
   recon.summary.catalogued === 12 && recon.summary.shutout === 2 &&
-    recon.summary.pending === 0 && recon.summary.unexpected === 0 && recon.summary.weightMismatches === 0,
+    recon.summary.notAcknowledged === 0 && recon.summary.weightMismatches === 0,
   JSON.stringify(recon.summary));
 ok("clean recon: shutout stock = 430 kg", recon.summary.shutoutKg === 430, `${recon.summary.shutoutKg}`);
+ok("clean recon: catalogued total mismatch = 0 (broker and our weights agree)",
+  recon.summary.totalMismatchKg === 0, `${recon.summary.totalMismatchKg}`);
 
-// ---- reconcile: anomalies (missing, unexpected, weight delta) ----
+// ---- reconcile: anomalies (missing, not-acknowledged, weight delta) ----
 const invoicedDirty: InvoicedLot[] = [
   { id: "a", invoiceNo: "0058", grade: "OP", netWt: 275 }, // 5kg short of ack (280)
-  { id: "b", invoiceNo: "9999", grade: "OP", netWt: 100 }, // dispatched but not in this ack → pending
-  // 0074, 0061, 0063, … not invoiced here → those ack rows become "unexpected"
+  { id: "b", invoiceNo: "9999", grade: "OP", netWt: 100 }, // dispatched but not in this ack → not-acknowledged
+  // 0074, 0061, 0063, … not invoiced here — but the ack DOES list them, so they
+  // stay catalogued/shutout. Having no invoice of ours never demotes a row.
 ];
 const recon2 = reconcileAcknowledgement(invoicedDirty, ack);
 const r58 = recon2.rows.find((r) => r.invoiceNo === "0058");
 ok("anomaly: 0058 weight delta +5", !!r58 && r58.weightDelta === 5, `${r58?.weightDelta}`);
-ok("anomaly: 1 pending (9999 not in this partial ack)", recon2.summary.pending === 1, `${recon2.summary.pending}`);
-ok("anomaly: 13 unexpected (ack rows not invoiced)", recon2.summary.unexpected === 13, `${recon2.summary.unexpected}`);
+ok("anomaly: 1 not-acknowledged (9999 not in this partial ack)",
+  recon2.summary.notAcknowledged === 1, `${recon2.summary.notAcknowledged}`);
+ok("anomaly: every ack line stays acknowledged even with no invoice of ours — 12 + 2",
+  recon2.summary.catalogued === 12 && recon2.summary.shutout === 2,
+  `catalogued=${recon2.summary.catalogued} shutout=${recon2.summary.shutout}`);
 ok("anomaly: 1 weight mismatch flagged", recon2.summary.weightMismatches === 1);
+// Only 0058 matched an invoice (9999 has no ack row to sum), so the
+// whole-document total mismatch is exactly that one row's delta.
+ok("anomaly: catalogued total mismatch = +5 (only 0058 matched, delta +5)",
+  recon2.summary.totalMismatchKg === 5, `${recon2.summary.totalMismatchKg}`);
 
 const totalWarningRows: ReconRow[] = [{
   invoiceNo: "0122",
-  status: "pending",
-  invoiced: { id: "pending-0122", grade: "FBOFSP", netWt: 136 },
+  status: "not-acknowledged",
+  invoiced: { id: "not-ack-0122", grade: "FBOFSP", netWt: 136 },
   ack: null,
   weightDelta: null,
   gradeMismatch: false,
@@ -89,10 +99,30 @@ const warningRelations = relateAcknowledgementParseWarnings(
   totalWarningRows,
 );
 ok(
-  "catalogued-kg warning relates a near-matching pending invoice",
+  "catalogued-kg warning relates a near-matching un-acknowledged invoice",
   warningRelations.length === 1 && warningRelations[0].rows[0]?.invoiceNo === "0122" && warningRelations[0].differenceKg === 138,
   JSON.stringify(warningRelations),
 );
+
+// ── Sample allowance: our net_wt already has it deducted, the broker's
+// printed weight has not — comparing net to net (ignoring sample) reported a
+// mismatch on every correctly-catalogued lot. netWt + sampleAllowance must
+// equal the ack's figure for a clean row.
+const invoicedWithSample: InvoicedLot[] = [
+  { id: "s1", invoiceNo: "0006", grade: "OP1", netWt: 257.5, sampleAllowance: 2.5 },
+  { id: "s2", invoiceNo: "0027", grade: "PEKO", netWt: 296.5, sampleAllowance: 3.5 },
+];
+const ackWithSample: typeof ack = {
+  ...ack,
+  lots: [
+    { section: "catalogued", markCode: "MF1", markName: "MF1", dispatchDate: null, lotNo: "B1", invoiceNo: "0006", grade: "OP1", bags: 10, kgPerBag: 26, netWt: 260, shutoutReason: null, reprint: false },
+    { section: "catalogued", markCode: "MF1", markName: "MF1", dispatchDate: null, lotNo: "B2", invoiceNo: "0027", grade: "PEKO", bags: 10, kgPerBag: 30, netWt: 300, shutoutReason: null, reprint: false },
+  ],
+};
+const reconSample = reconcileAcknowledgement(invoicedWithSample, ackWithSample);
+ok("sample allowance: net_wt + sample matches the broker's gross figure — no false mismatch",
+  reconSample.summary.weightMismatches === 0 && reconSample.summary.totalMismatchKg === 0,
+  JSON.stringify(reconSample.summary));
 
 console.log(failures === 0 ? "\nAUCTION ACK PARSE + RECON: ALL CHECKS PASSED" : `\nAUCTION ACK: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

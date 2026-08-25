@@ -4,13 +4,23 @@
 import type { ParsedAcknowledgement } from "./parse-acknowledgement";
 import { invoiceMatchKey } from "./invoice-key";
 
-export type InvoicedLot = { id: string; invoiceNo: string; grade: string; netWt: number };
+// `netWt` is already net of `sampleAllowance` on our side (net_wt = gross_wt -
+// sample_allowance), but the broker's printed catalogue weight is the GROSS
+// figure — sample is drawn at their end, not ours. Comparing net to their gross
+// reports a mismatch on every lot that has a sample at all, so `sampleAllowance`
+// must be added back before the two sides are compared.
+export type InvoicedLot = { id: string; invoiceNo: string; grade: string; netWt: number; sampleAllowance?: number };
 
-// Acknowledgements are PARTIAL: a lot the factory dispatched but the broker has
-// not yet catalogued is `pending` (it may appear in a later ack / roll to a later
-// sale), NOT an error. Only an explicit human decision marks a lot genuinely
-// `missing` (see the orphan resolver) — the pure reconciliation never does.
-export type ReconStatus = "catalogued" | "shutout" | "pending" | "unexpected";
+// ONE rule: is this invoice in the acknowledgement?
+//
+//   in the acknowledgement  → "catalogued"  (or "shutout", which is catalogued
+//                              with the broker's held-back reason attached —
+//                              not a third outcome)
+//   not in it               → "not-acknowledged"
+//
+// Nothing else classifies. Whether we also invoiced an acknowledged lot is not
+// a status; it is visible from `invoiced` being null on the row.
+export type ReconStatus = "catalogued" | "shutout" | "not-acknowledged";
 
 export type ReconRow = {
   invoiceNo: string;
@@ -24,11 +34,15 @@ export type ReconRow = {
 export type ReconSummary = {
   catalogued: number;
   shutout: number;
-  pending: number; // dispatched but absent from this (partial) ack — may roll forward
-  unexpected: number; // in the acknowledgement but never invoiced
+  notAcknowledged: number; // invoiced by us, absent from this ack — may roll forward
   weightMismatches: number;
   shutoutKg: number; // stock left at the warehouse, rolls to the next sale
-  pendingKg: number; // dispatched stock still at the store, not yet catalogued
+  notAcknowledgedKg: number; // invoiced stock this ack does not mention
+  // Σ(ack.netWt − invoiced.netWt) over every row the ack actually matched to an
+  // invoice (catalogued or shutout). Individual weightDelta values can offset
+  // each other, so this is a total-level check — the broker's catalogued
+  // weight for this document, against ours, net of every row.
+  totalMismatchKg: number;
 };
 
 export type Reconciliation = { rows: ReconRow[]; summary: ReconSummary };
@@ -43,8 +57,7 @@ export type ParseWarningRelation = {
   parsedKg: number;
   printedKg: number;
   differenceKg: number;
-  relatedStatus: "pending" | "unexpected";
-  rows: Array<{ invoiceNo: string; status: "pending" | "unexpected"; kg: number }>;
+  rows: Array<{ invoiceNo: string; status: ReconStatus; kg: number }>;
 };
 
 const CATALOGUED_KG_ISSUE = /^Catalogued kg parsed \(([\d,.]+)\) ≠ printed total \(([\d,.]+)\)\.$/;
@@ -67,19 +80,18 @@ export function relateAcknowledgementParseWarnings(
     const differenceKg = Number((printedKg - parsedKg).toFixed(2));
     if (Math.abs(differenceKg) <= 0.01) return [];
 
-    // If the document prints more catalogue weight than was parsed, the most
-    // useful factory-side lead is an invoice still pending from this partial
-    // acknowledgement. In the reverse direction, an unexpected parsed line is
-    // the useful lead. Do not label either as a confirmed cause.
-    const relatedStatus: ParseWarningRelation["relatedStatus"] = differenceKg > 0 ? "pending" : "unexpected";
+    // More printed than parsed → the gap is most likely one of OUR invoices the
+    // ack does not mention. Less → an ack line we never invoiced. Each of those
+    // rows has exactly one side filled in, so its weight is whichever is there.
+    // Advisory only: never label a close weight as a confirmed cause.
     const targetKg = Math.abs(differenceKg);
     const toleranceKg = Math.max(0.01, targetKg * 0.02);
     const candidates = rows
-      .filter((row) => row.status === relatedStatus)
+      .filter((row) => (differenceKg > 0 ? !row.ack : !row.invoiced))
       .map((row) => ({
         invoiceNo: row.invoiceNo,
-        status: relatedStatus,
-        kg: row.status === "pending" ? row.invoiced?.netWt ?? 0 : row.ack?.netWt ?? 0,
+        status: row.status,
+        kg: row.invoiced?.netWt ?? row.ack?.netWt ?? 0,
       }))
       .filter((row) => row.kg > 0)
       .sort((a, b) => Math.abs(targetKg - a.kg) - Math.abs(targetKg - b.kg) || a.invoiceNo.localeCompare(b.invoiceNo));
@@ -87,7 +99,7 @@ export function relateAcknowledgementParseWarnings(
     const nearest = candidates[0];
     if (!nearest || Math.abs(targetKg - nearest.kg) > toleranceKg) return [];
 
-    return [{ issue, parsedKg, printedKg, differenceKg, relatedStatus, rows: [nearest] }];
+    return [{ issue, parsedKg, printedKg, differenceKg, rows: [nearest] }];
   });
 }
 
@@ -99,43 +111,36 @@ export function reconcileAcknowledgement(
 ): Reconciliation {
   // Keyed on the bare sequence, not the stored string: the factory's numbers
   // carry an index-cycle prefix ("26I01-0001") that a broker document never
-  // prints. Matching verbatim would make every line unexpected.
+  // prints. Matching verbatim would leave every line not-acknowledged.
   const byInvoice = new Map(invoiced.map((l) => [invoiceMatchKey(l.invoiceNo), l]));
   const matched = new Set<string>();
   const rows: ReconRow[] = [];
 
+  // Every line the acknowledgement prints IS acknowledged — `lot.section` says
+  // whether the broker catalogued it or held it back, and that is the whole
+  // decision. Having our own invoice for it only enriches the row (full number,
+  // weight delta, grade check); it never changes the status.
   for (const lot of ack.lots) {
     const inv = byInvoice.get(invoiceMatchKey(lot.invoiceNo));
-    const ackSide = { lotNo: lot.lotNo, markCode: lot.markCode, grade: lot.grade, netWt: lot.netWt, shutoutReason: lot.shutoutReason, reprint: lot.reprint };
-    if (inv) {
-      matched.add(invoiceMatchKey(inv.invoiceNo));
-      rows.push({
-        // Show the factory's own full number on a matched row; the broker's
-        // bare one is only ever a lookup key.
-        invoiceNo: inv.invoiceNo,
-        status: lot.section, // "catalogued" | "shutout"
-        invoiced: { id: inv.id, grade: inv.grade, netWt: inv.netWt },
-        ack: ackSide,
-        weightDelta: Number((lot.netWt - inv.netWt).toFixed(2)),
-        gradeMismatch: normGrade(inv.grade) !== normGrade(lot.grade),
-      });
-    } else {
-      rows.push({
-        invoiceNo: lot.invoiceNo,
-        status: "unexpected",
-        invoiced: null,
-        ack: ackSide,
-        weightDelta: null,
-        gradeMismatch: false,
-      });
-    }
+    if (inv) matched.add(invoiceMatchKey(inv.invoiceNo));
+    rows.push({
+      // The factory's own full number when we have it; the broker's bare one
+      // is otherwise all there is.
+      invoiceNo: inv?.invoiceNo ?? lot.invoiceNo,
+      status: lot.section, // "catalogued" | "shutout"
+      invoiced: inv ? { id: inv.id, grade: inv.grade, netWt: inv.netWt } : null,
+      ack: { lotNo: lot.lotNo, markCode: lot.markCode, grade: lot.grade, netWt: lot.netWt, shutoutReason: lot.shutoutReason, reprint: lot.reprint },
+      weightDelta: inv ? Number((lot.netWt - (inv.netWt + (inv.sampleAllowance ?? 0))).toFixed(2)) : null,
+      gradeMismatch: inv ? normGrade(inv.grade) !== normGrade(lot.grade) : false,
+    });
   }
 
+  // Anything we invoiced that the acknowledgement never mentioned.
   for (const inv of invoiced) {
     if (matched.has(invoiceMatchKey(inv.invoiceNo))) continue;
     rows.push({
       invoiceNo: inv.invoiceNo,
-      status: "pending",
+      status: "not-acknowledged",
       invoiced: { id: inv.id, grade: inv.grade, netWt: inv.netWt },
       ack: null,
       weightDelta: null,
@@ -147,14 +152,16 @@ export function reconcileAcknowledgement(
   const summary: ReconSummary = {
     catalogued: count("catalogued"),
     shutout: count("shutout"),
-    pending: count("pending"),
-    unexpected: count("unexpected"),
+    notAcknowledged: count("not-acknowledged"),
     weightMismatches: rows.filter((r) => r.weightDelta != null && Math.abs(r.weightDelta) > 0.01).length,
     shutoutKg: Number(
       rows.filter((r) => r.status === "shutout").reduce((s, r) => s + (r.ack?.netWt ?? 0), 0).toFixed(2),
     ),
-    pendingKg: Number(
-      rows.filter((r) => r.status === "pending").reduce((s, r) => s + (r.invoiced?.netWt ?? 0), 0).toFixed(2),
+    notAcknowledgedKg: Number(
+      rows.filter((r) => r.status === "not-acknowledged").reduce((s, r) => s + (r.invoiced?.netWt ?? 0), 0).toFixed(2),
+    ),
+    totalMismatchKg: Number(
+      rows.reduce((s, r) => s + (r.weightDelta ?? 0), 0).toFixed(2),
     ),
   };
 

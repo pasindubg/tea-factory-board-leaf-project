@@ -5,8 +5,8 @@
 // This module exists so the REVIEW SCREEN and the CONFIRM ACTION reach the
 // same answer. They used to disagree by construction: reconcileAcknowledgement
 // only compares against the lots invoiced in THIS sale group, so a carried-
-// forward lot is `unexpected` there no matter what, while confirmation quietly
-// resolved it. The operator was told "Unexpected: 1" and then watched the
+// forward lot is `not-acknowledged` there no matter what, while confirmation
+// quietly resolved it. The operator was told "Not acknowledged: 1" and watched the
 // system do something else — exactly the noise the register was built to
 // remove. Both paths now call resolveAckCarryForward.
 //
@@ -21,6 +21,7 @@ export type CarryForwardLot = {
   sale_id: string;
   invoice_no: string | null;
   lot_no: string | null;
+  grade: string | null;
   bags: number | null;
   kg_per_bag: number | string | null;
   gross_wt: number | string | null;
@@ -82,7 +83,7 @@ export async function resolveAckCarryForward(
 
   const { data: storedRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
     .eq("factory_id", factoryId)
     .or(parts.join(","));
   const storedLots = (storedRows ?? []) as unknown as CarryForwardLot[];

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, numeric, boolean, timestamp, index, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, numeric, boolean, timestamp, index, uniqueIndex, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
 import { auctionGrades } from "./auction-grades";
@@ -64,6 +64,14 @@ export const auctionLots = pgTable(
     // no record of the invoice. Kept apart from `reprint` so a declared history
     // is never mistaken for one the documents actually evidence.
     reprintRegistered: boolean("reprint_registered").default(false).notNull(),
+    // The broker catalogued this lot in a LATER sale than the one it was
+    // dispatched to — it skipped one or more sales without ever being offered.
+    // Distinct from `reprint`: nothing was offered and left unsold here, the
+    // lot simply waited. Set on BOTH rows of the pair.
+    skippedSale: boolean("skipped_sale").default(false).notNull(),
+    // On the origin row only: the sale the broker actually acknowledged it in.
+    // The destination row leaves this null — it IS that sale.
+    skippedSaleNo: text("skipped_sale_no"),
     withdrawn: boolean("withdrawn").default(false).notNull(),
     notValued: boolean("not_valued").default(false).notNull(),
     missing: boolean("missing").default(false).notNull(),
@@ -79,6 +87,10 @@ export const auctionLots = pgTable(
   (t) => [
     index("idx_auction_lots_factory").on(t.factoryId),
     index("idx_auction_lots_sale").on(t.saleId),
+    // A sale can carry a given invoice at most once — carry-forward always
+    // creates a NEW row in the destination sale (never mutates the source),
+    // so this is what actually stops a duplicate child being created twice.
+    uniqueIndex("uq_auction_lots_sale_invoice").on(t.saleId, t.invoiceNo),
     index("idx_auction_lots_factory_provisional_sale").on(t.factoryId, t.provisionalSaleNo),
     index("idx_auction_lots_factory_final_sale").on(t.factoryId, t.finalSaleNo),
     // LOV integrity, enforced by the database rather than by each caller: a lot

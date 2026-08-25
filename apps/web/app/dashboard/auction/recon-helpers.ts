@@ -8,6 +8,7 @@ type LotRow = {
   invoice_no: string;
   grade: string;
   net_wt: string | number;
+  sample_allowance?: string | number | null;
   lot_invoices?: { invoice_no: string }[] | null;
 };
 
@@ -19,6 +20,6 @@ export function buildInvoicedLots(rows: LotRow[]): InvoicedLot[] {
   return rows.flatMap((l) => {
     const invs = (l.lot_invoices ?? []).map((i) => i.invoice_no);
     const list = invs.length ? invs : [l.invoice_no];
-    return list.map((invoiceNo) => ({ id: l.id, invoiceNo: formatFourDigitNo(invoiceNo), grade: l.grade, netWt: Number(l.net_wt) }));
+    return list.map((invoiceNo) => ({ id: l.id, invoiceNo: formatFourDigitNo(invoiceNo), grade: l.grade, netWt: Number(l.net_wt), sampleAllowance: Number(l.sample_allowance ?? 0) }));
   });
 }

@@ -112,13 +112,15 @@ type LotFlagColumns = {
   unsold?: boolean | null;
   reprint?: boolean | null;
   reprint_registered?: boolean | null;
+  skipped_sale?: boolean | null;
+  skipped_sale_no?: string | null;
   withdrawn?: boolean | null;
   not_valued?: boolean | null;
   missing?: boolean | null;
   settled?: boolean | null;
 };
 
-const LOT_FLAG_SELECT = "shutout, shutout_reason, unsold, reprint, reprint_registered, withdrawn, not_valued, missing, settled";
+const LOT_FLAG_SELECT = "shutout, shutout_reason, unsold, reprint, reprint_registered, skipped_sale, skipped_sale_no, withdrawn, not_valued, missing, settled";
 
 type RefreshInvoiceOverviewLot = {
   id: string;
@@ -205,6 +207,19 @@ function groupIntoReprintChains<T extends { id: string; reprint_source_lot_id: s
  * FROM this one" count, which was always 0 for the lot that just failed and
  * hasn't been re-catalogued into a child yet.
  */
+/**
+ * Is this lot a re-print? The stored flag is the authority and always wins — a
+ * lot can be a re-print AND a skipped sale (offered, unsold, then catalogued
+ * several sales later). The `reprint_source_lot_id` fallback covers rows that
+ * predate the flag, but a skipped-sale pair uses that same link to tie the two
+ * sales together, so there it explains nothing about re-printing.
+ */
+function isReprintRow(lot: { reprint?: boolean | null; reprint_source_lot_id?: string | null; skipped_sale?: boolean | null }): boolean {
+  if (lot.reprint) return true;
+  if (lot.skipped_sale) return false;
+  return Boolean(lot.reprint_source_lot_id);
+}
+
 function reprintCountsByLotId(lots: readonly { id: string; reprint_source_lot_id: string | null; unsold?: boolean | null; reprint?: boolean | null }[]): Map<string, number> {
   const chains = groupIntoReprintChains(lots);
   const counts = new Map<string, number>();
@@ -1212,7 +1227,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             shutout: Boolean(lot.shutout),
             shutout_reason: lot.shutout_reason ?? null,
             unsold: Boolean(lot.unsold),
-            reprint: Boolean(lot.reprint) || Boolean(lot.reprint_source_lot_id),
+            reprint: isReprintRow(lot),
             withdrawn: Boolean(lot.withdrawn),
             not_valued: Boolean(lot.not_valued),
             missing: Boolean(lot.missing),
@@ -1242,7 +1257,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, entry_source, brokers(name))",
         )
-        .or("unsold.is.true,reprint.is.true,reprint_source_lot_id.not.is.null")
+        // A genuine re-print always carries `unsold` or `reprint`, and belongs
+        // here even when it also skipped a sale. The source-link arm is the
+        // pre-flag fallback — excluded when a skipped-sale pair is what put the
+        // link there, since nothing in that pair was offered and left unsold.
+        .or("unsold.is.true,reprint.is.true,and(reprint_source_lot_id.not.is.null,skipped_sale.is.false)")
         .order("created_at");
       if (error) return { ok: false, error: friendlyError(error) };
       return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
@@ -1281,6 +1300,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         const childSaleNo = formatSaleNo(child.auction_sales?.target_sale_no ?? null);
         if (childSaleNo) nextSaleByParent.set(child.reprint_source_lot_id, childSaleNo);
       }
+      const lotById = new Map(lots.map((lot) => [lot.id, lot]));
 
       return {
         ok: true,
@@ -1305,12 +1325,15 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             shutout: Boolean(lot.shutout),
             shutoutReason: lot.shutout_reason ?? null,
             unsold: Boolean(lot.unsold),
-            reprint: Boolean(lot.reprint) || Boolean(lot.reprint_source_lot_id),
+            reprint: isReprintRow(lot),
             mark: markLabel(lot.marks),
             brokerInvoiceNo: formatFourDigitNo(invoice?.sale_no ?? null),
             saleNo: formatSaleNo(invoice?.target_sale_no ?? null) || null,
             allWeight: gross > 0 ? gross : null,
             nextSaleNo: nextSaleByParent.get(lot.id) ?? null,
+            previousSaleNo: lot.reprint_source_lot_id
+              ? formatSaleNo(lotById.get(lot.reprint_source_lot_id)?.auction_sales?.target_sale_no ?? null) || null
+              : null,
             broker: invoice?.brokers?.name ?? "—",
             sellingMark: markLabel(invoice?.marks ?? null) ?? "—",
             dispatchDate: invoice?.dispatch_date ?? null,
@@ -1566,12 +1589,35 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const reprintCountByLotId = reprintCountsByLotId(
         (reprintTouchedLots ?? []) as { id: string; reprint_source_lot_id: string | null; unsold: boolean | null; reprint: boolean | null }[],
       );
+      // A carried-forward lot's parent can be in ANY earlier sale, not just
+      // one of this sale's own dispatches, so both maps below are built from
+      // the factory-wide fetches, not the ones scoped to this sale.
+      const lotById = new Map(allLotRows.map((lot) => [lot.id, lot]));
+      // Only target_sale_no. sale_no is the broker's own invoice reference
+      // ("26B01-0069") and is never an auction sale number, so it must not be
+      // used as a fallback here — a missing target means "unknown", not that.
+      const targetSaleNoByDispatchId = new Map((allDispatches ?? []).map((dispatch) => [
+        dispatch.id as string,
+        dispatch.target_sale_no as string | null,
+      ]));
 
       return {
         ok: true,
         rows: lotRows.map((lot) => {
           const line = lineByLotId.get(lot.id);
           const dispatch = dispatchById.get(lot.sale_id);
+          const parentLot = lot.reprint_source_lot_id ? lotById.get(lot.reprint_source_lot_id) : undefined;
+          // The sale that last catalogued the parent lot. The lot's own
+          // final/provisional number is the authority — the same pair the sale
+          // filter above uses — with the parent dispatch's target as backstop.
+          const previousSaleNo = parentLot
+            ? formatSaleNo(
+                parentLot.final_sale_no
+                  || parentLot.provisional_sale_no
+                  || targetSaleNoByDispatchId.get(parentLot.sale_id)
+                  || null,
+              ) || null
+            : null;
           const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
           const state = stateBucket(lot.state);
           return {
@@ -1600,8 +1646,12 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
             vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,
             onGuarantee: line?.on_guarantee == null ? null : Boolean(line.on_guarantee),
-            reprint: Boolean(lot.reprint_source_lot_id) || Boolean(lot.reprint),
+            reprint: isReprintRow(lot),
             reprintRegistered: Boolean(lot.reprint_registered),
+            skippedSale: Boolean(lot.skipped_sale),
+            // Only the origin row carries it; the destination row IS that sale.
+            skippedSaleNo: formatSaleNo(lot.skipped_sale_no ?? null) || null,
+            previousSaleNo,
             // Tri-state, so it still carries a label: the server row filter
             // compares row PROPERTIES, and "true" does not contain "guarantee".
             // Plain booleans need no such field — the framework matches Yes/No

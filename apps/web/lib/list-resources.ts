@@ -120,6 +120,11 @@ export type AuctionSaleLineListRow = {
    */
   guaranteeLabel: string;
   reprintCount: number;
+  previousSaleNo: string | null;
+  /** The broker catalogued this lot in a later sale than the one it sits in. */
+  skippedSale: boolean;
+  /** On the origin row only: the sale it was actually acknowledged in. */
+  skippedSaleNo: string | null;
 };
 
 export type AuctionDispatchListRow = {
@@ -249,6 +254,8 @@ export type AuctionInvoiceOverviewListRow = {
   allWeight: number | null;
   /** Sale the lot rolls into once re-printed, from its forward re-print link. */
   nextSaleNo: string | null;
+  /** Sale this lot was carried forward from, from its own re-print link. */
+  previousSaleNo: string | null;
   dispatchDate: string | null;
   saleDate: string | null;
   biStatus: string;

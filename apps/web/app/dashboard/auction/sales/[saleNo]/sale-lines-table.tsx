@@ -202,6 +202,30 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     headerClassName: "text-right",
     cellClassName: rightAligned,
   },
+  {
+    key: "previousSaleNo",
+    label: "Previous sale",
+    accessor: (row) => row.previousSaleNo,
+    sortable: true,
+    filter: "text",
+    render: (row) => row.previousSaleNo ?? "—",
+  },
+  {
+    key: "skippedSale",
+    label: "Skipped sale",
+    accessor: (row) => row.skippedSale,
+    boolean: true,
+    sortable: true,
+    filter: "select",
+  },
+  {
+    key: "skippedSaleNo",
+    label: "Skipped to sale",
+    accessor: (row) => row.skippedSaleNo,
+    sortable: true,
+    filter: "text",
+    render: (row) => row.skippedSaleNo ?? "—",
+  },
 ];
 
 async function deleteSaleLines(rows: SaleLineRow[]): Promise<ListMutationResult> {

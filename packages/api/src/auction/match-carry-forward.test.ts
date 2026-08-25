@@ -39,12 +39,18 @@ const invoiced: InvoicedLot[] = [
   { id: "lot-0958", invoiceNo: "26I01-0958", grade: "FGS", netWt: 400 },
 ];
 
-// ---------- Step 1: the document does report 0909 as unexpected ----------
+// ---------- Step 1: the ACK lists 0909, so it IS acknowledged ----------
+// What makes it a carry-forward candidate is not its status — the ack listed
+// it, so it is catalogued like every other line — but that it has no invoice
+// of ours behind it in this sale group.
 
 const recon = reconcileAcknowledgement(invoiced, ack);
 const row0909 = recon.rows.find((row) => row.invoiceNo === "0909");
-ok("0909 arrives from the ACK as `unexpected`", row0909?.status === "unexpected", row0909?.status ?? "no row");
-ok("it is the only unexpected row in the document", recon.summary.unexpected === 1, `${recon.summary.unexpected}`);
+ok("0909 arrives from the ACK as `catalogued` — the ack lists it", row0909?.status === "catalogued", row0909?.status ?? "no row");
+ok("it is the only row with no invoice of ours behind it",
+  recon.rows.filter((row) => row.ack && !row.invoiced).length === 1,
+  `${recon.rows.filter((row) => row.ack && !row.invoiced).length}`);
+ok("nothing we invoiced is missing from the ack", recon.summary.notAcknowledged === 0, `${recon.summary.notAcknowledged}`);
 ok("0909 is lot B1265, BOPA, 297.00 kg", row0909?.ack?.lotNo === "B1265" && row0909?.ack?.grade === "BOPA" && row0909?.ack?.netWt === 297,
   `${row0909?.ack?.lotNo} ${row0909?.ack?.grade} ${row0909?.ack?.netWt}`);
 
@@ -71,9 +77,9 @@ function registerEntry(overrides: Partial<CarryForwardCandidate> = {}): CarryFor
 const context = { groupSaleIds: THIS_SALE, brokerId: ASIA_SIYAKA };
 const eligible = (lots: CarryForwardCandidate[]) => lots.filter((lot) => isCarryForwardCandidate(lot, context));
 
-// ---------- Step 2: with nothing registered, 0909 stays unexpected ----------
+// ---------- Step 2: with nothing registered, 0909 stays unexplained ----------
 
-ok("register empty → 0909 is unmatched, so it stays `unexpected`",
+ok("register empty → 0909 is unmatched, so nothing explains its missing invoice",
   matchCarryForwardLot(ackRow, eligible([])).status === "unmatched");
 
 // An unrelated register entry must not soak up the row.
@@ -98,7 +104,7 @@ ok("a register entry stored bare matches too",
 
 // ---------- Step 4: the gates that keep the signal honest ----------
 
-ok("a register entry held by ANOTHER broker does not match — stays `unexpected`",
+ok("a register entry held by ANOTHER broker does not match — stays unexplained",
   matchCarryForwardLot(ackRow, eligible([registerEntry({ brokerId: BPML })])).status === "unmatched");
 
 ok("a lot already inside this acknowledgement's own sale is not a carry-forward",
@@ -121,7 +127,7 @@ ok("a lot already claimed by an earlier row is not reused",
 // Regression: the candidate query used an exact `invoice_no.in.(0909)` while
 // the matcher saw through the index-cycle prefix. A register entry stored as
 // "26I02-0909" was never fetched, so the matcher got an empty list and 0909
-// stayed `unexpected` no matter what had been registered.
+// stayed unexplained no matter what had been registered.
 
 const filters = carryForwardInvoiceFilters(["0909"]);
 ok("the fetch filter covers a bare stored number", filters.includes("invoice_no.eq.0909"), filters.join(" | "));
@@ -143,13 +149,13 @@ ok("a lot stored as '26I02-0909' IS fetched", fetchMatches("26I02-0909", filters
 ok("a lot stored bare as '0909' IS fetched", fetchMatches("0909", filters));
 ok("an unrelated lot '0910' is NOT fetched", !fetchMatches("0910", filters));
 ok("an unrelated prefixed lot '26I02-0910' is NOT fetched", !fetchMatches("26I02-0910", filters));
-ok("filters are built for every unexpected invoice", carryForwardInvoiceFilters(["0909", "0910"]).length === 4);
+ok("filters are built for every carry-forward candidate invoice", carryForwardInvoiceFilters(["0909", "0910"]).length === 4);
 
 // ---------- Step 7: the rest of the document is untouched ----------
 
 ok("every other invoice in the ACK is still catalogued against its own lot",
-  recon.rows.filter((row) => row.status === "catalogued").length === invoiced.length,
-  `${recon.rows.filter((row) => row.status === "catalogued").length} of ${invoiced.length}`);
+  recon.rows.filter((row) => row.status === "catalogued" && row.invoiced).length === invoiced.length,
+  `${recon.rows.filter((row) => row.status === "catalogued" && row.invoiced).length} of ${invoiced.length}`);
 
 console.log(failures === 0 ? "\nAll carry-forward / re-print register checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

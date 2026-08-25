@@ -47,8 +47,14 @@ export type ParsedContract = {
 
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
+// Contract no. is year/sale-no/counter, e.g. 2026/021/098 or 2026/021/0145 —
+// none of the three segments is a fixed-width field, only the "/" delimiters
+// are guaranteed. The counter alone is known to vary (3 digits early in a
+// season, 4+ once it rolls over), so every segment is left unbounded (\d+);
+// the "/" separators plus the "TEA SELLERS CONTRACT" anchor keep this from
+// over-matching unrelated digits.
 const HEADER =
-  /(\d{4}\/\d{3}\/\d{4})\s+TEA SELLERS CONTRACT[\s\S]*?AUCTION SALE\s+(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
+  /(\d+\/\d+\/\d+)\s+TEA SELLERS CONTRACT[\s\S]*?AUCTION SALE\s+(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
 // BPML sold rows end with a buyer VAT number; NOT SOLD rows leave that column
 // blank. The optional VAT group is what lets both row types participate in the
 // same ordered scan, so a skipped NOT SOLD row cannot leak into the next buyer.
@@ -57,7 +63,7 @@ const BPML_ROW =
 const NOT_SOLD_LABEL = /\*{3}\s*N O T S O L D\s*\*{3}/;
 
 const ASIA_HEADER =
-  /(\d{4}\/\d{3}\/\d{4})\s+Miriswatte,?-?\s*Ittapana\.\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
+  /(\d+\/\d+\/\d+)\s+Miriswatte,?-?\s*Ittapana\.\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})(MF\d+[A-Z]?)\s*\|\s*([A-Z]+)/g;
 const ASIA_SOLD_ROW =
   /([\d,]+\.\d{2})([\d,]+\.\d{2})(\d{9}-\d{4})\s+([\d,]+\.\d{2})([\d.]+)([A-Z][A-Z0-9]*?)(\d{4})(\d{4})([A-Z][A-Za-z].*?)\s+([\d,]+\.\d{2})([\d,]+\.\d{2})([\d.]+)\s+([\d,]+\.\d{2})\s+(YES|NO)/g;
 const ASIA_NOT_SOLD_ROW =

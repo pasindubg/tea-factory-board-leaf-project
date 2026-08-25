@@ -10,7 +10,7 @@ function ok(label: string, cond: boolean, detail = "") {
 // Missing invoice 0039 (OP1 · 280 kg), no catalogued lot → no lot hint.
 const orphan: OrphanLot = { invoiceNo: "0039", grade: "OP1", netWt: 280, markCode: "MF1530", lotHint: null };
 
-// Pool = "unexpected" acknowledgement lots (mark MF1530), + one foreign-mark lot.
+// Pool = not-acknowledged acknowledgement lots (mark MF1530), + one foreign-mark lot.
 const pool: CandidateLot[] = [
   { key: "0481", lotNo: "0481", grade: "OP1", netWt: 300, markCode: "MF1530" }, // grade exact, +20kg
   { key: "0477", lotNo: "0477", grade: "OP", netWt: 280, markCode: "MF1530" }, // weight exact, family
