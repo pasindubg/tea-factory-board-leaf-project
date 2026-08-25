@@ -153,8 +153,14 @@ app's `dev`/`build`/`start` scripts set `TZ=Asia/Colombo`. When deploying (e.g.
 to Vercel), set a `TZ=Asia/Colombo` environment variable on the project so
 production matches.
 
-Sign in with a seeded owner account (cloud setup): `owner-a@example.com` — mint a
-login code with the admin API or configure SMTP for real emails (see
+Sign in with a seeded owner account: username `owner.a`, password
+`TempOwner#2026` (override with `SEED_PASSWORD`). `pnpm db:seed` writes the
+usernames and `pnpm db:link-auth` sets the passwords, so run both after any
+re-seed or `supabase db reset` — otherwise the login is gone and the form just
+says the username does not exist.
+
+For the OTP flow instead, use `owner-a@example.com` — mint a login code with the
+admin API or configure SMTP for real emails (see
 `packages/db/src/verify-auth.ts` for how OTP codes are minted programmatically).
 
 ### 4. Build everything
