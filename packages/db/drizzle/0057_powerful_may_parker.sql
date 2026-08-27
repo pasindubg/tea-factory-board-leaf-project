@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_auction_lots_sale_invoice" ON "auction_lots" USING btree ("sale_id","invoice_no");

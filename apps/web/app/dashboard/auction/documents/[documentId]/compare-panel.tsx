@@ -250,7 +250,7 @@ function CompareWorkflow({
       <header className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="text-sm text-stone-600 dark:text-stone-300">
           <span className="font-medium">Compare &amp; resolve</span>{" "}
-          <span className="text-stone-400 dark:text-stone-500">· {orphans.length} unresolved · {candidates.length} unexpected lot{candidates.length === 1 ? "" : "s"}</span>
+          <span className="text-stone-400 dark:text-stone-500">· {orphans.length} unresolved · {candidates.length} catalogue lot{candidates.length === 1 ? "" : "s"} to link</span>
         </div>
         <AppButton type="button" variant="primary" size="sm" onClick={() => setOpen((current) => !current)}>{open ? "Hide" : "Compare"}</AppButton>
       </header>

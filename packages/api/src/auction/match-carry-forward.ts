@@ -3,7 +3,7 @@
 // Pure & framework-free so it can be exercised against real documents.
 //
 // A broker can catalogue the same invoice again in a later sale. When it does,
-// the row arrives classified `unexpected` (recon ① compares against the lots
+// the row arrives classified `not-acknowledged` (recon ① compares against the lots
 // invoiced for THIS sale, and the lot belongs to an earlier one). Before
 // creating a duplicate ACK-sourced lot, this decides which stored lot the row
 // is really about, so invoice history stays on one lot id.
@@ -18,7 +18,7 @@
 //     outstanding before it started using this system gets resolved: the
 //     operator registers it on the Re-prints page as a real lot in `re-print`,
 //     and it then matches here like any other. An invoice that was never
-//     registered still has no counterpart and stays `unexpected` — which is
+//     registered still has no counterpart and stays `not-acknowledged` — which is
 //     the point, because that is a genuine anomaly.
 
 import { invoiceNumbersMatch } from "./invoice-key";
@@ -33,7 +33,7 @@ export const CARRY_FORWARD_BLOCKED_STATES: ReadonlySet<string> = new Set(["sold"
  * It lives next to the matcher because the two must agree: the matcher sees
  * through the factory's index-cycle prefix (`invoiceMatchKey`), so a fetch that
  * compares verbatim would hand it an empty candidate list and every prefixed
- * lot would silently stay `unexpected`. That is a real bug this code had —
+ * lot would silently stay `not-acknowledged`. That is a real bug this code had —
  * a broker prints "0909" while the factory stores "26I02-0909", so
  * `invoice_no.in.(0909)` matched nothing.
  *
@@ -71,7 +71,7 @@ export type CarryForwardMatch =
   | { status: "matched"; candidate: CarryForwardCandidate }
   /** Matched only lots whose sale is already recorded; a human must resolve it. */
   | { status: "blocked"; candidate: CarryForwardCandidate }
-  /** Nothing in the factory's records is this row — genuinely unexpected. */
+  /** Nothing in the factory's records is this row — a genuine anomaly. */
   | { status: "unmatched" };
 
 /**

@@ -175,15 +175,72 @@ manual dispatch entry creates the child; valuation and contract processing apply
 to that child in its own sale. Document-driven and manual state changes preserve
 the same chain rules.
 
+### Skipped sales
+
+A lot dispatched to sale 15 is normally catalogued in sale 15. It is not
+guaranteed: a broker can hold it and catalogue it in sale 20 instead, without
+it ever being offered. That is **not** a re-print — nothing was offered and
+left unsold — so it must not enter the re-print chain or its counts.
+
+**`reprint` and `skipped_sale` are mutually exclusive**, decided by one
+question about the origin lot: *was it actually offered to buyers in the sale
+it sits in?* A valuation is the evidence — the broker only values what it put
+up.
+
+| origin lot | outcome |
+|---|---|
+| `unsold`, `valued`/`sold`, or already `reprint` | **re-print** — it faced buyers and did not sell |
+| still `invoiced`/`acknowledged`, never valued | **skipped sale** — it never faced a buyer |
+
+A lot is never both: it either went up for sale there or it did not. A re-print
+leaves its origin row completely untouched — no `skipped_sale`, no
+`skipped_sale_no` — because nothing was skipped.
+
+The classification is made when the LATER sale's acknowledgement is confirmed,
+which is the first moment the system learns where the lot resurfaced.
+
+A skipped sale produces a pair of rows, permitted by
+`uq_auction_lots_sale_invoice` (`sale_id`, `invoice_no`), the same compound key
+the re-print chain relies on:
+
+| | `state` | `skipped_sale` | `skipped_sale_no` | `reprint` |
+|---|---|---|---|---|
+| origin (sale 15) | `acknowledged` | `true` | `0020` | `false` |
+| destination (sale 20) | `acknowledged` | `true` | *null* | `false` |
+
+**Only the origin row carries a number, and that number is what removes it from
+sale 15's figures.** `skipped_sale` with a `skipped_sale_no` means "left for a
+later sale"; `skipped_sale` with no number means "arrived here" and counts
+normally. Sale-detail totals apply that one predicate once, to the lot list
+every figure derives from, and the sale-lines table offers a **Hide skipped
+sales** toggle over the same flag.
+
+The origin row is the point of the feature: before this it sat at `invoiced`
+for ever, because recon ① only ever compared against the sale group under
+review. It is now acknowledged where it stands, and `skipped_sale_no` records
+where it actually surfaced. The destination row is flagged but carries no
+number — it IS that sale. `reprint_source_lot_id` still links the two, so
+"Previous sale" and lot history read the same as any other chain. `isReprintRow`
+resolves the overlap: the stored `reprint` flag always wins, and only the
+pre-flag `reprint_source_lot_id` fallback is suppressed when a skipped-sale
+pair is what put that link there.
+
+When the origin sale predates this system there is nothing to match, so the
+row arrives as **Not invoiced**. **Register skipped sale** on the
+reconciliation table asks for the dispatched sale number and creates the
+missing origin row in it — the same shape the matcher would have found, so the
+automatic and manual paths converge on identical data. It sits beside
+**Register re-print** because only the operator knows which of the two
+happened.
+
 ### Outstanding re-prints at cutover
 
 At go-live a factory has re-prints outstanding from sales that happened before
 this system existed, and historical invoices are **not** imported. Without a
 record of them, the first acknowledgement listing one of those invoices has no
-local counterpart and is classified `unexpected` — indistinguishable from a
-broker cataloguing something the factory never sent. For months that noise
-makes the `unexpected` count untrustworthy, which is the signal recon ① exists
-to give.
+local counterpart: the row is acknowledged (the ack lists it) but carries
+`invoiced: null`, indistinguishable from a broker cataloguing something the
+factory never sent. Without the register there is no way to tell the two apart.
 
 Such a re-print is entered on the **Re-prints** page (owner only) as a **real
 lot**, through the ordinary lot-invoice path: same invoice numbering and prefix
@@ -198,13 +255,17 @@ a second matching mechanism to keep in step with carry-forward forever. The
 register is the existing lot table, in the existing state.
 
 **Recon ① reports the resolved answer, not the raw one.** `reconcileAcknowledgement`
-compares only against the lots invoiced in the sale group under review, so any
-carried-forward lot necessarily lands in `unexpected` there. The review screen
-resolves those rows against the register before displaying them — showing
-`re-print` or `rolled forward` — and the confirm action calls the same
-resolver, so the preview can never promise an outcome that confirmation does
-not perform. `unexpected` on screen therefore means what the operator needs it
-to mean: the broker catalogued something the factory has no record of anywhere.
+compares only against the lots invoiced in the sale group under review, so a
+carried-forward lot arrives with no `invoiced` side. The review screen resolves
+those rows against the register before displaying them — as `re-print` or
+`rolled forward` — and the confirm action calls the same resolver, so the
+preview can never promise an outcome that confirmation does not perform.
+
+**The operator sees exactly two results, one colour each: `catalogued` and
+`not-acknowledged`.** `shutout`, `re-print` and `rolled forward` are internal
+distinctions that surface in their own columns, never as a third badge; there
+is no `unexpected` status anywhere in the UI. `not-acknowledged` on screen
+means one thing: we invoiced it and this acknowledgement does not list it.
 
 The Broker Invoice that holds these entries carries
 `auction_sales.entry_source = 'reprint-register'` (ordinary invoices are
@@ -213,8 +274,8 @@ dispatched for it, so it is shown as `Re-print register` rather than reading as
 a real dispatch. `entry_source` is part of the one-open-invoice-per
 broker + mark + dispatch-date unique key, so a cutover entry never merges into
 an open dispatch invoice. Matching still requires the **same broker**: a legacy
-re-print catalogued by a different broker stays `unexpected`, because that is a
-genuine anomaly.
+re-print catalogued by a different broker stays unresolved (acknowledged, but
+still with no invoice of ours), because that is a genuine anomaly.
 
 ---
 
@@ -225,20 +286,25 @@ Each is a deterministic, testable calculation. Worked figures are from Sale 023.
 ### ① Invoice ↔ Acknowledgement
 - **Answers:** did everything the factory invoiced get catalogued, at the right weight?
 - **Inputs:** `lots` (state `invoiced`) vs the parsed Acknowledgement (catalogued + shutout rows).
-- **Algorithm:** for each dispatched lot, find any of its `invoice_no`(s) in the Acknowledgement →
-  - in catalogued section → `catalogued`; assert `net_wt` equal (flag weight delta);
-  - in shutout section → `shutout` with reason; surface as un-realized stock;
-  - absent from both → **`pending`** (partial ack — may be catalogued later or roll
-    to a later sale; **not** an error). `missing` is only set by an explicit human
+- **Algorithm — one question, asked once:** *is this invoice in the acknowledgement?*
+  - **yes** → `catalogued`, or `shutout` with the broker's reason if the document
+    printed it under Shutout & Violation. Shutout is catalogued-with-a-reason, not
+    a third outcome.
+  - **no** → `not-acknowledged` (partial ack — may be catalogued later or roll to a
+    later sale; **not** an error). `missing` is only set by an explicit human
     decision in the orphan resolver.
-  Also flag any catalogued/shutout row with no matching invoice (broker added something unexpected).
-- **Orphan resolver:** the ambiguous rows (`pending` invoiced lots ↔ `unexpected`
+
+  Nothing else changes the status. Whether we ALSO hold an invoice for an
+  acknowledged line is not a classification — it shows as `invoiced: null` on the
+  row, and drives carry-forward, re-print registration and the orphan resolver.
+  When we do hold one, the row additionally carries a weight delta and grade check.
+- **Orphan resolver:** the ambiguous rows (`not-acknowledged` invoiced lots ↔ acknowledged
   catalogue lots) are reconciled manually in a **Compare** panel: candidates are
   ranked by a transparent per-dimension score (grade family, Δkg, lot proximity),
   nothing auto-links, and every link/mark is written to `auction_audit` with the
   filed Δkg. Same pattern reused for recon ④ (unattributed credit ↔ unpaid
   settlement, scored on amount / date / narration).
-- **Outputs / flags:** `catalogued`, `shutout`, `weight_mismatch`, `pending`, `unexpected_catalogue_row`.
+- **Outputs / flags:** `catalogued`, `shutout`, `not-acknowledged`, `weight_mismatch`.
 - **Sale 023:** 12 lots catalogued (11 under `MF1530`, 1 under `MF1530A`); invoices **`0061`** (OPA, 200 kg) and **`0063`** (OPA, 230 kg) shut out → 430 kg of stock rolls to the next sale.
 
 ### ② Valuation ↔ Sale price

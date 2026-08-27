@@ -26,10 +26,10 @@ async function main() {
   ]);
 
   await db.insert(schema.users).values([
-    { id: SEED_IDS.ownerA, factoryId: SEED_IDS.factoryA, name: "Owner A", email: "owner-a@example.com", role: "owner" },
-    { id: SEED_IDS.collectorUserA, factoryId: SEED_IDS.factoryA, name: "Collector A", email: "collector-a@example.com", role: "collector" },
-    { id: SEED_IDS.ownerB, factoryId: SEED_IDS.factoryB, name: "Owner B", email: "owner-b@example.com", role: "owner" },
-    { id: SEED_IDS.collectorUserB, factoryId: SEED_IDS.factoryB, name: "Collector B", email: "collector-b@example.com", role: "collector" },
+    { id: SEED_IDS.ownerA, factoryId: SEED_IDS.factoryA, name: "Owner A", email: "owner-a@example.com", username: "owner.a", role: "owner" },
+    { id: SEED_IDS.collectorUserA, factoryId: SEED_IDS.factoryA, name: "Collector A", email: "collector-a@example.com", username: "collector.a", role: "collector" },
+    { id: SEED_IDS.ownerB, factoryId: SEED_IDS.factoryB, name: "Owner B", email: "owner-b@example.com", username: "owner.b", role: "owner" },
+    { id: SEED_IDS.collectorUserB, factoryId: SEED_IDS.factoryB, name: "Collector B", email: "collector-b@example.com", username: "collector.b", role: "collector" },
   ]);
 
   const [colA] = await db

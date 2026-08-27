@@ -38,10 +38,21 @@ export type ParsedAcknowledgement = {
 
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
+// BPML prefixes a re-printed invoice with "R" ("R0032") — the same marker Asia
+// Siyaka prints as a flag. Without the optional R the row simply failed to
+// match and was dropped in silence, which is what the printed-total self-check
+// below exists to catch.
 const CATALOGUED_ROW =
-  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
+  /(\d{3,4})\s+(R?\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
 const SHUTOUT_ROW =
-  /(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
+  /(R?\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)B\s+([\d.]+)\s+([\d,]+\.\d{2})(?:\s+\S+\s+(\d{2}\/\d{2}\/\d{4}))?/g;
+
+/** "R0032" → { invoiceNo: "0032", reprint: true }; "0032" → reprint false. */
+function splitReprintMarker(raw: string): { invoiceNo: string; reprint: boolean } {
+  return raw.startsWith("R")
+    ? { invoiceNo: raw.slice(1), reprint: true }
+    : { invoiceNo: raw, reprint: false };
+}
 const MARK_HEADER = /(MF\d+[A-Z]?)\s+([A-Z][A-Z ]*?)\s+Catalogued/g;
 
 /** Cheap content-based type detection for the ingestion router. */
@@ -75,35 +86,37 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
     const shutoutPart = splitIdx >= 0 ? chunk.slice(splitIdx) : "";
 
     for (const r of cataloguedPart.matchAll(CATALOGUED_ROW)) {
+      const { invoiceNo, reprint } = splitReprintMarker(r[2]);
       lots.push({
         section: "catalogued",
         markCode: mark.code,
         markName: mark.name,
         dispatchDate: r[7] ?? null,
         lotNo: r[1],
-        invoiceNo: r[2],
+        invoiceNo,
         grade: r[3],
         bags: Number(r[4]),
         kgPerBag: num(r[5]),
         netWt: num(r[6]),
         shutoutReason: null,
-        reprint: false,
+        reprint,
       });
     }
     for (const r of shutoutPart.matchAll(SHUTOUT_ROW)) {
+      const { invoiceNo, reprint } = splitReprintMarker(r[1]);
       lots.push({
         section: "shutout",
         markCode: mark.code,
         markName: mark.name,
         dispatchDate: r[6] ?? null,
         lotNo: null,
-        invoiceNo: r[1],
+        invoiceNo,
         grade: r[2],
         bags: Number(r[3]),
         kgPerBag: num(r[4]),
         netWt: num(r[5]),
         shutoutReason: "Listed under Shutout/Violation in the acknowledgement",
-        reprint: false,
+        reprint,
       });
     }
   }
@@ -123,6 +136,10 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
   if (parsedShutout !== printedCounts.shutout)
     issues.push(`Shutout lots parsed (${parsedShutout}) ≠ printed total (${printedCounts.shutout}).`);
   for (const l of lots) {
+    // A re-print's weight is already net of the sample drawn when it was first
+    // offered, so it is legitimately below bags×kg/bag. Same exemption the Asia
+    // Siyaka layout documents for its own re-print rows.
+    if (l.reprint) continue;
     if (Math.abs(l.netWt - l.bags * l.kgPerBag) > 0.01)
       issues.push(`Lot ${l.invoiceNo}: net wt ${l.netWt} ≠ bags×kg/bag (${l.bags}×${l.kgPerBag}).`);
   }
@@ -141,7 +158,7 @@ export function parseAcknowledgement(rawText: string): ParsedAcknowledgement {
 // apply here. Sale no. is the number after the ACKNOWLEDGEMENT title; sale date
 // is the first day of the "SALE OF a - b" range.
 const ASIA_ROW =
-  /(?:([SV])\s+)?(\d{2}\/\d{2}\/\d{4})([A-Z]+)\s+(\d{1,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+([\d.]+)\s+([\d,]+(?:\.\d+)?)\s+\d{2}\/\d{2}\/\d{4}\s+\d+\s+[\d,]+\.\d{2}([A-Z]\d*)/g;
+  /(?:([SV])\s+)?(\d{2}\/\d{2}\/\d{4})([A-Z]+)\s+(\d{1,4})\s+([A-Z][A-Za-z0-9]*)\s+(\d+)\s+([\d.]+)\s+([\d,]+(?:\.\d+)?)\s+\d{2}\/\d{2}\/\d{4}\s+\d+\s+[\d,]+\.\d{2}([A-Z]\d*)/g;
 
 const ASIA_FLAG_REASON: Record<string, string> = {
   S: "Shutout (S) in the acknowledgement",

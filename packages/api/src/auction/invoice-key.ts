@@ -6,7 +6,7 @@
  * but that prefix is internal — a broker's acknowledgement, valuation or
  * seller's contract only ever prints the bare sequence ("0001"). Comparing the
  * two verbatim makes every line fail to match, which surfaces as every invoice
- * being "pending" and every document line "unexpected".
+ * being "not-acknowledged" and every document line lacking an invoice of ours.
  *
  * Leading zeros are also dropped, so "0001", "001" and "1" all agree — brokers
  * are not consistent about padding.

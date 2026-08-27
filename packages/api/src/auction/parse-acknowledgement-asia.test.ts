@@ -94,5 +94,24 @@ ok("sale 020: inv 0014 and 0015 are catalogued",
 // (1,890.00), which is what the parser's own self-check compares against.
 ok("sale 020: self-check clean", sale20.issues.length === 0, sale20.issues.join(" "));
 
+// ── Sale 022: a grade with a lowercase tail (FBOPFSp) ───────────────────────
+// The row was dropped whole, so its invoice read as never acknowledged and the
+// catalogue total came up 88 kg short of the figure the document itself prints.
+const sale22 = parseAcknowledgement(
+  readFileSync(new URL("./__fixtures__/ack-asia-siyaka-sale-022.txt", import.meta.url), "utf8"),
+);
+const catalogued22 = sale22.lots.filter((l) => l.section === "catalogued");
+
+ok("sale 022: all 9 catalogued rows parsed, 2588 kg — matches the printed total",
+  catalogued22.length === 9 && catalogued22.reduce((sum, l) => sum + l.netWt, 0) === 2588,
+  `${catalogued22.length} rows, ${catalogued22.reduce((sum, l) => sum + l.netWt, 0)} kg`);
+
+const mixedCase = sale22.lots.find((l) => l.invoiceNo === "0028");
+ok("sale 022: inv 0028 FBOPFSp 2×44 = 88kg is catalogued, not missing",
+  mixedCase?.section === "catalogued" && mixedCase.grade === "FBOPFSp" && mixedCase.netWt === 88,
+  mixedCase ? `grade=${mixedCase.grade} net=${mixedCase.netWt}` : "missing");
+
+ok("sale 022: self-check clean", sale22.issues.length === 0, sale22.issues.join(" "));
+
 console.log(failures === 0 ? "\nASIA SIYAKA ACK PARSE: ALL CHECKS PASSED" : `\nASIA SIYAKA ACK: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

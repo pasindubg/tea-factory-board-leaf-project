@@ -55,7 +55,7 @@ export default async function ReprintOverviewPage() {
         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
           Broker-invoice lots marked as re-print, with original lot attributes and forward re-print counts.
           Re-prints outstanding from before this system was in use are entered here; a later acknowledgement
-          listing one of those invoices links to it as a re-print child instead of reporting it as unexpected.
+          listing one of those invoices links to it as a re-print child instead of reporting it as not-acknowledged.
         </p>
       </div>
       <ReprintOverviewTable

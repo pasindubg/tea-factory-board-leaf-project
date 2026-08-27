@@ -249,7 +249,7 @@ export async function findSaleId(
 // dispatch. A broker sends ONE acknowledgement/valuation/contract per sale, but
 // the factory may have split that sale across several dispatches — document
 // reconciliation must see the whole group, or lots living on a sibling dispatch
-// get misread as "unexpected" and duplicated onto the dispatch being reviewed.
+// get misread as not-acknowledged and duplicated onto the dispatch being reviewed.
 // Sale identity follows the sales pages' convention: target_sale_no || sale_no,
 // compared by normalized key. Always contains the given saleId itself.
 export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: string): Promise<string[]> {

@@ -1,6 +1,6 @@
 // Orphan resolver — transparent scoring core (docs/AUCTION.md §4①).
 // Pure & framework-free. Ranks candidate lots against an orphaned invoice so a
-// human can manually link a `missing` invoice to an `unexpected` acknowledgement
+// human can manually link a `missing` invoice to a `not-acknowledged` ack
 // lot (or vice-versa). The whole point is transparency: every candidate carries a
 // per-dimension breakdown so the person — not the machine — makes the final call.
 // Nothing here auto-links. Reused at Stage 3 (bank) with a different candidate pool.

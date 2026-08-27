@@ -47,7 +47,7 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "payments", href: "/dashboard/payments", label: "Payments", roles: ["owner", "manager", "accountant"], entitlement: "leaf-handling", group: "Leaf Handling" },
   { key: "auction-dashboard", href: "/dashboard/auction/dashboard", label: "Dashboard", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-sales", href: "/dashboard/auction/sales", label: "Sales Overview", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
-  { key: "auction-sale-detail", href: "/dashboard/auction/sales", label: "Sales Detail", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
+  { key: "auction-sale-detail", href: "/dashboard/auction/sales-details", label: "Sales Detail", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-documents", href: "/dashboard/auction/documents", label: "Document Details", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-registry", href: "/dashboard/auction/registry", label: "Brokers & marks", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },
   { key: "auction-settings", href: "/dashboard/auction/settings", label: "Auction setup", roles: ["owner", "manager", "accountant"], entitlement: "auction", group: "Sales Handling" },

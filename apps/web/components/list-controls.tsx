@@ -37,6 +37,14 @@ export type ColumnDef<T> = {
    * display label.
    */
   boolean?: boolean;
+  /**
+   * Searchable but never rendered as a table column.
+   *
+   * For a value that is worth filtering on yet only restates other columns —
+   * a derived flag, say. It still sorts, filters and locks like any column;
+   * it simply has no header or cell.
+   */
+  searchOnly?: boolean;
   // When true (default), the search panel shows a LOV <select> for this
   // column populated from the data. Set to false for free-text/numeric
   // columns — they'll render as a text/date/number <input> instead.

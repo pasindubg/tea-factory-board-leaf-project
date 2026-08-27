@@ -1,7 +1,6 @@
 import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES, MODULES, ROLE_LABELS, pagesForModule, type Role } from "@/lib/roles";
 import { DashboardShell } from "./dashboard-shell";
-import { saleNoKey } from "./auction/sale-number";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
@@ -52,44 +51,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
     return allowed.includes(profile.role as Role);
   });
   const wantsDispatchDetail = nav.some((mod) => mod.key === "auction-dispatch-detail");
-  const wantsSaleDetail = nav.some((mod) => mod.key === "auction-sale-detail");
-  const [{ data: latestDispatchRows }, { data: latestSaleRows }] = await Promise.all([
-    // Undated dispatches exist, and Postgres sorts NULLs first on DESC.
-    wantsDispatchDetail
-      ? supabase
-          .from("auction_sales")
-          .select("id")
-          .eq("sale_kind", "dispatch")
-          .order("dispatch_date", { ascending: false, nullsFirst: false })
-          .order("sale_no", { ascending: false, nullsFirst: false })
-          .limit(1)
-      : Promise.resolve({ data: [] }),
-    // A dispatch identifies a sale by its target, or by its own number when it
-    // has no target. Unresolved here means the nav keeps its Sales Overview href.
-    wantsSaleDetail
-      ? supabase
-          .from("auction_sales")
-          .select("sale_no, target_sale_no")
-          .eq("sale_kind", "dispatch")
-          .order("dispatch_date", { ascending: false, nullsFirst: false })
-          .order("target_sale_no", { ascending: false, nullsFirst: false })
-          .limit(1)
-      : Promise.resolve({ data: [] }),
-  ]);
+  // Undated dispatches exist, and Postgres sorts NULLs first on DESC.
+  const { data: latestDispatchRows } = wantsDispatchDetail
+    ? await supabase
+        .from("auction_sales")
+        .select("id")
+        .eq("sale_kind", "dispatch")
+        .order("dispatch_date", { ascending: false, nullsFirst: false })
+        .order("sale_no", { ascending: false, nullsFirst: false })
+        .limit(1)
+    : { data: [] };
   const latestDispatch = latestDispatchRows?.[0];
-  const latestSale = latestSaleRows?.[0];
-  const latestSaleNo = saleNoKey(latestSale?.target_sale_no || latestSale?.sale_no);
   const navWithDetailLinks = nav.flatMap((mod) => {
     if (mod.key === "auction-dispatch-detail" && latestDispatch?.id) {
       return [{ ...mod, href: `/dashboard/auction/${latestDispatch.id}` }];
     }
-    // With no sale to open this would keep Sales Overview's href: a link to the
-    // page you are already on, which neither navigates nor shows click feedback.
-    if (mod.key === "auction-sale-detail") {
-      return latestSaleNo
-        ? [{ ...mod, href: `/dashboard/auction/sales/${encodeURIComponent(latestSaleNo)}` }]
-        : [];
-    }
+    // auction-sale-detail needs nothing here: its href is a stable page
+    // (/dashboard/auction/sales-details) that picks the sale to open itself.
     return [mod];
   });
 

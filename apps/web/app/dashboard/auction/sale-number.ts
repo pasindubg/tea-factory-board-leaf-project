@@ -19,9 +19,21 @@ export function formatFourDigitNo(value: string | number | null | undefined): st
   return raw.replace(/\d+$/, (digits) => digits.padStart(4, "0"));
 }
 
+/**
+ * A sale number, always four digits and nothing else.
+ *
+ * Sale numbers reach us in several spellings — "21", "021", and "2026-021"
+ * where a broker document prefixed the auction year. They all name the same
+ * sale, which is why saleNoKey compares them prefix-blind, so showing one of
+ * them as "2026-0021" states a distinction that does not exist.
+ *
+ * Deliberately unlike formatFourDigitNo, which pads an INVOICE number and must
+ * keep its index-cycle prefix ("26I02-0901") — there the prefix is part of the
+ * identity.
+ */
 export function formatSaleNo(value: string | number | null | undefined): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
-  if (/^\d+$/.test(raw)) return raw.padStart(4, "0");
-  return raw.replace(/\d+$/, (digits) => digits.padStart(4, "0"));
+  const key = saleNoKey(raw);
+  return /^\d+$/.test(key) ? key.padStart(4, "0") : raw;
 }

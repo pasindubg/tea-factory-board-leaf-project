@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { brokerDocumentMismatch, computeSettlement, hasContractRates, contractValidationIssues, invoiceMatchKey, invoiceNumbersMatch, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
+import { brokerDocumentMismatch, computeSettlement, hasContractRates, contractValidationIssues, invoiceMatchKey, isAcknowledgement, isContract, isValuation, parseAcknowledgement, parseContract, parseValuation, reconcileAcknowledgement, reconcileVat, repairLegacyContractLines, type ParsedAcknowledgement, type ParsedContract, type ParsedValuation } from "@tea/api";
 import { requireModuleAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -97,14 +97,13 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .map((sale) => [sale.dispatch_date as string, sale.id as string]),
   );
   const currentBrokerId = (groupSales ?? [])[0]?.broker_id as string | undefined;
-  const dispatchNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.sale_no as string | null]));
   // The sale each broker invoice actually belongs to. This — not the document
   // header — is what a lot created from the acknowledgement is stamped with;
   // see the provisional_sale_no assignment below.
   const targetSaleNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.target_sale_no as string | null]));
   const { data: lotRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, grade, net_wt, sample_allowance, lot_invoices(invoice_no)")
     .in("sale_id", groupIds);
   const invoiced = buildInvoicedLots((lotRows ?? []) as unknown as Parameters<typeof buildInvoicedLots>[0]);
   const recon = reconcileAcknowledgement(invoiced, parsed);
@@ -158,8 +157,10 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     .filter((error) => error !== null);
   if (ackUpdateErrors.length > 0) return back(detail, friendlyError(ackUpdateErrors[0]));
 
-  const unexpectedAckEntries = recon.rows
-    .filter((row) => row.status === "unexpected" && row.ack)
+  // Acknowledgement lines with no invoice of ours behind them — the rows that
+  // need a lot created (or an existing one carried forward onto this sale).
+  const ackOnlyEntries = recon.rows
+    .filter((row) => row.ack && !row.invoiced)
     .map((row) => {
       const ackLot = parsed.lots.find((lot) => lot.invoiceNo === row.invoiceNo && lot.lotNo === row.ack?.lotNo);
       if (!ackLot) return null;
@@ -192,7 +193,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
             : null,
         // NOT from the broker's R flag: a lot is a re-print only when OUR
         // records show it was offered before (resolveAckCarryForward finds it).
-        // Anything else is an unexpected lot until an operator registers it.
+        // Anything else stays not-acknowledged until an operator registers it.
         reprint: false,
       };
     })
@@ -210,7 +211,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     groupPrefix && !parseCompositeInvoiceNo(invoiceNo) ? buildCompositeInvoiceNo(groupPrefix, invoiceNo) : invoiceNo;
 
   // A broker can catalogue the same invoice/lot again in a later sale. Before
-  // creating an ACK-sourced "unexpected" lot, move the existing unsold lot
+  // creating an ACK-sourced not-acknowledged lot, move the existing unsold lot
   // forward so invoice history stays on one lot id.
   //
   // The SAME resolution the review screen showed the operator — see
@@ -219,12 +220,15 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   const carryForward = await resolveAckCarryForward(supabase, profile.factory_id, {
     groupIds,
     brokerId: currentBrokerId ?? null,
-    rows: unexpectedAckEntries.map((row) => ({ invoiceNo: row.invoice_no, lotNo: row.lot_no })),
+    rows: ackOnlyEntries.map((row) => ({ invoiceNo: row.invoice_no, lotNo: row.lot_no })),
   });
   const rowsToCreate = [];
-  const movedLotsFromAck: { id: string; sale_id: string; state: string }[] = [];
+  let carriedForwardCount = 0;
+  // Origin sales of skipped-sale lots: their dispatch status has to be
+  // re-derived too, or sale 15 stays "invoiced" with nothing left to catalogue.
+  const skippedOriginSaleIds = new Set<string>();
 
-  for (const row of unexpectedAckEntries) {
+  for (const row of ackOnlyEntries) {
     const outcome = carryForward.get(row.invoice_no) ?? { status: "unmatched" as const };
 
     if (outcome.status !== "matched") {
@@ -236,67 +240,71 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       continue;
     }
 
+    // A lot this ack lists again always gets a NEW row here — never edit the
+    // candidate's sale. Its own sale keeps the record of what happened to it
+    // there, and the new row links back via reprint_source_lot_id so the two
+    // read as one history.
+    //
+    // ONE question, TWO exclusive answers — was the lot offered to buyers in
+    // the sale it sits in? (outcome.isReprint, see wasOffered)
+    //
+    //   yes → RE-PRINT      it faced buyers and did not sell. Nothing skipped;
+    //                       the origin row keeps its own record untouched.
+    //   no  → SKIPPED SALE  the broker held it back and catalogued it later.
+    //                       It never appeared in the origin sale, so that sale
+    //                       must stop counting it.
+    //
+    // A lot is never both: it either went up for sale there, or it did not.
     const candidate = outcome.lot;
-    if (candidate.unsold || candidate.reprint) {
-      rowsToCreate.push({
-        ...row,
-        invoice_no: candidate.invoice_no ?? row.invoice_no,
-        bags: candidate.bags ?? row.bags,
-        kg_per_bag: candidate.kg_per_bag ?? row.kg_per_bag,
-        gross_wt: candidate.gross_wt,
-        sample_allowance: candidate.sample_allowance,
-        net_wt: candidate.net_wt ?? row.net_wt,
-        reprint_source_lot_id: candidate.id,
-        reprint: true,
-        unsold: false,
-      });
-      await writeAudit(supabase, profile.factory_id, {
-        saleId: row.sale_id,
-        lotId: candidate.id,
-        action: "Re-print acknowledged",
-        detail: `Invoice ${row.invoice_no} was found again by acknowledgement and added to the new sale as a re-print child lot.`,
-        reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice again${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
-        actor: profile.name,
-      });
-      continue;
-    }
-
-    const patch = {
-      sale_id: row.sale_id,
-      mark_id: row.mark_id,
-      invoice_no: row.invoice_no,
-      lot_no: row.lot_no,
-      grade: row.grade,
-      bags: row.bags,
-      kg_per_bag: row.kg_per_bag,
-      net_wt: row.net_wt,
-      state: row.state,
-      shutout: row.shutout,
-      shutout_reason: row.shutout_reason,
-      // Rolled into a new sale: it is a re-print from here on, and whatever the
-      // previous sale's contract said about it no longer applies.
-      reprint: true,
+    const skippedSale = !outcome.isReprint;
+    carriedForwardCount += 1;
+    rowsToCreate.push({
+      ...row,
+      invoice_no: candidate.invoice_no ?? row.invoice_no,
+      bags: candidate.bags ?? row.bags,
+      kg_per_bag: candidate.kg_per_bag ?? row.kg_per_bag,
+      gross_wt: candidate.gross_wt,
+      sample_allowance: candidate.sample_allowance,
+      net_wt: candidate.net_wt ?? row.net_wt,
+      reprint_source_lot_id: candidate.id,
+      reprint: outcome.isReprint,
+      // The destination row is flagged, but carries no number: it IS the sale
+      // the lot was finally acknowledged in.
+      skipped_sale: skippedSale,
       unsold: false,
-    };
-    await supabase.from("auction_lots").update(patch).eq("id", candidate.id);
+    });
 
-    if (!(candidate.lot_invoices ?? []).some((invoice) => invoiceNumbersMatch(invoice.invoice_no, row.invoice_no))) {
-      await supabase.from("lot_invoices").insert({
-        factory_id: profile.factory_id,
-        lot_id: candidate.id,
-        invoice_no: row.invoice_no,
-      });
+    if (skippedSale) {
+      // The origin row was left behind at `invoiced` for ever, never offered.
+      // Acknowledge it where it stands and record where it actually went, so
+      // that sale stops counting a lot it never put up.
+      const { error: originError } = await supabase
+        .from("auction_lots")
+        .update({
+          ...(candidate.state === "invoiced" ? { state: "acknowledged" } : {}),
+          skipped_sale: true,
+          skipped_sale_no: row.provisional_sale_no || null,
+        })
+        .eq("id", candidate.id)
+        .eq("factory_id", profile.factory_id);
+      if (originError) return back(detail, friendlyError(originError));
+      skippedOriginSaleIds.add(candidate.sale_id);
     }
 
-    movedLotsFromAck.push({ id: candidate.id, sale_id: row.sale_id, state: row.state });
-    const fromDispatch = formatFourDigitNo(candidate.auction_sales?.sale_no) || "—";
-    const toDispatch = formatFourDigitNo(dispatchNoBySaleId.get(row.sale_id)) || "—";
+    const fromSale = formatSaleNo(candidate.auction_sales?.target_sale_no ?? null) || "—";
+    // State only advances from `invoiced`; a lot already valued or shut out
+    // keeps what it reached. Report what actually changed, not the happy path.
+    const originNote = skippedSale
+      ? candidate.state === "invoiced"
+        ? "The original lot never faced a buyer there, so it is marked acknowledged and flagged as a skipped sale"
+        : `The original lot never faced a buyer there, so it is left at ${candidate.state ?? "its current state"} and flagged as a skipped sale`
+      : "The original lot was offered there and did not sell, so it keeps its own record unchanged";
     await writeAudit(supabase, profile.factory_id, {
       saleId: row.sale_id,
       lotId: candidate.id,
-      action: "Rolled forward",
-      detail: `Invoice ${row.invoice_no} moved from broker invoice ${fromDispatch} to ${toDispatch} by later acknowledgement.`,
-      reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice again${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
+      action: skippedSale ? "Skipped sale acknowledged" : "Re-print acknowledged",
+      detail: `Invoice ${row.invoice_no} sits in sale ${fromSale} but the broker catalogued it in sale ${row.provisional_sale_no || "—"}. ${originNote}; a lot was added to the later sale${skippedSale ? " as a normal lot" : " as a re-print"}.`,
+      reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
       actor: profile.name,
     });
   }
@@ -338,9 +346,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   for (const lot of createdLotsFromAck) {
     if (lot.state === "acknowledged") affectedSales.add(lot.sale_id as string);
   }
-  for (const lot of movedLotsFromAck) {
-    if (lot.state === "acknowledged") affectedSales.add(lot.sale_id);
-  }
+  for (const originSaleId of skippedOriginSaleIds) affectedSales.add(originSaleId);
   if (affectedSales.size > 0) {
     await supabase
       .from("auction_sales")
@@ -354,7 +360,8 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     }
   }
   revalidatePath(detail);
-  const movedNotice = movedLotsFromAck.length > 0 ? ` ${movedLotsFromAck.length} lot(s) rolled forward.` : "";
+  revalidatePath(`${AUC}/documents/${importId}`);
+  const movedNotice = carriedForwardCount > 0 ? ` ${carriedForwardCount} lot(s) carried forward.` : "";
   redirect(
     `${detail}?notice=${encodeURIComponent(`Acknowledged ${recon.summary.catalogued} lot(s); ${recon.summary.shutout} shutout.${movedNotice}`)}`,
   );
@@ -423,6 +430,7 @@ export async function confirmValuation(importId: string, saleId: string) {
   const reassigned = Number(result?.reassigned_count ?? 0);
   revalidatePath(detail);
   revalidatePath(`${AUC}/sales`);
+  revalidatePath(`${AUC}/documents/${importId}`);
   redirect(`${detail}?notice=${encodeURIComponent(`Recorded ${applied} valuation(s); ${notValued} invoice(s) marked Not Valued; ${reassigned} reassigned to sale ${reportSaleNo}.`)}`);
 }
 
@@ -799,6 +807,7 @@ export async function confirmContract(importId: string, saleId: string) {
     .eq("id", importId);
   revalidatePath(detail);
   revalidatePath(`${AUC}/reprints`);
+  revalidatePath(`${AUC}/documents/${importId}`);
   const settlementNote = settlementCount
     ? `; ${settlementCount} settlement(s) computed`
     : "";

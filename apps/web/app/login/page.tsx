@@ -85,7 +85,7 @@ function LoginForm() {
     });
     if (rpcErr || !resolvedEmail) {
       setBusy(false);
-      setError("Invalid credentials.");
+      setError("No account with that username.");
       return;
     }
 
@@ -95,7 +95,7 @@ function LoginForm() {
     });
     if (signInErr) {
       setBusy(false);
-      setError("Invalid credentials.");
+      setError("Incorrect password.");
       return;
     }
     router.replace("/dashboard");

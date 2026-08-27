@@ -5,8 +5,8 @@
 // This module exists so the REVIEW SCREEN and the CONFIRM ACTION reach the
 // same answer. They used to disagree by construction: reconcileAcknowledgement
 // only compares against the lots invoiced in THIS sale group, so a carried-
-// forward lot is `unexpected` there no matter what, while confirmation quietly
-// resolved it. The operator was told "Unexpected: 1" and then watched the
+// forward lot is `not-acknowledged` there no matter what, while confirmation
+// quietly resolved it. The operator was told "Not acknowledged: 1" and watched the
 // system do something else — exactly the noise the register was built to
 // remove. Both paths now call resolveAckCarryForward.
 //
@@ -21,6 +21,7 @@ export type CarryForwardLot = {
   sale_id: string;
   invoice_no: string | null;
   lot_no: string | null;
+  grade: string | null;
   bags: number | null;
   kg_per_bag: number | string | null;
   gross_wt: number | string | null;
@@ -40,6 +41,27 @@ export type CarryForwardLot = {
 };
 
 export type AckRowKey = { invoiceNo: string; lotNo: string | null };
+
+/**
+ * Was this lot actually put in front of buyers in the sale it sits in?
+ *
+ * That single question separates the two ways a lot reaches a later sale, and
+ * they are mutually exclusive:
+ *
+ *   offered, did not sell  → RE-PRINT      (`unsold`, or a valuation reached it,
+ *                                           or it is already a re-print)
+ *   never offered at all   → SKIPPED SALE  (the broker held it back and
+ *                                           catalogued it in a later sale)
+ *
+ * A valuation is the evidence of being offered: the broker only values what it
+ * catalogued and put up. A lot still at `invoiced`/`acknowledged` with no
+ * valuation never faced a buyer, so it skipped that sale rather than failing in
+ * it. `sold` cannot be carried forward at all, but it is listed for
+ * completeness — a sold lot was plainly offered.
+ */
+function wasOffered(lot: CarryForwardLot): boolean {
+  return Boolean(lot.unsold) || Boolean(lot.reprint) || lot.state === "valued" || lot.state === "sold";
+}
 
 export type CarryForwardOutcome =
   | { status: "matched"; lot: CarryForwardLot; isReprint: boolean }
@@ -82,7 +104,7 @@ export async function resolveAckCarryForward(
 
   const { data: storedRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, lot_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
     .eq("factory_id", factoryId)
     .or(parts.join(","));
   const storedLots = (storedRows ?? []) as unknown as CarryForwardLot[];
@@ -116,7 +138,7 @@ export async function resolveAckCarryForward(
     if (match.status === "matched") {
       used.add(match.candidate.id);
       const lot = lotById.get(match.candidate.id)!;
-      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: Boolean(lot.unsold) || Boolean(lot.reprint) });
+      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: wasOffered(lot) });
     } else if (match.status === "blocked") {
       outcomes.set(row.invoiceNo, { status: "blocked", lot: lotById.get(match.candidate.id)! });
     } else {

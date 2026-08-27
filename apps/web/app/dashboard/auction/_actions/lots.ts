@@ -7,6 +7,7 @@ import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { invoiceMatchKey } from "@tea/api";
 import { AUC, str, num, writeAudit, gradeRulesByCode, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
@@ -431,7 +432,32 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
 }
 
 /**
- * Declares an unexpected acknowledgement lot to BE a re-print.
+ * What to STORE as a registered lot's invoice number.
+ *
+ * A broker prints the bare sequence ("0901"); the factory numbers the same
+ * invoice with its index-cycle prefix ("26I02-0901"). Registering a lot the
+ * system had no record of used to store the bare number, so it read as a
+ * different invoice from every sibling on the same broker invoice — the same
+ * bug the acknowledgement ingest already fixes with its group-prefix scan.
+ *
+ * The prefix is taken from whatever the sale group already uses; matching is
+ * unaffected either way, since invoiceMatchKey compares prefix-blind.
+ */
+function storedInvoiceNo(
+  invoiceNo: string,
+  groupLots: readonly { sale_id: string; invoice_no: string | null }[],
+  groupIds: readonly string[],
+): string {
+  const prefix = groupLots
+    .filter((lot) => groupIds.includes(lot.sale_id))
+    .map((lot) => parseCompositeInvoiceNo(lot.invoice_no)?.prefix)
+    .find(Boolean);
+  const seq = formatFourDigitNo(invoiceSeqOf(invoiceNo));
+  return prefix ? buildCompositeInvoiceNo(prefix, seq) : seq;
+}
+
+/**
+ * Declares a not-acknowledged acknowledgement lot to BE a re-print.
  *
  * An invoice the broker catalogued that this system has no record of is not
  * evidence of a re-print — the operator is. When they know which sale it was
@@ -511,7 +537,9 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
       .insert({
         factory_id: profile.factory_id,
         sale_id: sourceSaleId,
-        invoice_no: currentLot?.invoice_no ?? formatFourDigitNo(invoiceNo),
+        // Prefix taken from the whole group, not `sameInvoice` — that only
+        // holds this invoice's own rows, which are exactly what is missing.
+        invoice_no: currentLot?.invoice_no ?? storedInvoiceNo(invoiceNo, brokerLots ?? [], groupIds),
         provisional_sale_no: firstSaleNo || null,
         grade,
         bags: currentLot?.bags ?? null,
@@ -556,6 +584,179 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
       ? `Registered as a re-print first offered in sale ${firstSaleNo}.`
       : "Registered as a re-print.",
   };
+}
+
+/**
+ * Declares an acknowledgement lot to have SKIPPED a sale.
+ *
+ * The broker sometimes catalogues a lot in a later sale than the one it was
+ * dispatched to. When the earlier sale predates this system there is no lot to
+ * carry forward from, so the operator names that sale here and the missing
+ * origin row is created in it — the same shape resolveAckCarryForward would
+ * have found on its own, so the two paths converge on identical data.
+ *
+ * Deliberately NOT a re-print: nothing was offered and left unsold. The origin
+ * row is created already `acknowledged` (the broker has now catalogued it) and
+ * carries `skipped_sale_no` = the sale it surfaced in; the row in the current
+ * sale is a normal lot flagged `skipped_sale`.
+ */
+export async function registerLotSkippedSale(saleId: string, invoiceNo: string, formData: FormData): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (profile.role !== "owner") return { ok: false, error: "Only the owner can register a skipped sale." };
+
+  const dispatchedSaleNo = formatSaleNo(str(formData.get("dispatched_sale_no")));
+  if (!dispatchedSaleNo) return { ok: false, error: "Give the sale this lot was originally dispatched to." };
+
+  const { data: invoice, error: invoiceError } = await supabase
+    .from("auction_sales")
+    .select("id, broker_id, sale_no, target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
+  if (!invoice) return { ok: false, error: "Broker invoice not found." };
+
+  const acknowledgedSaleNo = formatSaleNo((invoice.target_sale_no as string | null) || (invoice.sale_no as string | null));
+  // Strictly EARLIER, not merely different: a skipped sale means the broker held
+  // the lot back and catalogued it later, so an equal or later number describes
+  // something that cannot have happened. saleNoMatches only answers "same", so
+  // the ordering is compared on the numeric key both screens sort by.
+  const dispatchedKey = Number(saleNoKey(dispatchedSaleNo));
+  const acknowledgedKey = Number(saleNoKey(acknowledgedSaleNo));
+  if (!Number.isFinite(dispatchedKey) || !Number.isFinite(acknowledgedKey)) {
+    return { ok: false, error: "This broker invoice has no sale number to compare against." };
+  }
+  if (dispatchedKey >= acknowledgedKey) {
+    return { ok: false, error: `The dispatched sale must be earlier than sale ${acknowledgedSaleNo}, which is acknowledging it.` };
+  }
+
+  const matchKey = invoiceMatchKey(invoiceNo);
+  const { data: brokerLots, error: brokerLotsError } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, skipped_sale, auction_sales!inner(broker_id)")
+    .eq("factory_id", profile.factory_id)
+    .eq("auction_sales.broker_id", invoice.broker_id as string);
+  if (brokerLotsError) return { ok: false, error: friendlyError(brokerLotsError) };
+  const sameInvoice = (brokerLots ?? []).filter((row) => invoiceMatchKey(row.invoice_no as string) === matchKey);
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const currentLot = sameInvoice.find((row) => groupIds.includes(row.sale_id as string));
+  if (currentLot?.skipped_sale) return { ok: false, error: "This invoice is already registered as a skipped sale." };
+
+  // An earlier lot for this invoice IS the origin — never create a second.
+  const existingOrigin = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string));
+  let originLotId = existingOrigin?.id as string | undefined;
+
+  const grade = currentLot?.grade ?? str(formData.get("grade"));
+  const netWt = Number(currentLot?.net_wt ?? num(formData.get("net_wt")) ?? 0);
+  if (!grade) return { ok: false, error: "The acknowledgement row has no grade to register." };
+
+  // Declared out here so the dispatch-status re-derivation below can see it.
+  let originSaleId: string | undefined;
+
+  if (!originLotId) {
+    const { data: brokerInvoices, error: brokerInvoiceError } = await supabase
+      .from("auction_sales")
+      .select("id, sale_no, target_sale_no")
+      .eq("factory_id", profile.factory_id)
+      .eq("sale_kind", "dispatch")
+      .eq("broker_id", invoice.broker_id as string);
+    if (brokerInvoiceError) return { ok: false, error: friendlyError(brokerInvoiceError) };
+    originSaleId = (brokerInvoices ?? []).find((row) =>
+      saleNoMatches((row.target_sale_no as string | null) || (row.sale_no as string | null), dispatchedSaleNo),
+    )?.id as string | undefined;
+
+    if (!originSaleId) {
+      const prefix = parseCompositeInvoiceNo(invoice.sale_no as string | null)?.prefix;
+      if (!prefix) return { ok: false, error: "This broker invoice has no number prefix to open the earlier sale under." };
+      const { data: createdInvoice, error: createInvoiceError } = await supabase
+        .from("auction_sales")
+        .insert({
+          factory_id: profile.factory_id,
+          broker_id: invoice.broker_id,
+          sale_no: await nextDispatchNo(supabase, profile.factory_id, prefix),
+          target_sale_no: dispatchedSaleNo,
+          sale_kind: "dispatch",
+          status: "invoiced",
+          entry_source: "reprint-register",
+        })
+        .select("id")
+        .single();
+      if (createInvoiceError || !createdInvoice) return { ok: false, error: friendlyError(createInvoiceError ?? { message: "Could not open the earlier sale." }) };
+      originSaleId = createdInvoice.id as string;
+    }
+
+    const { data: originLot, error: originLotError } = await supabase
+      .from("auction_lots")
+      .insert({
+        factory_id: profile.factory_id,
+        sale_id: originSaleId,
+        invoice_no: currentLot?.invoice_no ?? storedInvoiceNo(invoiceNo, brokerLots ?? [], groupIds),
+        provisional_sale_no: dispatchedSaleNo,
+        grade,
+        bags: currentLot?.bags ?? null,
+        kg_per_bag: currentLot?.kg_per_bag ?? null,
+        gross_wt: currentLot?.gross_wt ?? null,
+        sample_allowance: currentLot?.sample_allowance ?? null,
+        net_wt: netWt,
+        // Already acknowledged: this document is the acknowledgement.
+        state: "acknowledged",
+        skipped_sale: true,
+        skipped_sale_no: acknowledgedSaleNo || null,
+        lot_source: "acknowledgement",
+      })
+      .select("id")
+      .single();
+    if (originLotError || !originLot) return { ok: false, error: friendlyError(originLotError ?? { message: "Could not create the earlier sale's lot." }) };
+    originLotId = originLot.id as string;
+  } else {
+    const { error: originUpdateError } = await supabase
+      .from("auction_lots")
+      .update({
+        ...(existingOrigin?.state === "invoiced" ? { state: "acknowledged" } : {}),
+        skipped_sale: true,
+        skipped_sale_no: acknowledgedSaleNo || null,
+      })
+      .eq("id", originLotId)
+      .eq("factory_id", profile.factory_id);
+    if (originUpdateError) return { ok: false, error: friendlyError(originUpdateError) };
+    originSaleId = existingOrigin?.sale_id as string | undefined;
+  }
+
+  // The origin lot is acknowledged the moment it is written, so its broker
+  // invoice must not be left sitting at `invoiced` — the same re-derivation the
+  // acknowledgement confirm path runs for every sale it touches.
+  if (originSaleId) {
+    await supabase
+      .from("auction_sales")
+      .update({ status: "catalogued" })
+      .eq("id", originSaleId)
+      .eq("factory_id", profile.factory_id)
+      .in("status", ["draft", "dispatched", "invoiced", "grn"]);
+    await syncDispatchForBrokerInvoice(supabase, originSaleId, profile.factory_id);
+  }
+
+  if (currentLot) {
+    const { error: updateError } = await supabase
+      .from("auction_lots")
+      // `reprint` is left alone: the two facts are independent, and this row may
+      // already have been registered as a re-print.
+      .update({ skipped_sale: true, reprint_source_lot_id: originLotId })
+      .eq("id", currentLot.id as string)
+      .eq("factory_id", profile.factory_id);
+    if (updateError) return { ok: false, error: friendlyError(updateError) };
+  }
+
+  await writeAudit(supabase, profile.factory_id, {
+    saleId,
+    lotId: (currentLot?.id as string) ?? originLotId,
+    action: "Skipped sale registered",
+    detail: `Invoice ${formatFourDigitNo(invoiceNo)} was dispatched to sale ${dispatchedSaleNo} but catalogued in sale ${acknowledgedSaleNo || "—"}. The earlier sale's lot is recorded as acknowledged and flagged as a skipped sale.`,
+    reason: str(formData.get("reason")) || "Catalogued by the broker in a later sale than the one it was dispatched to.",
+    actor: profile.name,
+  });
+
+  revalidatePath(`${AUC}/${saleId}`);
+  return { ok: true, notice: `Registered as dispatched to sale ${dispatchedSaleNo}, acknowledged in sale ${acknowledgedSaleNo || "—"}.` };
 }
 
 /** Registers a pre-existing lot as the root of a historic re-print chain.

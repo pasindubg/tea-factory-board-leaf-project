@@ -2,7 +2,7 @@
 //
 // Guards the index-cycle regression: the factory stores "26I01-0001" while a
 // broker document prints "0001", so reconciling them verbatim reported every
-// invoice as pending and every document line as unexpected.
+// invoice as pending and every document line as not-acknowledged.
 import { invoiceMatchKey, invoiceNumbersMatch } from "./invoice-key";
 import { reconcileAcknowledgement, type InvoicedLot } from "./reconcile";
 import type { ParsedAcknowledgement } from "./parse-acknowledgement";
@@ -38,10 +38,8 @@ const ack = { lots: ackLots } as unknown as ParsedAcknowledgement;
 const full = reconcileAcknowledgement(invoiced, ack);
 ok("every invoice matches its acknowledgement line", full.summary.catalogued === 2,
   `catalogued=${full.summary.catalogued}`);
-ok("nothing is left unexpected", full.summary.unexpected === 0,
-  `unexpected=${full.summary.unexpected}`);
-ok("nothing is left pending", full.summary.pending === 0,
-  `pending=${full.summary.pending}`);
+ok("nothing is left not-acknowledged", full.summary.notAcknowledged === 0,
+  `notAcknowledged=${full.summary.notAcknowledged}`);
 ok("matched rows show the factory's own full number",
   full.rows.map((r) => r.invoiceNo).sort().join(",") === "26I01-0001,26I01-0941",
   full.rows.map((r) => r.invoiceNo).join(","));
@@ -53,12 +51,16 @@ const withStranger = {
   lots: [...ackLots, { invoiceNo: "9999", lotNo: "0500", markCode: "MF1530", grade: "BT", netWt: 100, section: "catalogued" }],
 } as unknown as ParsedAcknowledgement;
 const stranger = reconcileAcknowledgement(invoiced, withStranger);
-ok("a genuinely unknown line is still unexpected", stranger.summary.unexpected === 1,
-  `unexpected=${stranger.summary.unexpected}`);
+ok("a line we never invoiced is still acknowledged — the ack lists it",
+  stranger.summary.catalogued === 3 && stranger.summary.notAcknowledged === 0,
+  `catalogued=${stranger.summary.catalogued} notAcknowledged=${stranger.summary.notAcknowledged}`);
+ok("...and it is the row with no invoiced side",
+  stranger.rows.filter((r) => r.ack && !r.invoiced).map((r) => r.invoiceNo).join(",") === "9999",
+  stranger.rows.filter((r) => r.ack && !r.invoiced).map((r) => r.invoiceNo).join(","));
 
 const partial = reconcileAcknowledgement(invoiced, { lots: [ackLots[0]] } as unknown as ParsedAcknowledgement);
-ok("a genuinely uncatalogued invoice is still pending", partial.summary.pending === 1,
-  `pending=${partial.summary.pending}`);
+ok("an invoice this ack never lists is not-acknowledged", partial.summary.notAcknowledged === 1,
+  `notAcknowledged=${partial.summary.notAcknowledged}`);
 
 console.log(failures === 0 ? "\nINVOICE MATCH KEY: ALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
