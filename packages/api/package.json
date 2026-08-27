@@ -23,7 +23,9 @@
     "test:contract-rates": "tsx src/auction/parse-contract-rates.test.ts",
     "test:contract": "tsx src/auction/parse-contract.test.ts",
     "test:dispatch-sheet": "tsx src/auction/parse-dispatch-sheet.test.ts",
-    "test:recon-vocab": "tsx src/auction/recon-vocabulary.test.ts"
+    "test:recon-vocab": "tsx src/auction/recon-vocabulary.test.ts",
+    "test:corpus": "tsx src/auction/corpus.test.ts",
+    "corpus:build": "tsx scripts/build-corpus.mts"
   },
   "dependencies": {
     "@tea/db": "workspace:*",
