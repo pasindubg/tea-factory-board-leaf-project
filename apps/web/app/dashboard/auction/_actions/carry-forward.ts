@@ -42,6 +42,27 @@ export type CarryForwardLot = {
 
 export type AckRowKey = { invoiceNo: string; lotNo: string | null };
 
+/**
+ * Was this lot actually put in front of buyers in the sale it sits in?
+ *
+ * That single question separates the two ways a lot reaches a later sale, and
+ * they are mutually exclusive:
+ *
+ *   offered, did not sell  → RE-PRINT      (`unsold`, or a valuation reached it,
+ *                                           or it is already a re-print)
+ *   never offered at all   → SKIPPED SALE  (the broker held it back and
+ *                                           catalogued it in a later sale)
+ *
+ * A valuation is the evidence of being offered: the broker only values what it
+ * catalogued and put up. A lot still at `invoiced`/`acknowledged` with no
+ * valuation never faced a buyer, so it skipped that sale rather than failing in
+ * it. `sold` cannot be carried forward at all, but it is listed for
+ * completeness — a sold lot was plainly offered.
+ */
+function wasOffered(lot: CarryForwardLot): boolean {
+  return Boolean(lot.unsold) || Boolean(lot.reprint) || lot.state === "valued" || lot.state === "sold";
+}
+
 export type CarryForwardOutcome =
   | { status: "matched"; lot: CarryForwardLot; isReprint: boolean }
   | { status: "blocked"; lot: CarryForwardLot }
@@ -117,7 +138,7 @@ export async function resolveAckCarryForward(
     if (match.status === "matched") {
       used.add(match.candidate.id);
       const lot = lotById.get(match.candidate.id)!;
-      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: Boolean(lot.unsold) || Boolean(lot.reprint) });
+      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: wasOffered(lot) });
     } else if (match.status === "blocked") {
       outcomes.set(row.invoiceNo, { status: "blocked", lot: lotById.get(match.candidate.id)! });
     } else {

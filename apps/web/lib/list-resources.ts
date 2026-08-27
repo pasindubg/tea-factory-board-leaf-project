@@ -125,6 +125,8 @@ export type AuctionSaleLineListRow = {
   skippedSale: boolean;
   /** On the origin row only: the sale it was actually acknowledged in. */
   skippedSaleNo: string | null;
+  /** Left this sale for a later one — excluded from every figure in the header. */
+  skippedAway: boolean;
 };
 
 export type AuctionDispatchListRow = {

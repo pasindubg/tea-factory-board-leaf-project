@@ -58,8 +58,16 @@ const HEADER =
 // BPML sold rows end with a buyer VAT number; NOT SOLD rows leave that column
 // blank. The optional VAT group is what lets both row types participate in the
 // same ordered scan, so a skipped NOT SOLD row cannot leak into the next buyer.
+//
+// `R?` is the re-print marker from the C/R column, printed glued to the last
+// amount ("0.00R NO") in the same position the VAT number occupies. Without it
+// the row failed to match and was dropped — and because the buyer/NOT-SOLD
+// label is resolved from the gap since the PREVIOUS match, dropping a row slid
+// that label onto the next one. A re-print that did not sell was recorded as
+// sold, and the lot after it flagged not-sold. Non-capturing on purpose: the
+// group numbers below are positional.
 const BPML_ROW =
-  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+Bags\s+([\d,]+\.\d{2})\s+([\d.]+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:(\d{9}-\d{4}))?\s*(YES|NO)/g;
+  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s+Bags\s+([\d,]+\.\d{2})\s+([\d.]+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})R?(?:(\d{9}-\d{4}))?\s*(YES|NO)/g;
 const NOT_SOLD_LABEL = /\*{3}\s*N O T S O L D\s*\*{3}/;
 
 const ASIA_HEADER =

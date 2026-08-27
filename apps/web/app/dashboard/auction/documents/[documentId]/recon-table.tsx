@@ -68,7 +68,11 @@ const COLUMNS: EntityListColumn<ReviewReconRow>[] = [
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.ack?.lotNo ?? null, sortable: true, filter: "text", render: (row) => row.ack?.lotNo ?? "—" },
   { key: "ack", label: "Catalogued (ack)", accessor: (row) => row.ack ? `${row.ack.grade} · ${row.ack.netWt.toFixed(2)} kg` : null, sortable: true, render: (row) => row.ack ? `${row.ack.grade} · ${row.ack.netWt.toFixed(2)} kg` : "—" },
   { key: "weightDelta", label: "Δ net kg", accessor: (row) => row.weightDelta ?? null, sortable: true, headerClassName: "text-right", cellClassName: "text-right", render: (row) => row.weightDelta == null ? "—" : `${row.weightDelta > 0 ? "+" : ""}${row.weightDelta.toFixed(2)}` },
-  { key: "shutout", label: "Shutout", accessor: (row) => row.display === "shutout", boolean: true, sortable: true, filter: "select" },
+  // A shutout reason IS the shutout: the document printed a held-back flag for
+  // this row. Reading it alongside `display` keeps the two columns from
+  // contradicting each other when the row is shown as something else — a
+  // carry-forward outcome, say, which replaces `display` but not the ack data.
+  { key: "shutout", label: "Shutout", accessor: (row) => row.display === "shutout" || Boolean(row.ack?.shutoutReason), boolean: true, sortable: true, filter: "select" },
   { key: "shutoutReason", label: "Shutout reason", accessor: (row) => row.ack?.shutoutReason ?? null, sortable: true, filter: "text", cellClassName: "text-xs text-stone-500 dark:text-stone-400", render: (row) => row.ack?.shutoutReason ?? "—" },
   { key: "reprintRegistered", label: "Re-print", accessor: (row) => row.reprintRegistered, boolean: true, sortable: true, filter: "select" },
   { key: "notes", label: "Notes", accessor: (row) => reconciliationNotes(row), filter: "text", lov: false, cellClassName: "text-xs text-stone-500 dark:text-stone-400", render: reconciliationNotes },

@@ -8,7 +8,7 @@ import { isListResourceKey, type BackgroundJobListRow, type ListResourceKey, typ
 import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
-import { stateBucket } from "@/app/dashboard/auction/state-buckets";
+import { brokerSaleKey, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "@/app/dashboard/auction/state-buckets";
 import { DOC_TYPE_LABELS, docStatus, computeActiveDocumentIds, type AuctionDocType } from "@/app/dashboard/auction/doc-status";
 import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
@@ -144,6 +144,7 @@ type RefreshInvoiceOverviewLot = {
     dispatch_date: string | null;
     sale_date: string | null;
     status: string | null;
+    broker_id: string | null;
     brokers: { name: string } | null;
     marks: { code: string; name: string | null } | null;
   } | null;
@@ -1170,7 +1171,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const saleId = params.saleId as string;
       const { data: brokerInvoice, error: brokerInvoiceError } = await supabase
         .from("auction_sales")
-        .select("id, broker_id")
+        .select("id, broker_id, sale_no, target_sale_no")
         .eq("id", saleId)
         .eq("factory_id", profile.factory_id)
         .eq("sale_kind", "dispatch")
@@ -1192,6 +1193,23 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("factory_id", profile.factory_id),
       ]);
       if (lotError || thresholdError) return { ok: false, error: friendlyError(lotError ?? thresholdError) };
+
+      // Broker + sale, not this invoice: the same broker can hold several
+      // invoices in one sale, and its contract settles them together. One
+      // answer serves every lot here, since they share both.
+      const invoiceSaleNo = (brokerInvoice.target_sale_no as string | null) || (brokerInvoice.sale_no as string | null);
+      const { data: soldForBroker } = await supabase
+        .from("auction_lots")
+        .select("id, auction_sales!inner(broker_id, sale_no, target_sale_no)")
+        .eq("factory_id", profile.factory_id)
+        .eq("state", "sold")
+        .eq("auction_sales.broker_id", brokerInvoice.broker_id as string);
+      const wantedGroup = brokerSaleKey(brokerInvoice.broker_id as string | null, invoiceSaleNo);
+      const anySoldHere = ((soldForBroker ?? []) as unknown as {
+        auction_sales: { broker_id: string | null; sale_no: string | null; target_sale_no: string | null } | null;
+      }[]).some((lot) =>
+        brokerSaleKey(lot.auction_sales?.broker_id, lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no) === wantedGroup,
+      );
 
       const thresholdByGrade = new Map<string, { minNetKg: number; applies: boolean }>();
       for (const threshold of (thresholds ?? []) as unknown as {
@@ -1226,7 +1244,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             state: lot.state,
             shutout: Boolean(lot.shutout),
             shutout_reason: lot.shutout_reason ?? null,
-            unsold: Boolean(lot.unsold),
+            unsold: isUnsoldLot(lot, anySoldHere),
             reprint: isReprintRow(lot),
             withdrawn: Boolean(lot.withdrawn),
             not_valued: Boolean(lot.not_valued),
@@ -1281,13 +1299,22 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         .select(
           `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, created_at, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
-            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, brokers(name), marks(code, name))",
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, brokers(name), marks(code, name))",
         )
         .order("created_at", { ascending: false });
       if (error) return { ok: false, error: friendlyError(error) };
       const markLabel = (mark: { code: string; name: string | null } | null) =>
         mark ? `${mark.code}${mark.name ? ` — ${mark.name}` : ""}` : null;
       const lots = (data ?? []) as unknown as RefreshInvoiceOverviewLot[];
+      // Which broker sold something in which sale — the proof that anything
+      // still `valued` for that broker in that sale was offered and not bought.
+      const groupOfLot = (lot: RefreshInvoiceOverviewLot) =>
+        brokerSaleKey(lot.auction_sales?.broker_id, lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no);
+      const soldGroups = soldBrokerSaleKeys(lots.map((lot) => ({
+        state: lot.state,
+        brokerId: lot.auction_sales?.broker_id ?? null,
+        saleNo: lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no ?? null,
+      })));
 
       // "Next sale" is the sale a re-printed lot rolls into. Nothing records it
       // on the lot itself — the link is the child lot created in the next
@@ -1324,7 +1351,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             state: lot.state,
             shutout: Boolean(lot.shutout),
             shutoutReason: lot.shutout_reason ?? null,
-            unsold: Boolean(lot.unsold),
+            unsold: isUnsoldLot(lot, soldGroups.has(groupOfLot(lot))),
             reprint: isReprintRow(lot),
             mark: markLabel(lot.marks),
             brokerInvoiceNo: formatFourDigitNo(invoice?.sale_no ?? null),
@@ -1528,7 +1555,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: allDispatches, error: dispatchError }, { data: allLots, error: lotError }] = await Promise.all([
         supabase
           .from("auction_sales")
-          .select("id, sale_no, target_sale_no, brokers(name)")
+          .select("id, sale_no, target_sale_no, broker_id, brokers(name)")
           .eq("factory_id", profile.factory_id)
           .eq("sale_kind", "dispatch"),
         supabase
@@ -1600,6 +1627,16 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         dispatch.id as string,
         dispatch.target_sale_no as string | null,
       ]));
+      // Which BROKER sold something in which sale. Built factory-wide, because
+      // a lot's broker invoice can be a sibling dispatch outside this group.
+      const brokerBySaleId = new Map((allDispatches ?? []).map((d) => [d.id as string, d.broker_id as string | null]));
+      const groupOf = (lot: { sale_id: string }) =>
+        brokerSaleKey(brokerBySaleId.get(lot.sale_id), targetSaleNoByDispatchId.get(lot.sale_id));
+      const soldGroups = soldBrokerSaleKeys(allLotRows.map((lot) => ({
+        state: lot.state,
+        brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
+        saleNo: targetSaleNoByDispatchId.get(lot.sale_id) ?? null,
+      })));
 
       return {
         ok: true,
@@ -1635,7 +1672,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             stateStyle: state.style,
             shutout: Boolean(lot.shutout),
             shutoutReason: lot.shutout_reason ?? null,
-            unsold: Boolean(lot.unsold),
+            unsold: isUnsoldLot(lot, soldGroups.has(groupOf(lot))),
             buyerName: line?.buyers?.name ?? null,
             buyerVatNo: line?.buyers?.vat_no ?? null,
             bags: lot.bags ?? null,
@@ -1651,6 +1688,10 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             skippedSale: Boolean(lot.skipped_sale),
             // Only the origin row carries it; the destination row IS that sale.
             skippedSaleNo: formatSaleNo(lot.skipped_sale_no ?? null) || null,
+            // The pair above, as the one question the sale totals ask: has this
+            // lot left for a later sale? Kept as a column so the same answer
+            // drives the header figures and the "Hide skipped sales" filter.
+            skippedAway: Boolean(lot.skipped_sale) && Boolean(lot.skipped_sale_no),
             previousSaleNo,
             // Tri-state, so it still carries a label: the server row filter
             // compares row PROPERTIES, and "true" does not contain "guarantee".

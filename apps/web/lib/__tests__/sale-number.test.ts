@@ -8,8 +8,15 @@ describe("formatSaleNo", () => {
     expect(formatSaleNo(7)).toBe("0007");
   });
 
-  it("preserves a broker prefix while formatting its final sale number", () => {
-    expect(formatSaleNo("2026-023")).toBe("2026-0023");
+  it("drops a broker's year prefix — it names the same sale, so showing it invents a distinction", () => {
+    expect(formatSaleNo("2026-023")).toBe("0023");
+    expect(formatSaleNo("2026-0021")).toBe("0021");
+  });
+
+  it("leaves a value with no digits alone rather than blanking it", () => {
+    expect(formatSaleNo("none")).toBe("none");
+    expect(formatSaleNo("")).toBe("");
+    expect(formatSaleNo(null)).toBe("");
   });
 
   it("continues to match legacy and four-digit routes", () => {

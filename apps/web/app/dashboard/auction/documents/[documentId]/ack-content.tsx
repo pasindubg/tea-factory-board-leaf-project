@@ -1,6 +1,7 @@
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
+  carryForwardInvoiceFilters,
   invoiceMatchKey,
   reconcileAcknowledgement,
   relateAcknowledgementParseWarnings,
@@ -113,6 +114,11 @@ export async function AckContent({
         .from("auction_lots")
         .select("invoice_no, lot_invoices(invoice_no), auction_sales!inner(broker_id)")
         .eq("auction_sales.broker_id", brokerId)
+        // Narrowed to the invoices actually being looked up. Without this the
+        // query pulled every lot the broker has ever held, to read a handful of
+        // numbers. Prefix-aware, because the factory stores "26I02-0909" where
+        // the broker prints "0909".
+        .or(carryForwardInvoiceFilters(historicalInvoiceNos.map(formatFourDigitNo)).join(","))
     : { data: [] };
   const movedInvoiceByKey = new Map(
     (movedLots ?? []).flatMap((lot) => {
@@ -186,8 +192,8 @@ export async function AckContent({
         canRegister: false,
         display: outcome.isReprint ? "re-print" : "rolled forward",
         carryForwardNote: outcome.isReprint
-          ? `Offered in sale ${fromSale} (broker invoice ${fromInvoice}) and unsold — added here as a re-print; that sale is flagged as skipped`
-          : `Sits in sale ${fromSale} but is catalogued here — that sale is flagged as skipped; added as a normal lot, not a re-print`,
+          ? `Offered in sale ${fromSale} (broker invoice ${fromInvoice}) and did not sell — added here as a re-print`
+          : `Never offered in sale ${fromSale} — that sale is flagged as skipped and stops counting it; added here as a normal lot`,
       };
     }
     if (outcome?.status === "blocked") {

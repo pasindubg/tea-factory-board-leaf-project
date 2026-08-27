@@ -124,5 +124,30 @@ ok("sample allowance: net_wt + sample matches the broker's gross figure — no f
   reconSample.summary.weightMismatches === 0 && reconSample.summary.totalMismatchKg === 0,
   JSON.stringify(reconSample.summary));
 
+// ── Sale 024: BPML prints a re-printed invoice as "R0032". The invoice group
+// was digits-only, so the whole row failed to match and vanished — the printed
+// self-check caught it ("Catalogued lots parsed (7) ≠ printed total (8)") but
+// nothing else did. Real document, straight from the broker.
+const ack024 = parseAcknowledgement(
+  readFileSync(new URL("./__fixtures__/ack-bpml-reprint-sale-024.txt", import.meta.url), "utf8"),
+);
+ok("sale 024: 8 catalogued + 1 shutout parsed",
+  ack024.lots.filter((l) => l.section === "catalogued").length === 8 &&
+    ack024.lots.filter((l) => l.section === "shutout").length === 1,
+  `catalogued=${ack024.lots.filter((l) => l.section === "catalogued").length} shutout=${ack024.lots.filter((l) => l.section === "shutout").length}`);
+ok("sale 024: self-check clean — printed totals now agree",
+  ack024.issues.length === 0, ack024.issues.join(" | ") || "no issues");
+
+const r0032 = ack024.lots.find((l) => l.invoiceNo === "0032");
+ok("sale 024: R0032 is read as invoice 0032, flagged re-print",
+  r0032?.reprint === true && r0032?.lotNo === "1030" && r0032?.grade === "BOP1A",
+  r0032 ? `lot=${r0032.lotNo} grade=${r0032.grade} reprint=${r0032.reprint}` : "row missing");
+ok("sale 024: a re-print's net wt may sit below bags×kg/bag without a warning",
+  r0032?.netWt === 257 && r0032?.bags === 10 && r0032?.kgPerBag === 26,
+  `${r0032?.netWt} vs ${(r0032?.bags ?? 0) * (r0032?.kgPerBag ?? 0)}`);
+ok("sale 024: ordinary rows are not mistaken for re-prints",
+  ack024.lots.filter((l) => l.reprint).length === 1,
+  `${ack024.lots.filter((l) => l.reprint).length}`);
+
 console.log(failures === 0 ? "\nAUCTION ACK PARSE + RECON: ALL CHECKS PASSED" : `\nAUCTION ACK: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -19,23 +19,10 @@ const EDITABLE_STATES = ["invoiced", "acknowledged", "valued", "sold"];
 const rightAligned = "text-right tabular-nums";
 
 const COLUMNS: EntityListColumn<SaleLineRow>[] = [
-  {
-    key: "dispatchSaleNo",
-    label: "Broker invoice no.",
-    accessor: (row) => row.dispatchSaleNo ?? null,
-    sortable: true,
-    filter: "text",
-    lov: false,
-    render: (row) => row.dispatchId ? (
-      <Link href={`/dashboard/auction/${row.dispatchId}`} className="text-green-700 hover:underline dark:text-green-400">
-        {row.dispatchSaleNo}
-      </Link>
-    ) : "—",
-  },
+  { key: "invoiceNo", label: "Invoice(s)", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-medium" },
   { key: "broker", label: "Broker", accessor: (row) => row.broker ?? null, sortable: true, filter: "select" },
   { key: "mark", label: "Mark", accessor: (row) => row.mark ?? null, sortable: true, filter: "select" },
   { key: "lotNo", label: "Lot no.", accessor: (row) => row.lotNo ?? null, sortable: true, filter: "text", lov: false },
-  { key: "invoiceNo", label: "Invoice(s)", accessor: (row) => row.invoiceNo, sortable: true, filter: "text", lov: false, cellClassName: "font-medium" },
   { key: "grade", label: "Grade", accessor: (row) => row.grade ?? null, sortable: true, filter: "select" },
   {
     key: "stateLabel",
@@ -225,6 +212,31 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
     sortable: true,
     filter: "text",
     render: (row) => row.skippedSaleNo ?? "—",
+  },
+  {
+    // Search-only: it restates "Skipped sale = Yes AND Skipped to sale set",
+    // which the two columns beside it already show, so it earns a search field
+    // but not a column. Yes = this sale's totals exclude the lot.
+    key: "skippedAway",
+    label: "Excluded from totals",
+    accessor: (row) => row.skippedAway,
+    boolean: true,
+    sortable: true,
+    filter: "select",
+    searchOnly: true,
+  },
+  {
+    key: "dispatchSaleNo",
+    label: "Broker invoice no.",
+    accessor: (row) => row.dispatchSaleNo ?? null,
+    sortable: true,
+    filter: "text",
+    lov: false,
+    render: (row) => row.dispatchId ? (
+      <Link href={`/dashboard/auction/${row.dispatchId}`} className="text-green-700 hover:underline dark:text-green-400">
+        {row.dispatchSaleNo}
+      </Link>
+    ) : "—",
   },
 ];
 

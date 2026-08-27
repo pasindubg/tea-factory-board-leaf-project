@@ -622,9 +622,14 @@ function EntityListPanel<Row>({
   const columnWidth = (column: EntityListColumn<Row>) =>
     columnWidths[column.key] ?? column.minWidth ?? DEFAULT_COLUMN_MIN_WIDTH;
 
+  // What the TABLE draws. `searchOnly` columns stay in definition.columns — so
+  // useListControls and the search panel still see them — but have no header,
+  // no cell, and take up no width here.
+  const tableColumns = definition.columns.filter((column) => !column.searchOnly);
+
   // Table mode is as wide as its columns; the viewport scrolls to reach them.
   const tableWidth = (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0)
-    + definition.columns.reduce((total, column) => total + columnWidth(column), 0);
+    + tableColumns.reduce((total, column) => total + columnWidth(column), 0);
 
   /**
    * How many leading columns fit the viewport in list mode. Null whenever
@@ -638,13 +643,13 @@ function EntityListPanel<Row>({
     if (viewMode !== "list" || viewportWidth <= 0) return null;
     let remaining = viewportWidth - (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0);
     let fitted = 0;
-    for (const column of definition.columns) {
+    for (const column of tableColumns) {
       remaining -= columnWidth(column);
       if (remaining < 0) break;
       fitted += 1;
     }
     fitted = Math.max(1, fitted);
-    return fitted >= definition.columns.length ? null : fitted;
+    return fitted >= tableColumns.length ? null : fitted;
   })();
 
   /** 1-based cell position the generated rule starts hiding from. */
@@ -656,8 +661,8 @@ function EntityListPanel<Row>({
   // `table-layout: fixed`, so dropped columns get no <col> at all and the
   // surviving ones share the width evenly.
   const layoutColumns = fittedColumnCount == null
-    ? definition.columns
-    : definition.columns.slice(0, fittedColumnCount);
+    ? tableColumns
+    : tableColumns.slice(0, fittedColumnCount);
   const changing = adding || Boolean(editingId) || deleting || Boolean(busyCommand) || Boolean(panelCommand);
   const createEnabled = Boolean(supportsCreate && canCreate && !changing);
   const editEnabled = Boolean(
@@ -1027,7 +1032,7 @@ function EntityListPanel<Row>({
                 onChange={() => selection.toggleVisible(visibleRows)}
                 disabled={changing || refreshing}
               />
-              {definition.columns.map((column) => (
+              {tableColumns.map((column) => (
                 <th
                   key={column.key}
                   title={typeof column.label === "string" ? column.label : undefined}
@@ -1082,7 +1087,7 @@ function EntityListPanel<Row>({
                     onChange={() => selection.toggle(id)}
                     disabled={changing || refreshing}
                   />
-                  {definition.columns.map((column, index) => (
+                  {tableColumns.map((column, index) => (
                     <td
                       key={column.key}
                       // Truncated text is unreadable without the whole value,
@@ -1128,7 +1133,7 @@ function EntityListPanel<Row>({
             })}
             {visibleRows.length === 0 && !inlineCreating && (
               <tr>
-                <td colSpan={definition.columns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-center text-stone-400">
+                <td colSpan={tableColumns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-center text-stone-400">
                   {rows.length ? filteredEmptyMessage : emptyMessage}
                 </td>
               </tr>

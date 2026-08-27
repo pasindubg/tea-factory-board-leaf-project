@@ -245,16 +245,18 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     // there, and the new row links back via reprint_source_lot_id so the two
     // read as one history.
     //
-    // TWO INDEPENDENT FACTS, never exclusive — a lot can be both:
+    // ONE question, TWO exclusive answers — was the lot offered to buyers in
+    // the sale it sits in? (outcome.isReprint, see wasOffered)
     //
-    //   reprint      — the origin lot did not sell (unsold / already reprint /
-    //                  registered by hand). outcome.isReprint. Unchanged rule.
-    //   skipped sale — the broker acknowledged it in a different sale from the
-    //                  one it sits in. True of every carry-forward match by
-    //                  definition: that is what "found it in an earlier sale"
-    //                  means. An unsold lot that resurfaces several sales later
-    //                  is a re-print AND a skipped sale.
+    //   yes → RE-PRINT      it faced buyers and did not sell. Nothing skipped;
+    //                       the origin row keeps its own record untouched.
+    //   no  → SKIPPED SALE  the broker held it back and catalogued it later.
+    //                       It never appeared in the origin sale, so that sale
+    //                       must stop counting it.
+    //
+    // A lot is never both: it either went up for sale there, or it did not.
     const candidate = outcome.lot;
+    const skippedSale = !outcome.isReprint;
     carriedForwardCount += 1;
     rowsToCreate.push({
       ...row,
@@ -268,30 +270,40 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       reprint: outcome.isReprint,
       // The destination row is flagged, but carries no number: it IS the sale
       // the lot was finally acknowledged in.
-      skipped_sale: true,
+      skipped_sale: skippedSale,
       unsold: false,
     });
 
-    // The origin row is the one that was left behind at `invoiced` for ever.
-    // Acknowledge it where it stands and record where it actually went.
-    const { error: originError } = await supabase
-      .from("auction_lots")
-      .update({
-        ...(candidate.state === "invoiced" ? { state: "acknowledged" } : {}),
-        skipped_sale: true,
-        skipped_sale_no: row.provisional_sale_no || null,
-      })
-      .eq("id", candidate.id)
-      .eq("factory_id", profile.factory_id);
-    if (originError) return back(detail, friendlyError(originError));
-    skippedOriginSaleIds.add(candidate.sale_id);
+    if (skippedSale) {
+      // The origin row was left behind at `invoiced` for ever, never offered.
+      // Acknowledge it where it stands and record where it actually went, so
+      // that sale stops counting a lot it never put up.
+      const { error: originError } = await supabase
+        .from("auction_lots")
+        .update({
+          ...(candidate.state === "invoiced" ? { state: "acknowledged" } : {}),
+          skipped_sale: true,
+          skipped_sale_no: row.provisional_sale_no || null,
+        })
+        .eq("id", candidate.id)
+        .eq("factory_id", profile.factory_id);
+      if (originError) return back(detail, friendlyError(originError));
+      skippedOriginSaleIds.add(candidate.sale_id);
+    }
 
     const fromSale = formatSaleNo(candidate.auction_sales?.target_sale_no ?? null) || "—";
+    // State only advances from `invoiced`; a lot already valued or shut out
+    // keeps what it reached. Report what actually changed, not the happy path.
+    const originNote = skippedSale
+      ? candidate.state === "invoiced"
+        ? "The original lot never faced a buyer there, so it is marked acknowledged and flagged as a skipped sale"
+        : `The original lot never faced a buyer there, so it is left at ${candidate.state ?? "its current state"} and flagged as a skipped sale`
+      : "The original lot was offered there and did not sell, so it keeps its own record unchanged";
     await writeAudit(supabase, profile.factory_id, {
       saleId: row.sale_id,
       lotId: candidate.id,
-      action: outcome.isReprint ? "Re-print acknowledged" : "Skipped sale acknowledged",
-      detail: `Invoice ${row.invoice_no} sits in sale ${fromSale} but the broker catalogued it in sale ${row.provisional_sale_no || "—"}. The original lot is marked acknowledged and flagged as a skipped sale; a lot was added to the later sale${outcome.isReprint ? " as a re-print, because it did not sell where it was offered" : ", as a normal lot — it was never offered"}.`,
+      action: skippedSale ? "Skipped sale acknowledged" : "Re-print acknowledged",
+      detail: `Invoice ${row.invoice_no} sits in sale ${fromSale} but the broker catalogued it in sale ${row.provisional_sale_no || "—"}. ${originNote}; a lot was added to the later sale${skippedSale ? " as a normal lot" : " as a re-print"}.`,
       reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
       actor: profile.name,
     });

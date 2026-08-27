@@ -7,6 +7,7 @@ import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { invoiceMatchKey } from "@tea/api";
 import { AUC, str, num, writeAudit, gradeRulesByCode, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
+import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { isLotState } from "../lot-states";
 import type { LotRow } from "../[saleId]/lot-row";
@@ -431,6 +432,31 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
 }
 
 /**
+ * What to STORE as a registered lot's invoice number.
+ *
+ * A broker prints the bare sequence ("0901"); the factory numbers the same
+ * invoice with its index-cycle prefix ("26I02-0901"). Registering a lot the
+ * system had no record of used to store the bare number, so it read as a
+ * different invoice from every sibling on the same broker invoice — the same
+ * bug the acknowledgement ingest already fixes with its group-prefix scan.
+ *
+ * The prefix is taken from whatever the sale group already uses; matching is
+ * unaffected either way, since invoiceMatchKey compares prefix-blind.
+ */
+function storedInvoiceNo(
+  invoiceNo: string,
+  groupLots: readonly { sale_id: string; invoice_no: string | null }[],
+  groupIds: readonly string[],
+): string {
+  const prefix = groupLots
+    .filter((lot) => groupIds.includes(lot.sale_id))
+    .map((lot) => parseCompositeInvoiceNo(lot.invoice_no)?.prefix)
+    .find(Boolean);
+  const seq = formatFourDigitNo(invoiceSeqOf(invoiceNo));
+  return prefix ? buildCompositeInvoiceNo(prefix, seq) : seq;
+}
+
+/**
  * Declares a not-acknowledged acknowledgement lot to BE a re-print.
  *
  * An invoice the broker catalogued that this system has no record of is not
@@ -511,7 +537,9 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
       .insert({
         factory_id: profile.factory_id,
         sale_id: sourceSaleId,
-        invoice_no: currentLot?.invoice_no ?? formatFourDigitNo(invoiceNo),
+        // Prefix taken from the whole group, not `sameInvoice` — that only
+        // holds this invoice's own rows, which are exactly what is missing.
+        invoice_no: currentLot?.invoice_no ?? storedInvoiceNo(invoiceNo, brokerLots ?? [], groupIds),
         provisional_sale_no: firstSaleNo || null,
         grade,
         bags: currentLot?.bags ?? null,
@@ -589,14 +617,23 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
   if (!invoice) return { ok: false, error: "Broker invoice not found." };
 
   const acknowledgedSaleNo = formatSaleNo((invoice.target_sale_no as string | null) || (invoice.sale_no as string | null));
-  if (saleNoMatches(dispatchedSaleNo, acknowledgedSaleNo)) {
-    return { ok: false, error: "The dispatched sale must be an earlier sale than the one acknowledging it." };
+  // Strictly EARLIER, not merely different: a skipped sale means the broker held
+  // the lot back and catalogued it later, so an equal or later number describes
+  // something that cannot have happened. saleNoMatches only answers "same", so
+  // the ordering is compared on the numeric key both screens sort by.
+  const dispatchedKey = Number(saleNoKey(dispatchedSaleNo));
+  const acknowledgedKey = Number(saleNoKey(acknowledgedSaleNo));
+  if (!Number.isFinite(dispatchedKey) || !Number.isFinite(acknowledgedKey)) {
+    return { ok: false, error: "This broker invoice has no sale number to compare against." };
+  }
+  if (dispatchedKey >= acknowledgedKey) {
+    return { ok: false, error: `The dispatched sale must be earlier than sale ${acknowledgedSaleNo}, which is acknowledging it.` };
   }
 
   const matchKey = invoiceMatchKey(invoiceNo);
   const { data: brokerLots, error: brokerLotsError } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, skipped_sale, auction_sales!inner(broker_id)")
+    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, skipped_sale, auction_sales!inner(broker_id)")
     .eq("factory_id", profile.factory_id)
     .eq("auction_sales.broker_id", invoice.broker_id as string);
   if (brokerLotsError) return { ok: false, error: friendlyError(brokerLotsError) };
@@ -606,11 +643,15 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
   if (currentLot?.skipped_sale) return { ok: false, error: "This invoice is already registered as a skipped sale." };
 
   // An earlier lot for this invoice IS the origin — never create a second.
-  let originLotId = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string))?.id as string | undefined;
+  const existingOrigin = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string));
+  let originLotId = existingOrigin?.id as string | undefined;
 
   const grade = currentLot?.grade ?? str(formData.get("grade"));
   const netWt = Number(currentLot?.net_wt ?? num(formData.get("net_wt")) ?? 0);
   if (!grade) return { ok: false, error: "The acknowledgement row has no grade to register." };
+
+  // Declared out here so the dispatch-status re-derivation below can see it.
+  let originSaleId: string | undefined;
 
   if (!originLotId) {
     const { data: brokerInvoices, error: brokerInvoiceError } = await supabase
@@ -620,7 +661,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
       .eq("sale_kind", "dispatch")
       .eq("broker_id", invoice.broker_id as string);
     if (brokerInvoiceError) return { ok: false, error: friendlyError(brokerInvoiceError) };
-    let originSaleId = (brokerInvoices ?? []).find((row) =>
+    originSaleId = (brokerInvoices ?? []).find((row) =>
       saleNoMatches((row.target_sale_no as string | null) || (row.sale_no as string | null), dispatchedSaleNo),
     )?.id as string | undefined;
 
@@ -649,7 +690,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
       .insert({
         factory_id: profile.factory_id,
         sale_id: originSaleId,
-        invoice_no: currentLot?.invoice_no ?? formatFourDigitNo(invoiceNo),
+        invoice_no: currentLot?.invoice_no ?? storedInvoiceNo(invoiceNo, brokerLots ?? [], groupIds),
         provisional_sale_no: dispatchedSaleNo,
         grade,
         bags: currentLot?.bags ?? null,
@@ -670,10 +711,28 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
   } else {
     const { error: originUpdateError } = await supabase
       .from("auction_lots")
-      .update({ skipped_sale: true, skipped_sale_no: acknowledgedSaleNo || null })
+      .update({
+        ...(existingOrigin?.state === "invoiced" ? { state: "acknowledged" } : {}),
+        skipped_sale: true,
+        skipped_sale_no: acknowledgedSaleNo || null,
+      })
       .eq("id", originLotId)
       .eq("factory_id", profile.factory_id);
     if (originUpdateError) return { ok: false, error: friendlyError(originUpdateError) };
+    originSaleId = existingOrigin?.sale_id as string | undefined;
+  }
+
+  // The origin lot is acknowledged the moment it is written, so its broker
+  // invoice must not be left sitting at `invoiced` — the same re-derivation the
+  // acknowledgement confirm path runs for every sale it touches.
+  if (originSaleId) {
+    await supabase
+      .from("auction_sales")
+      .update({ status: "catalogued" })
+      .eq("id", originSaleId)
+      .eq("factory_id", profile.factory_id)
+      .in("status", ["draft", "dispatched", "invoiced", "grn"]);
+    await syncDispatchForBrokerInvoice(supabase, originSaleId, profile.factory_id);
   }
 
   if (currentLot) {

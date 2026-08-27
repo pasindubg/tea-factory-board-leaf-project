@@ -29,7 +29,11 @@ function isBrokerInvoiceDetailPath(pathname: string): boolean {
  * used to identify the owning navigation destination.
  */
 export function moduleMatchesPath(item: ModuleDef, pathname: string): boolean {
-  if (item.key === "auction-sale-detail") return pathname.startsWith("/dashboard/auction/sales/");
+  // Two addresses, one destination: the nav's stable entry point, and the
+  // numbered URL a specific sale lives at once one is chosen.
+  if (item.key === "auction-sale-detail") {
+    return pathname === "/dashboard/auction/sales-details" || pathname.startsWith("/dashboard/auction/sales/");
+  }
   if (item.key === "auction-sales") return pathname === "/dashboard/auction/sales";
   if (item.key === "auction-reprints") return pathname === "/dashboard/auction/reprints";
   if (item.key === "auction-dispatch-detail") return isBrokerInvoiceDetailPath(pathname);

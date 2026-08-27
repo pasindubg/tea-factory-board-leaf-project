@@ -182,25 +182,38 @@ guaranteed: a broker can hold it and catalogue it in sale 20 instead, without
 it ever being offered. That is **not** a re-print — nothing was offered and
 left unsold — so it must not enter the re-print chain or its counts.
 
-**`reprint` and `skipped_sale` are independent — a lot can be both.** Every
-carry-forward match sets `skipped_sale`, because being found in an earlier sale
-is what a match *is*. `reprint` is decided by one thing only, unchanged:
+**`reprint` and `skipped_sale` are mutually exclusive**, decided by one
+question about the origin lot: *was it actually offered to buyers in the sale
+it sits in?* A valuation is the evidence — the broker only values what it put
+up.
 
-| matched (origin) lot | `reprint` on the new row |
+| origin lot | outcome |
 |---|---|
-| `unsold` / `reprint` / registered by hand | `true` — offered and did not sell |
-| anything else — only ever invoiced | `false` — nothing was offered |
+| `unsold`, `valued`/`sold`, or already `reprint` | **re-print** — it faced buyers and did not sell |
+| still `invoiced`/`acknowledged`, never valued | **skipped sale** — it never faced a buyer |
 
-So an unsold lot that resurfaces several sales later is a re-print **and** a
-skipped sale, and shows as both.
+A lot is never both: it either went up for sale there or it did not. A re-print
+leaves its origin row completely untouched — no `skipped_sale`, no
+`skipped_sale_no` — because nothing was skipped.
 
-The result is a pair of rows, permitted by `uq_auction_lots_sale_invoice`
-(`sale_id`, `invoice_no`), the same compound key the re-print chain relies on:
+The classification is made when the LATER sale's acknowledgement is confirmed,
+which is the first moment the system learns where the lot resurfaced.
+
+A skipped sale produces a pair of rows, permitted by
+`uq_auction_lots_sale_invoice` (`sale_id`, `invoice_no`), the same compound key
+the re-print chain relies on:
 
 | | `state` | `skipped_sale` | `skipped_sale_no` | `reprint` |
 |---|---|---|---|---|
-| origin (sale 15) | `acknowledged` | `true` | `0020` | untouched |
-| destination (sale 20) | `acknowledged` | `true` | *null* | origin was unsold |
+| origin (sale 15) | `acknowledged` | `true` | `0020` | `false` |
+| destination (sale 20) | `acknowledged` | `true` | *null* | `false` |
+
+**Only the origin row carries a number, and that number is what removes it from
+sale 15's figures.** `skipped_sale` with a `skipped_sale_no` means "left for a
+later sale"; `skipped_sale` with no number means "arrived here" and counts
+normally. Sale-detail totals apply that one predicate once, to the lot list
+every figure derives from, and the sale-lines table offers a **Hide skipped
+sales** toggle over the same flag.
 
 The origin row is the point of the feature: before this it sat at `invoiced`
 for ever, because recon ① only ever compared against the sale group under

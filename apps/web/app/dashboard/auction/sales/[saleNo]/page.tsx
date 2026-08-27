@@ -8,7 +8,7 @@ import { EntityListTabs } from "@/components/entity-list";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { applyServerListSearch } from "@/lib/list-search-state";
-import { stateBucket } from "../../state-buckets";
+import { brokerSaleKey, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "../../state-buckets";
 import { brokerInvoiceRank } from "../../dispatch-status";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
@@ -55,12 +55,29 @@ type LotRow = {
   not_valued: boolean | null;
   missing: boolean | null;
   settled: boolean | null;
+  skipped_sale: boolean | null;
+  skipped_sale_no: string | null;
   reprint_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
 };
 
+/**
+ * The lot left this sale: the broker catalogued it in the sale named by
+ * `skipped_sale_no`, and a row for it exists there. It stays visible here as
+ * history but must not count towards this sale's weight, lots or money.
+ *
+ * The arriving row in the destination sale is `skipped_sale` too, with NO
+ * number — that one belongs here and counts normally. The number is the whole
+ * distinction, so setting it later removes the lot from these totals.
+ */
+const skippedAway = (lot: { skipped_sale?: boolean | null; skipped_sale_no?: string | null }) =>
+  Boolean(lot.skipped_sale) && Boolean(lot.skipped_sale_no);
+
 type LineRow = {
   lot_id: string | null;
+  // The contract's own weight for the sold lot — the weight the proceeds were
+  // actually struck on, which is what an average price must divide by.
+  net_wt: number | string | null;
   price_per_kg: number | string | null;
   proceeds: number | string | null;
   vat_amount: number | string | null;
@@ -162,7 +179,7 @@ export default async function SaleDetailPage({
   const allDispatchRows = (allDispatches ?? []) as unknown as DispatchRow[];
   const { data: allLots, error: lotsError } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout, shutout_reason, unsold, reprint, withdrawn, not_valued, missing, settled, reprint_source_lot_id, lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout, shutout_reason, unsold, reprint, withdrawn, not_valued, missing, settled, skipped_sale, skipped_sale_no, reprint_source_lot_id, lot_invoices(invoice_no)")
     .order("invoice_no");
   if (lotsError) throw new Error(`Could not load auction sale lots: ${lotsError.message}`);
   const allLotRows = (allLots ?? []) as unknown as LotRow[];
@@ -183,11 +200,32 @@ export default async function SaleDetailPage({
       (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no, saleNo)),
   );
   const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id));
-  const lotRows = allLotRows.filter(
+  // Every lot this sale holds, including ones that have since skipped away —
+  // membership, used for "does this sale exist" and for resolving its invoice.
+  const saleLotRows = allLotRows.filter(
     (lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id),
   );
+  // What this sale actually counts. Everything below derives from it, so the
+  // exclusion applies once and reaches every figure on the page.
+  const lotRows = saleLotRows.filter((lot) => !skippedAway(lot));
 
-  if (dispatches.length === 0 && lotRows.length === 0) notFound();
+  // Membership, not totals: a sale whose every lot skipped away still exists.
+  if (dispatches.length === 0 && saleLotRows.length === 0) {
+    // A sale number that matches nothing is a bad URL — 404 it. But when the
+    // factory has no auction data AT ALL there is no sale to have asked for,
+    // and the nav still links here, so show the page empty rather than 404.
+    if (allDispatchRows.length > 0 || allLotRows.length > 0) notFound();
+    return (
+      <DetailRecordPanel
+        eyebrow="Sale details"
+        title="No auction sales yet"
+        description="A sale appears here once a broker invoice is created and dispatched."
+      >
+        <DetailField label="Broker invoices" value="0" />
+        <DetailField label="Lots" value="0" />
+      </DetailRecordPanel>
+    );
+  }
   // The Invoices tab re-derives its sale from this broker invoice's own target,
   // so it must be one that BELONGS to this sale. A dispatch pulled in only
   // because one of its lots was assigned here (a re-print register entry, say)
@@ -196,7 +234,7 @@ export default async function SaleDetailPage({
     dispatches.find((dispatch) => saleNoMatches(dispatch.target_sale_no, saleNo))?.id
     ?? dispatches.find((dispatch) => !dispatch.target_sale_no && saleNoMatches(dispatch.sale_no, saleNo))?.id
     ?? dispatches[0]?.id
-    ?? lotRows[0]?.sale_id;
+    ?? saleLotRows[0]?.sale_id;
 
   const { data: docImports, error: docImportsError } = dispatchIds.size > 0
     ? await supabase
@@ -242,7 +280,7 @@ export default async function SaleDetailPage({
   const { data: lines, error: linesError } = lotRows.length > 0
     ? await supabase
         .from("sale_lines")
-        .select("lot_id, price_per_kg, proceeds, vat_amount, on_guarantee")
+        .select("lot_id, net_wt, price_per_kg, proceeds, vat_amount, on_guarantee")
         .in("lot_id", lotRows.map((lot) => lot.id))
         .order("created_at", { ascending: false })
     : { data: [], error: null };
@@ -287,6 +325,11 @@ export default async function SaleDetailPage({
   }
 
   const totalProceeds = lineRows.reduce((s, line) => s + Number(line.proceeds ?? 0), 0);
+  // The weight those proceeds were struck on. Both halves of the average come
+  // from sale_lines, so it is a true weighted average price per kg SOLD —
+  // dividing sold money by the whole sale's weight (unsold and shutout tea
+  // included) is not an average price, and never matches the broker's.
+  const soldNetKg = lineRows.reduce((s, line) => s + Number(line.net_wt ?? 0), 0);
   const totalVat = lineRows.reduce((s, line) => s + Number(line.vat_amount ?? 0), 0);
   const guaranteeLots = lineRows.filter((line) => line.on_guarantee).length;
 
@@ -352,7 +395,17 @@ export default async function SaleDetailPage({
   const totalRevenue = settlements.reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0);
   const bankCredit = settlements.reduce((sum, row) => sum + Number(row.total_net_proceeds ?? 0), 0);
   const reprintsSoldCount = lotRows.filter((lot) => lot.reprint_source_lot_id && soldLotIds.has(lot.id)).length;
-  const notSoldCount = lotRows.filter((lot) => lot.unsold).length;
+  // Broker + sale: a sold lot for the same broker in the same sale is what
+  // makes "did not sell" knowable for anything of theirs still valued.
+  const brokerBySaleId = new Map(allDispatchRows.map((d) => [d.id, d.broker_id]));
+  const saleNoBySaleId = new Map(allDispatchRows.map((d) => [d.id, d.target_sale_no ?? d.sale_no]));
+  const groupOf = (lot: LotRow) => brokerSaleKey(brokerBySaleId.get(lot.sale_id), saleNoBySaleId.get(lot.sale_id));
+  const soldGroups = soldBrokerSaleKeys(allLotRows.map((lot) => ({
+    state: lot.state,
+    brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
+    saleNo: saleNoBySaleId.get(lot.sale_id) ?? null,
+  })));
+  const notSoldCount = lotRows.filter((lot) => isUnsoldLot(lot, soldGroups.has(groupOf(lot)))).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold"]);
   const soldCount = soldLotIds.size;
@@ -544,10 +597,12 @@ export default async function SaleDetailPage({
             the broker's deductions. VAT is charged to the buyer on top of
             this, never taken out of it (docs/AUCTION.md section 1). */}
         <DetailField label="Total proceeds (before VAT)" value={`LKR ${money(totalProceeds)}`} />
-        {/* Average hammer price per kg offered: proceeds ÷ total kg to sale. */}
+        {/* Average hammer price of the tea that SOLD: proceeds ÷ the weight
+            those proceeds were struck on. Both sides cover the same lots, so
+            it is comparable with the broker's own average. */}
         <DetailField
-          label="Average/kg"
-          value={totalNetKg === 0 ? "—" : `LKR ${money(totalProceeds / totalNetKg)}`}
+          label="Average/kg (sold)"
+          value={soldNetKg === 0 ? "—" : `LKR ${money(totalProceeds / soldNetKg)}`}
         />
         {/* Sold lots against their OWN valuation — the counts are on both
             labels because the two populations differ whenever a lot is
@@ -569,10 +624,14 @@ export default async function SaleDetailPage({
           label="Total revenue"
           value={settlements.length === 0 ? "—" : `LKR ${money(totalRevenue)}`}
         />
-        {/* Revenue kept per kg offered: revenue ÷ total kg to sale. */}
+        {/* Revenue kept per kg SOLD. net_proceeds is what the sold tea earned
+            after the broker's charges, so the same lots must be on both sides —
+            exactly as for Average/kg above. Tea that did not sell earned
+            nothing and had nothing deducted; including its weight measures
+            neither the price achieved nor the cost of achieving it. */}
         <DetailField
-          label="Revenue/kg"
-          value={settlements.length === 0 || totalNetKg === 0 ? "—" : `LKR ${money(totalRevenue / totalNetKg)}`}
+          label="Revenue/kg (sold)"
+          value={settlements.length === 0 || soldNetKg === 0 ? "—" : `LKR ${money(totalRevenue / soldNetKg)}`}
         />
         {/* The literal credit on prompt date. It is net proceeds PLUS the
             output VAT the broker collected, so it is larger than what the
