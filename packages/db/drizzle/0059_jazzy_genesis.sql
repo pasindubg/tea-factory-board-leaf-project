@@ -1,0 +1,1 @@
+ALTER TABLE "doc_imports" ADD COLUMN "printed_net_proceeds" numeric(14, 2);

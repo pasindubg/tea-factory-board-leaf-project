@@ -24,6 +24,9 @@
     "test:contract": "tsx src/auction/parse-contract.test.ts",
     "test:dispatch-sheet": "tsx src/auction/parse-dispatch-sheet.test.ts",
     "test:recon-vocab": "tsx src/auction/recon-vocabulary.test.ts",
+    "test:validate-revenue": "tsx src/auction/validate-revenue.test.ts",
+    "test:printed-settlement": "tsx src/auction/printed-settlement.test.ts",
+    "test:settlement-balance": "tsx src/auction/settlement-balance.test.ts",
     "test:corpus": "tsx src/auction/corpus.test.ts",
     "corpus:build": "tsx scripts/build-corpus.mts"
   },

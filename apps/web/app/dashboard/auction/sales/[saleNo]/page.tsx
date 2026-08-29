@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { reconcileValuation } from "@tea/api";
+import { loadSaleRevenueCheck } from "../../_actions/revenue-check";
 import {
   DetailField,
   DetailRecordPanel,
@@ -8,7 +9,7 @@ import { EntityListTabs } from "@/components/entity-list";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { applyServerListSearch } from "@/lib/list-search-state";
-import { brokerSaleKey, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "../../state-buckets";
+import { brokerSaleKey, isNotValuedLot, isUnsoldLot, soldBrokerSaleKeys, stateBucket, valuedBrokerSaleKeys } from "../../state-buckets";
 import { brokerInvoiceRank } from "../../dispatch-status";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../../sale-number";
 import { money } from "../../format";
@@ -393,8 +394,19 @@ export default async function SaleDetailPage({
   // Contract itself (see parseContractRates).
   const totalDeductions = settlements.reduce((sum, row) => sum + Number(row.total_deductions ?? 0), 0);
   const totalRevenue = settlements.reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0);
+  // Re-validation: our recomputed revenue against what the brokers' contracts
+  // actually printed. Only meaningful once every contract for the sale is in.
+  const revenueCheck = await loadSaleRevenueCheck(supabase, profile.factory_id, [...dispatchIds], totalRevenue);
   const bankCredit = settlements.reduce((sum, row) => sum + Number(row.total_net_proceeds ?? 0), 0);
-  const reprintsSoldCount = lotRows.filter((lot) => lot.reprint_source_lot_id && soldLotIds.has(lot.id)).length;
+  // The `reprint` flag and nothing else. Keying on the source link counted
+  // skipped sales too — they used to share that column — and reported
+  // "Re-prints sold: 3" on a sale holding no re-prints at all.
+  // The warning chips describe the lots the Sale lines table LISTS, which
+  // keeps lots that skipped away to a later sale. Counting them over `lotRows`
+  // (money/weight totals, skipped lots excluded) silently hid a shutout and
+  // not-valued lot from the chips while the table showed it.
+  const issueLotRows = saleLotRows;
+  const reprintsSoldCount = issueLotRows.filter((lot) => lot.reprint && soldLotIds.has(lot.id)).length;
   // Broker + sale: a sold lot for the same broker in the same sale is what
   // makes "did not sell" knowable for anything of theirs still valued.
   const brokerBySaleId = new Map(allDispatchRows.map((d) => [d.id, d.broker_id]));
@@ -405,7 +417,13 @@ export default async function SaleDetailPage({
     brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
     saleNo: saleNoBySaleId.get(lot.sale_id) ?? null,
   })));
-  const notSoldCount = lotRows.filter((lot) => isUnsoldLot(lot, soldGroups.has(groupOf(lot)))).length;
+  const notSoldCount = issueLotRows.filter((lot) => isUnsoldLot(lot, soldGroups.has(groupOf(lot)))).length;
+  const valuedGroups = valuedBrokerSaleKeys(allLotRows.map((lot) => ({
+    state: lot.state,
+    brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
+    saleNo: saleNoBySaleId.get(lot.sale_id) ?? null,
+  })));
+  const notValuedCount = issueLotRows.filter((lot) => isNotValuedLot(lot, valuedGroups.has(groupOf(lot)))).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
   const valuedCount = lotCount(lotRows, ["valued", "sold"]);
   const soldCount = soldLotIds.size;
@@ -443,12 +461,13 @@ export default async function SaleDetailPage({
       metric: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
     },
   ];
-  const flagCount = (flag: keyof LotRow) => lotRows.filter((lot) => lot[flag]).length;
+  const flagCount = (flag: keyof LotRow) => issueLotRows.filter((lot) => lot[flag]).length;
   const issueSteps = [
-    { label: "Not Valued", count: flagCount("not_valued") },
+    { label: "Not Valued", count: notValuedCount },
     { label: "Shutout", count: flagCount("shutout") },
     { label: "Withdrawn", count: flagCount("withdrawn") },
     { label: "Not sold", count: notSoldCount },
+    { label: "Re-print lots", count: flagCount("reprint") },
     { label: "Re-prints sold", count: reprintsSoldCount },
     { label: "Missing", count: flagCount("missing") },
   ].filter((item) => item.count > 0);
@@ -566,8 +585,8 @@ export default async function SaleDetailPage({
         description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${notSoldCount} not sold`}
         contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
         footer={
-          issueSteps.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
+          issueSteps.length > 0 || revenueCheck.status !== "pending" && revenueCheck.status !== "unavailable" ? (
+            <div className="flex flex-wrap items-center gap-2">
               {issueSteps.map((item) => (
                 <span
                   key={item.label}
@@ -576,6 +595,37 @@ export default async function SaleDetailPage({
                   {item.label}: {item.count}
                 </span>
               ))}
+              {/* Re-validation against the brokers' own sellers contracts. Shown
+                  only once every contract for the sale is confirmed — see
+                  validateSaleRevenue. */}
+              {revenueCheck.status === "tallied" && (
+                <span
+                  data-testid="revenue-tallied"
+                  title={`Total revenue LKR ${money(revenueCheck.computed)} matches the net proceeds printed on ${revenueCheck.documents} sellers contract(s).`}
+                  className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
+                >
+                  ✓ Tallied with {revenueCheck.documents} sellers contract{revenueCheck.documents === 1 ? "" : "s"}
+                </span>
+              )}
+              {revenueCheck.status === "tallied-on-printed-insurance" && (
+                <span
+                  data-testid="revenue-tallied-insurance"
+                  title={`Every other charge agrees. The contract charges LKR ${money(revenueCheck.printedInsurance)} insurance where this sale calculates LKR ${money(revenueCheck.computedInsurance)}.`}
+                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                >
+                  Tallied — insurance differs by LKR {money(Math.abs(revenueCheck.insuranceDifference))}
+                </span>
+              )}
+              {revenueCheck.status === "mismatch" && (
+                <span
+                  data-testid="revenue-mismatch"
+                  title={`Ours LKR ${money(revenueCheck.computed)} vs the contracts' LKR ${money(revenueCheck.printed)}.`}
+                  className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-300"
+                >
+                  ⚠ Off the sellers contracts by LKR {money(Math.abs(revenueCheck.difference))}
+                  {revenueCheck.difference > 0 ? " (we are higher)" : " (we are lower)"}
+                </span>
+              )}
             </div>
           ) : undefined
         }

@@ -266,7 +266,10 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       gross_wt: candidate.gross_wt,
       sample_allowance: candidate.sample_allowance,
       net_wt: candidate.net_wt ?? row.net_wt,
-      reprint_source_lot_id: candidate.id,
+      // Each kind links through its OWN column. Sharing one made every
+      // re-print count include skipped sales.
+      reprint_source_lot_id: skippedSale ? null : candidate.id,
+      skipped_source_lot_id: skippedSale ? candidate.id : null,
       reprint: outcome.isReprint,
       // The destination row is flagged, but carries no number: it IS the sale
       // the lot was finally acknowledged in.
@@ -665,8 +668,13 @@ export async function confirmContract(importId: string, saleId: string) {
           documentation_per_lot: parsed.rates.documentationPerLot ?? 0,
           eplatform_per_kg: parsed.rates.eplatformPerKg ?? 0,
           govt_relief_loan: 0,
-          charges_vat_pct: parsed.rates.chargesVatPct ?? 18,
-          proceeds_vat_pct: parsed.rates.proceedsVatPct ?? 18,
+          // No `?? 18`. A VAT rate is not something to assume from the rate
+          // that happened to be current when this was written — if a contract
+          // ever stops stating it, storing a guess would silently mis-settle
+          // every sale for that broker. Zero is visibly wrong instead, and
+          // contractRateDifferences puts it in front of a human.
+          charges_vat_pct: parsed.rates.chargesVatPct ?? 0,
+          proceeds_vat_pct: parsed.rates.proceedsVatPct ?? 0,
         })
         .select("*")
         .maybeSingle();
@@ -675,7 +683,7 @@ export async function confirmContract(importId: string, saleId: string) {
         await writeAudit(supabase, profile.factory_id, {
           saleId,
           action: "Broker rate card created",
-          detail: `Deduction rates were taken from the Sellers Contract: brokerage ${(parsed.rates.brokeragePct ?? 0).toFixed(2)}%, insurance Rs.${(parsed.rates.insurancePerKg ?? 0)}/kg, handling Rs.${(parsed.rates.handlingPerKg ?? 0)}/kg, public sale expenses Rs.${(parsed.rates.publicSaleExPerLot ?? 0)}/lot, documentation Rs.${(parsed.rates.documentationPerLot ?? 0)}/lot, e-platform Rs.${(parsed.rates.eplatformPerKg ?? 0)}/kg, charges VAT ${(parsed.rates.chargesVatPct ?? 18)}%.`,
+          detail: `Deduction rates were taken from the Sellers Contract: brokerage ${(parsed.rates.brokeragePct ?? 0).toFixed(2)}%, insurance Rs.${(parsed.rates.insurancePerKg ?? 0)}/kg, handling Rs.${(parsed.rates.handlingPerKg ?? 0)}/kg, public sale expenses Rs.${(parsed.rates.publicSaleExPerLot ?? 0)}/lot, documentation Rs.${(parsed.rates.documentationPerLot ?? 0)}/lot, e-platform Rs.${(parsed.rates.eplatformPerKg ?? 0)}/kg, charges VAT ${(parsed.rates.chargesVatPct ?? 0)}%.`,
           reason: "No rate card existed for this broker; the contract is the source of truth for its charges.",
           actor: profile.name,
         });
@@ -707,11 +715,19 @@ export async function confirmContract(importId: string, saleId: string) {
       const uniqueContracts = [...new Map(parsed.contracts.map((c) => [c.contractNo, c])).values()];
       const computed = uniqueContracts.map((c) => {
         const contractLines = soldLines.filter((l) => l.contractNo === c.contractNo);
+        // EVERY line on the contract, sold or not. Both brokers charge
+        // handling, insurance and public sale expenses on the unsold tea as
+        // well — they received, weighed, stored and entered it — while
+        // brokerage, documentation and the e-platform charge apply only to
+        // what sold.
+        const allContractLines = parsed.lines.filter((l) => l.contractNo === c.contractNo);
         const proceedsTotal = contractLines.reduce((s, l) => s + l.proceeds, 0);
         const s = computeSettlement(rates, {
           contractNo: c.contractNo,
           netKg: contractLines.reduce((sum, l) => sum + l.netWt, 0),
+          handlingKg: allContractLines.reduce((sum, l) => sum + l.netWt, 0),
           lotCount: contractLines.length,
+          chargedLots: allContractLines.length,
           proceedsTotal,
         });
         return { contractNo: c.contractNo, proceedsTotal, s };
@@ -803,7 +819,15 @@ export async function confirmContract(importId: string, saleId: string) {
     .in("id", [...settledSales]);
   await supabase
     .from("doc_imports")
-    .update({ parsed_json: parsed, status: "confirmed", confirmed_at: new Date().toISOString() })
+    .update({
+      parsed_json: parsed,
+      status: "confirmed",
+      confirmed_at: new Date().toISOString(),
+      // The broker's own Net Proceeds, kept alongside the document so the sale
+      // can be re-validated against it later without re-parsing the PDF.
+      printed_net_proceeds: parsed.printedNetProceeds == null ? null : parsed.printedNetProceeds.toFixed(2),
+      printed_insurance: parsed.printedInsurance == null ? null : parsed.printedInsurance.toFixed(2),
+    })
     .eq("id", importId);
   revalidatePath(detail);
   revalidatePath(`${AUC}/reprints`);

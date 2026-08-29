@@ -15,6 +15,7 @@ export * from "./auction/read-xlsx";
 export * from "./auction/parse-dispatch-sheet";
 export * from "./auction/reconcile-valuation";
 export * from "./auction/compute-settlement";
+export * from "./auction/validate-revenue";
 export * from "./auction/reconcile-vat";
 export * from "./auction/parse-bank-csv";
 export * from "./auction/reconcile-bank";

@@ -44,6 +44,19 @@ export async function AckContent({
   // The ack is the broker's statement for the WHOLE sale — reconcile against
   // every dispatch in this sale's group, not just the one being reviewed.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  // The sale this document belongs to is the one it was uploaded against, not
+  // whatever its header appears to say — an Asia Siyaka acknowledgement prints
+  // no sale number at all, and reading one out of the text produced "27" for
+  // seven different sales. Same view confirmAcknowledgement takes when it
+  // stamps lots.
+  const { data: ackSale } = await supabase
+    .from("auction_sales")
+    .select("sale_no, target_sale_no")
+    .eq("id", saleId)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  const documentSaleNo =
+    formatSaleNo((ackSale?.target_sale_no as string | null) || (ackSale?.sale_no as string | null)) || null;
   const { data: lotRows } = await supabase
     .from("auction_lots")
     .select("id, sale_id, invoice_no, grade, net_wt, sample_allowance, state, lot_no, lot_source, reprint, reprint_registered, marks(code), lot_invoices(invoice_no)")
@@ -299,7 +312,7 @@ export async function AckContent({
       <div>
         <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ① — invoice ↔ acknowledgement</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          sale {parsed.saleNo ?? "—"} · sale date {parsed.saleDate ?? "—"}
+          sale {documentSaleNo ?? formatSaleNo(parsed.saleNo) ?? "—"} · sale date {parsed.saleDate ?? "—"}
         </p>
       </div>
 

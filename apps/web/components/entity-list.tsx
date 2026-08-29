@@ -447,6 +447,7 @@ function LiveEntityList<Key extends ListResourceKey>(props: LiveEntityListProps<
   const data = useFrameworkListData({
     initialRows: props.initialRows,
     resource: props.resource,
+    autoRefresh: !props.sideList,
   });
   const meta = ENTITY_LIST_METADATA[props.resource.key];
 
@@ -605,6 +606,19 @@ function EntityListPanel<Row>({
   // `sideList` is an object prop with a fresh identity every render, so the
   // observer effect below may only depend on whether one is present.
   const hasSideList = Boolean(sideList);
+
+  // Rails remount on every record click, so the browser hands them back
+  // scrolled to the top. Keep each rail's own offset across those remounts.
+  const sideScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sideScrollRef.current;
+    if (!node) return;
+    const key = `list-side-scroll:${scope}`;
+    node.scrollTop = Number(sessionStorage.getItem(key) ?? 0);
+    const save = () => sessionStorage.setItem(key, String(node.scrollTop));
+    node.addEventListener("scroll", save, { passive: true });
+    return () => node.removeEventListener("scroll", save);
+  }, [scope, hasSideList]);
 
   // List mode fits the viewport, so it has to know how wide the viewport is.
   useEffect(() => {
@@ -952,7 +966,7 @@ function EntityListPanel<Row>({
       {(summary ?? beforeTable)?.(rows)}
       <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
       {sideList ? (
-        <div className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
+        <div ref={sideScrollRef} className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {
             const id = getId(row);
             const active = sideList.isActive?.(row) ?? false;

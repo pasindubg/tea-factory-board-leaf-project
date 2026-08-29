@@ -109,3 +109,34 @@ export function soldBrokerSaleKeys(
     lots.filter((lot) => lot.state === "sold").map((lot) => brokerSaleKey(lot.brokerId, lot.saleNo)),
   );
 }
+
+/**
+ * Broker+sale groups that have moved past `acknowledged` — a valuation or a
+ * contract has landed for them.
+ */
+export function valuedBrokerSaleKeys(
+  lots: readonly { state?: string | null; brokerId: string | null; saleNo: string | null }[],
+): Set<string> {
+  return new Set(
+    lots
+      .filter((lot) => lot.state === "valued" || lot.state === "sold")
+      .map((lot) => brokerSaleKey(lot.brokerId, lot.saleNo)),
+  );
+}
+
+/**
+ * Was this lot left out of the valuation? Same shape as `isUnsoldLot`: the lot
+ * is still `acknowledged` while its broker+sale group has moved on to `valued`
+ * or `sold`, so the valuation for that group came and went without it.
+ *
+ * Derived on every read, never stored. A stored flag went stale the moment the
+ * contract later sold the lot, and the sale page then reported lots as "Not
+ * Valued" that had been valued and sold weeks earlier.
+ */
+export function isNotValuedLot(
+  lot: { state?: string | null },
+  groupHasValued: boolean,
+): boolean {
+  return lot.state === "acknowledged" && groupHasValued;
+}
+

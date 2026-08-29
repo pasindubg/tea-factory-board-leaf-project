@@ -8,7 +8,7 @@ import { isListResourceKey, type BackgroundJobListRow, type ListResourceKey, typ
 import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
-import { brokerSaleKey, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "@/app/dashboard/auction/state-buckets";
+import { brokerSaleKey, isNotValuedLot, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "@/app/dashboard/auction/state-buckets";
 import { DOC_TYPE_LABELS, docStatus, computeActiveDocumentIds, type AuctionDocType } from "@/app/dashboard/auction/doc-status";
 import { ALL_WEB_ROLES, PAGE_DEFINITIONS, roleMayPerformPageAction, type Role } from "@/lib/roles";
 import { dayRange } from "@/lib/dates";
@@ -102,6 +102,7 @@ type RefreshLotRow = {
   net_wt: number | string | null;
   state: string | null;
   reprint_source_lot_id: string | null;
+  skipped_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
   marks: { code: string; name: string | null } | null;
 } & LotFlagColumns;
@@ -135,6 +136,7 @@ type RefreshInvoiceOverviewLot = {
   net_wt: number | string | null;
   state: string | null;
   reprint_source_lot_id: string | null;
+  skipped_source_lot_id: string | null;
   marks: { code: string; name: string | null } | null;
   lot_invoices: { invoice_no: string }[] | null;
   auction_sales: {
@@ -212,14 +214,20 @@ function groupIntoReprintChains<T extends { id: string; reprint_source_lot_id: s
  * Is this lot a re-print? The stored flag is the authority and always wins — a
  * lot can be a re-print AND a skipped sale (offered, unsold, then catalogued
  * several sales later). The `reprint_source_lot_id` fallback covers rows that
- * predate the flag, but a skipped-sale pair uses that same link to tie the two
- * sales together, so there it explains nothing about re-printing.
+ * predate the flag; a skipped sale now links through `skipped_source_lot_id`
+ * instead, so this link means re-print and nothing else.
  */
-function isReprintRow(lot: { reprint?: boolean | null; reprint_source_lot_id?: string | null; skipped_sale?: boolean | null }): boolean {
-  if (lot.reprint) return true;
-  if (lot.skipped_sale) return false;
-  return Boolean(lot.reprint_source_lot_id);
+function isReprintRow(lot: { reprint?: boolean | null; reprint_source_lot_id?: string | null }): boolean {
+  return Boolean(lot.reprint) || Boolean(lot.reprint_source_lot_id);
 }
+
+/**
+ * The row this one continues from, whichever way it got here — a re-print
+ * chain or a skipped sale. "Previous sale" and "Next sale" ask about lineage,
+ * not about which of the two it was.
+ */
+const sourceLotId = (lot: { reprint_source_lot_id?: string | null; skipped_source_lot_id?: string | null }) =>
+  lot.reprint_source_lot_id ?? lot.skipped_source_lot_id ?? null;
 
 function reprintCountsByLotId(lots: readonly { id: string; reprint_source_lot_id: string | null; unsold?: boolean | null; reprint?: boolean | null }[]): Map<string, number> {
   const chains = groupIntoReprintChains(lots);
@@ -1011,12 +1019,12 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select("id, sale_id, provisional_sale_no, final_sale_no, state, unsold"),
+          .select("id, sale_id, provisional_sale_no, final_sale_no"),
       ]);
       if (dispatchError || lotError) return { ok: false, error: friendlyError(dispatchError ?? lotError) };
 
       type DispatchRow = { id: string; sale_no: string; target_sale_no: string | null; sale_date: string | null; status: string; entry_source: string | null; brokers: { name: string } | null };
-      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null; state: string | null; unsold: boolean | null };
+      type LotRow = { id: string; sale_id: string; provisional_sale_no: string | null; final_sale_no: string | null };
       const dispatchRows = (dispatches ?? []) as unknown as DispatchRow[];
       const lotRows = (lots ?? []) as unknown as LotRow[];
       const dispatchById = new Map(dispatchRows.map((dispatch) => [dispatch.id, dispatch]));
@@ -1049,15 +1057,10 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         const key = formatSaleNo(saleNoKey(dispatch.target_sale_no || dispatch.sale_no));
         if (key) addSummary(key, dispatch);
       }
-      const unsoldSaleNos = new Set<string>();
       for (const lot of lotRows) {
         const dispatch = dispatchById.get(lot.sale_id);
         const key = formatSaleNo(saleNoKey(lot.final_sale_no || lot.provisional_sale_no));
         if (dispatch && key) addSummary(key, dispatch);
-        if (lot.unsold && !lot.final_sale_no) {
-          const printedFor = formatSaleNo(saleNoKey(lot.provisional_sale_no));
-          if (printedFor) unsoldSaleNos.add(printedFor);
-        }
       }
 
       return {
@@ -1070,7 +1073,6 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
             saleDate: sale.saleDate,
             statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
-            hasUnsold: unsoldSaleNos.has(sale.saleNo),
             // The sale exists only to hold re-prints: every broker invoice under
             // it was opened by the re-print register, never dispatched.
             reprintRegister: [...sale.entrySources].every((source) => source === "reprint-register"),
@@ -1182,7 +1184,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: lots, error: lotError }, { data: thresholds, error: thresholdError }] = await Promise.all([
         supabase
           .from("auction_lots")
-          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, skipped_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
           .eq("sale_id", saleId)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
@@ -1198,18 +1200,24 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       // invoices in one sale, and its contract settles them together. One
       // answer serves every lot here, since they share both.
       const invoiceSaleNo = (brokerInvoice.target_sale_no as string | null) || (brokerInvoice.sale_no as string | null);
-      const { data: soldForBroker } = await supabase
+      const { data: advancedForBroker } = await supabase
         .from("auction_lots")
-        .select("id, auction_sales!inner(broker_id, sale_no, target_sale_no)")
+        .select("id, state, auction_sales!inner(broker_id, sale_no, target_sale_no)")
         .eq("factory_id", profile.factory_id)
-        .eq("state", "sold")
+        .in("state", ["valued", "sold"])
         .eq("auction_sales.broker_id", brokerInvoice.broker_id as string);
       const wantedGroup = brokerSaleKey(brokerInvoice.broker_id as string | null, invoiceSaleNo);
-      const anySoldHere = ((soldForBroker ?? []) as unknown as {
+      const inWantedGroup = ((advancedForBroker ?? []) as unknown as {
+        state: string | null;
         auction_sales: { broker_id: string | null; sale_no: string | null; target_sale_no: string | null } | null;
-      }[]).some((lot) =>
+      }[]).filter((lot) =>
         brokerSaleKey(lot.auction_sales?.broker_id, lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no) === wantedGroup,
       );
+      const anySoldHere = inWantedGroup.some((lot) => lot.state === "sold");
+      // The same question one rung lower: has a valuation landed for this
+      // broker's sale at all? Anything still `acknowledged` once it has was
+      // left out of it.
+      const anyValuedHere = inWantedGroup.length > 0;
 
       const thresholdByGrade = new Map<string, { minNetKg: number; applies: boolean }>();
       for (const threshold of (thresholds ?? []) as unknown as {
@@ -1247,7 +1255,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             unsold: isUnsoldLot(lot, anySoldHere),
             reprint: isReprintRow(lot),
             withdrawn: Boolean(lot.withdrawn),
-            not_valued: Boolean(lot.not_valued),
+            not_valued: isNotValuedLot(lot, anyValuedHere),
             missing: Boolean(lot.missing),
             settled: Boolean(lot.settled),
             lot_source: lot.lot_source,
@@ -1271,15 +1279,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, provisional_sale_no, final_sale_no, created_at, ` +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, skipped_source_lot_id, provisional_sale_no, final_sale_no, created_at, ` +
             "lot_invoices(invoice_no), sale_lines(net_wt, price_per_kg), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, entry_source, brokers(name))",
         )
-        // A genuine re-print always carries `unsold` or `reprint`, and belongs
-        // here even when it also skipped a sale. The source-link arm is the
-        // pre-flag fallback — excluded when a skipped-sale pair is what put the
-        // link there, since nothing in that pair was offered and left unsold.
-        .or("unsold.is.true,reprint.is.true,and(reprint_source_lot_id.not.is.null,skipped_sale.is.false)")
+        // A genuine re-print always carries `unsold` or `reprint`. The
+        // source-link arm is the pre-flag fallback; a skipped sale links
+        // through `skipped_source_lot_id` and so never reaches this page.
+        .or("unsold.is.true,reprint.is.true,reprint_source_lot_id.not.is.null")
         .order("created_at");
       if (error) return { ok: false, error: friendlyError(error) };
       return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
@@ -1297,7 +1304,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, created_at, ` +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, brokers(name), marks(code, name))",
         )
@@ -1316,6 +1323,23 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         saleNo: lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no ?? null,
       })));
 
+      // The LATEST sale each invoice reached. An invoice appears once per sale
+      // it has been through — a re-print or a skipped sale leaves the earlier
+      // rows behind as history — so "active" is simply the row with the highest
+      // sale number for that invoice. Keyed on the lot's own stored number
+      // (four-digit padded, prefix intact: the index cycle is part of an
+      // invoice's identity), not the displayed string, which can be a
+      // comma-joined list of aliases. Same sale number twice means both rows
+      // are current, which is what an operator would expect to see.
+      const saleRank = (lot: RefreshInvoiceOverviewLot) =>
+        Number(saleNoKey(lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no)) || 0;
+      const latestSaleByInvoice = new Map<string, number>();
+      for (const lot of lots) {
+        const key = formatFourDigitNo(lot.invoice_no);
+        if (!key) continue;
+        latestSaleByInvoice.set(key, Math.max(latestSaleByInvoice.get(key) ?? 0, saleRank(lot)));
+      }
+
       // "Next sale" is the sale a re-printed lot rolls into. Nothing records it
       // on the lot itself — the link is the child lot created in the next
       // broker invoice, pointing back via reprint_source_lot_id. Every lot in
@@ -1323,9 +1347,10 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       // here rather than with a second query.
       const nextSaleByParent = new Map<string, string>();
       for (const child of lots) {
-        if (!child.reprint_source_lot_id) continue;
+        const parentId = sourceLotId(child);
+        if (!parentId) continue;
         const childSaleNo = formatSaleNo(child.auction_sales?.target_sale_no ?? null);
-        if (childSaleNo) nextSaleByParent.set(child.reprint_source_lot_id, childSaleNo);
+        if (childSaleNo) nextSaleByParent.set(parentId, childSaleNo);
       }
       const lotById = new Map(lots.map((lot) => [lot.id, lot]));
 
@@ -1358,14 +1383,17 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             saleNo: formatSaleNo(invoice?.target_sale_no ?? null) || null,
             allWeight: gross > 0 ? gross : null,
             nextSaleNo: nextSaleByParent.get(lot.id) ?? null,
-            previousSaleNo: lot.reprint_source_lot_id
-              ? formatSaleNo(lotById.get(lot.reprint_source_lot_id)?.auction_sales?.target_sale_no ?? null) || null
+            previousSaleNo: sourceLotId(lot)
+              ? formatSaleNo(lotById.get(sourceLotId(lot)!)?.auction_sales?.target_sale_no ?? null) || null
               : null,
             broker: invoice?.brokers?.name ?? "—",
             sellingMark: markLabel(invoice?.marks ?? null) ?? "—",
             dispatchDate: invoice?.dispatch_date ?? null,
             saleDate: invoice?.sale_date ?? null,
             biStatus: invoice?.status ?? "",
+            // This row is the invoice's current position; any other row for it
+            // is an earlier sale kept as history.
+            activeInvoice: saleRank(lot) === latestSaleByInvoice.get(formatFourDigitNo(lot.invoice_no)),
           };
         }),
       };
@@ -1560,7 +1588,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
       ]);
@@ -1643,7 +1671,8 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         rows: lotRows.map((lot) => {
           const line = lineByLotId.get(lot.id);
           const dispatch = dispatchById.get(lot.sale_id);
-          const parentLot = lot.reprint_source_lot_id ? lotById.get(lot.reprint_source_lot_id) : undefined;
+          const parentId = sourceLotId(lot);
+          const parentLot = parentId ? lotById.get(parentId) : undefined;
           // The sale that last catalogued the parent lot. The lot's own
           // final/provisional number is the authority — the same pair the sale
           // filter above uses — with the parent dispatch's target as backstop.

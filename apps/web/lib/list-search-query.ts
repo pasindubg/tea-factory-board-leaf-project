@@ -1,4 +1,5 @@
 import "server-only";
+import { hasOrBranches, splitAdvancedQueryGroups } from "./list-query-groups";
 
 /**
  * Generic server-side search/pagination for framework list resources. One
@@ -99,6 +100,9 @@ type QueryBuilder = {
   gte(column: string, value: unknown): QueryBuilder;
   lt(column: string, value: unknown): QueryBuilder;
   lte(column: string, value: unknown): QueryBuilder;
+  neq(column: string, value: unknown): QueryBuilder;
+  /** PostgREST negation: `.not(col, "ilike", "%x%")`. */
+  not(column: string, operator: string, value: unknown): QueryBuilder;
   or(filters: string): QueryBuilder;
   range(from: number, to: number): QueryBuilder;
 };
@@ -126,6 +130,17 @@ export function tokeniseAdvancedQuery(query: string): string[] {
 }
 
 /**
+ * `key<op>value`, with the longer operators first so `!=` is not read as a key
+ * ending in `!`. Must stay in step with the browser-side pattern in
+ * list-controls.tsx: the panel filters what you can see, this filters what the
+ * server will return, and the two disagreeing is a wrong answer, not a slow one.
+ *
+ * Keys here are column keys only — the panel rewrites labels to keys before the
+ * query is ever sent (canonicaliseAdvancedQuery).
+ */
+const ADVANCED_TOKEN = /^([a-zA-Z0-9_]+)(>=|<=|!=|!:|=|>|<|:)(.+)$/;
+
+/**
  * Embedded tables that currently carry a filter, and therefore must be joined
  * with `!inner` so non-matching parent rows are excluded rather than returned
  * with a nulled embed. Only matters for nullable relationships; a NOT NULL FK
@@ -141,10 +156,16 @@ export function activeEmbeds(
     const embed = config.columns?.[key]?.embed;
     if (embed && (value ?? "").trim()) active.add(embed);
   }
-  for (const token of tokeniseAdvancedQuery(advancedQuery ?? "")) {
-    const key = token.match(/^([a-zA-Z0-9_]+)(?:>=|<=|=|>|<|:)/)?.[1];
-    const embed = key ? config.columns?.[key]?.embed : undefined;
-    if (embed) active.add(embed);
+  // An OR query pushes nothing into SQL (see applyAdvancedQuery), so nothing
+  // needs `!inner` on its account — and forcing it would EXCLUDE rows whose
+  // nullable embed is empty, narrowing the result for a filter that was never
+  // applied.
+  if (!hasOrBranches(advancedQuery)) {
+    for (const token of tokeniseAdvancedQuery(advancedQuery ?? "")) {
+      const key = token.match(/^([a-zA-Z0-9_]+)(?:>=|<=|!=|!:|=|>|<|:)/)?.[1];
+      const embed = key ? config.columns?.[key]?.embed : undefined;
+      if (embed) active.add(embed);
+    }
   }
   return active;
 }
@@ -165,6 +186,12 @@ export function embedSelect(select: string, embeds: Set<string>): string {
  */
 export function applyAdvancedQuery<Q>(query: Q, advancedQuery: string | null | undefined, config: ResourceSearchConfig): Q {
   if (!advancedQuery?.trim()) return query;
+  // An OR query is deliberately NOT pushed down. Every term here is ANDed onto
+  // the request, so pushing one branch would exclude rows the other branch
+  // should have returned — a wrong answer, not a slow one. The row-level filter
+  // enforces the whole expression instead; it sees the same query and is the
+  // authority for computed columns anyway.
+  if (hasOrBranches(advancedQuery)) return query;
   let result = query as unknown as QueryBuilder;
   // A bare token OR-matches across the explicitly declared non-embedded
   // columns. Embedded columns are excluded because PostgREST's top-level `or`
@@ -174,14 +201,16 @@ export function applyAdvancedQuery<Q>(query: Q, advancedQuery: string | null | u
   const columns = Object.values(config.columns ?? {}).filter((c) => !c.embed).map((c) => c.column);
 
   for (const token of tokeniseAdvancedQuery(advancedQuery)) {
-    const match = token.match(/^([a-zA-Z0-9_]+)(>=|<=|=|>|<|:)(.+)$/);
+    const match = token.match(ADVANCED_TOKEN);
     if (match) {
       const [, key, op, rawValue] = match;
       const target = resolveSearchColumn(key, config);
       const value = sanitizeSearchValue(rawValue);
       if (target && value) {
         if (op === ":") result = result.ilike(target.column, `%${value}%`);
+        else if (op === "!:") result = result.not(target.column, "ilike", `%${value}%`);
         else if (op === "=") result = result.eq(target.column, value);
+        else if (op === "!=") result = result.neq(target.column, value);
         else if (!Number.isNaN(Number(value))) {
           const num = Number(value);
           result =
@@ -257,21 +286,26 @@ export function filterRowsByCriteria<Row>(rows: Row[], criteria: ListSearchCrite
  * `filterRowsByCriteria` already does for locked column criteria.
  */
 export function filterRowsByAdvancedQuery<Row>(rows: Row[], advancedQuery: string | null | undefined): Row[] {
-  const tokens = tokeniseAdvancedQuery((advancedQuery ?? "").trim());
-  if (tokens.length === 0) return rows;
-  return rows.filter((row) => tokens.every((token) => matchesRowToken(row, token)));
+  const branches = splitAdvancedQueryGroups(advancedQuery).map(tokeniseAdvancedQuery);
+  if (branches.length === 0) return rows;
+  // A row survives if ANY `|` branch matches; within a branch every term must.
+  return rows.filter((row) =>
+    branches.some((tokens) => tokens.every((token) => matchesRowToken(row, token))),
+  );
 }
 
 function matchesRowToken(row: unknown, token: string): boolean {
   const record = row as Record<string, unknown>;
-  const match = token.match(/^([a-zA-Z0-9_]+)(>=|<=|=|>|<|:)(.+)$/);
+  const match = token.match(ADVANCED_TOKEN);
   if (match) {
     const [, key, op, rawValue] = match;
     if (Object.hasOwn(record, key)) {
       const raw = record[key];
       const value = rawValue.trim();
       if (op === ":") return rowContains(raw, value.toLowerCase());
+      if (op === "!:") return !rowContains(raw, value.toLowerCase());
       if (op === "=") return rowEquals(raw, value.toLowerCase());
+      if (op === "!=") return !rowEquals(raw, value.toLowerCase());
       const left = Number(raw);
       const right = Number(value);
       if (Number.isNaN(left) || Number.isNaN(right)) return false;

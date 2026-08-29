@@ -33,6 +33,34 @@ function ok(label: string, cond: boolean, detail = "") {
   console.log(`${cond ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
 }
 
+/**
+ * Σ (Net Proceeds + Total Deductions) over a contract's printed settlement
+ * blocks — i.e. the proceeds the broker actually settled on.
+ *
+ * BOTH layouts, deliberately. This check first covered only Asia Siyaka, and
+ * BPML promptly lost a row worth LKR 405,880 on sale 028 without the sweep
+ * noticing. A cross-check that covers one broker is an invitation for the
+ * other to drift.
+ */
+function printedProceeds(text: string): number | null {
+  const num = (s: string) => Number(s.replace(/,/g, ""));
+
+  // Asia: total net proceeds, NET PROCEEDS, spacer, TOTAL DEDUCTIONS — printed
+  // immediately after the Insurance Cover label, once per block.
+  const ASIA = /Insurance Cover @ Rs\. [\d.]+ Per kg\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
+  const asia = [...text.matchAll(ASIA)];
+  if (asia.length > 0) return asia.reduce((total, m) => total + num(m[2]) + num(m[4]), 0);
+
+  // BPML: a run of nine amounts closing each block — brokerage, handling,
+  // TOTAL DEDUCTIONS, e-platform, public sale ex., govt relief loan,
+  // NET PROCEEDS, output VAT, total net proceeds.
+  const BPML = /([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+VAT\s*[\d.]+\s*% on 1,2,3,4,5/g;
+  const bpml = [...text.matchAll(BPML)];
+  if (bpml.length > 0) return bpml.reduce((total, m) => total + num(m[7]) + num(m[3]), 0);
+
+  return null;
+}
+
 const dir = new URL("./__corpus__/", import.meta.url);
 const files = readdirSync(dir).filter((f) => f.endsWith(".txt")).sort();
 
@@ -49,8 +77,14 @@ for (const file of files) {
     counts.acknowledgement += 1;
     const p = parseAcknowledgement(text);
     ok(`${file}: acknowledgement parses clean`, p.issues.length === 0, p.issues.join(" | "));
-    ok(`${file}: has lots and a sale no`, p.lots.length > 0 && Boolean(p.saleNo),
-      `lots=${p.lots.length} saleNo=${p.saleNo}`);
+    ok(`${file}: has lots`, p.lots.length > 0, `lots=${p.lots.length}`);
+    // A sale number only when the layout actually prints one. Asia Siyaka does
+    // not, and inventing one from stray digits gave seven documents the same
+    // wrong sale — so null is required there, not merely tolerated.
+    const printsSaleNo = /Sale No\.:/.test(text);
+    ok(`${file}: sale no is read only when the document prints one`,
+      printsSaleNo ? Boolean(p.saleNo) : p.saleNo === null,
+      `prints=${printsSaleNo} saleNo=${p.saleNo}`);
     // Counts are the whole point: the R0032 row vanished without moving
     // anything else, and only the printed total noticed.
     ok(`${file}: catalogued count matches the printed total`,
@@ -79,6 +113,24 @@ for (const file of files) {
     const p = parseContract(text);
     ok(`${file}: contract parses clean`, p.issues.length === 0, p.issues.join(" | "));
     ok(`${file}: has lines`, p.lines.length > 0, `lines=${p.lines.length}`);
+    // The check that was missing, and that let ten Asia contracts silently
+    // lose rows — up to LKR 1,802,000 of proceeds on one document. Every
+    // settlement block prints its own Net Proceeds and Total Deductions;
+    // their sum is the proceeds the broker settled, so it must equal ours.
+    // A dropped row takes its money with it and moves this total.
+    const printed = printedProceeds(text);
+    if (printed !== null) {
+      const parsed = p.lines.filter((l) => l.sold).reduce((a, l) => a + l.proceeds, 0);
+      ok(`${file}: parsed proceeds match the printed settlement blocks`,
+        Math.abs(parsed - printed) < 0.02,
+        `parsed=${parsed.toFixed(2)} printed=${printed.toFixed(2)} diff=${(parsed - printed).toFixed(2)}`);
+    }
+    // Every contract must yield a printed net proceeds figure — it is what the
+    // sale's revenue is re-validated against, and a layout change that stopped
+    // producing it would silently disable that check rather than fail it.
+    ok(`${file}: printed net proceeds were read for re-validation`,
+      p.printedNetProceeds !== null && p.printedNetProceeds > 0,
+      `${p.printedNetProceeds}`);
     continue;
   }
 

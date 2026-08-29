@@ -5,6 +5,7 @@ import { FrameworkList, TabView, type FrameworkListProps } from "@tea/ui";
 import { showAppToast } from "@/components/action-feedback";
 import { LovCombobox } from "@/components/lov-combobox";
 import type { LovSourceKey } from "@/lib/list-lov";
+import { splitAdvancedQueryGroups } from "@/lib/list-query-groups";
 import { refreshListResource } from "@/lib/list-resource-action";
 import { listLockableRoles, removeListSearchLock, saveListSearchLock, saveListSearchState } from "@/lib/list-search-actions";
 import type { Role } from "@/lib/roles";
@@ -170,6 +171,14 @@ function subscribeToListResource(identity: string, listener: ListResourceListene
   };
 }
 
+/** Refresh every framework list mounted on the page — what the detail rail's
+ * manual refresh button calls, now that rails no longer refetch themselves on
+ * every navigation. */
+export async function refreshMountedListInstances() {
+  const listeners = [...listResourceListeners.values()].flatMap((set) => [...set]);
+  await Promise.all(listeners.map((listener) => listener()));
+}
+
 async function refreshOtherListInstances(
   resource: ListResourceRequest,
   source?: ListResourceListener,
@@ -216,7 +225,7 @@ export type FrameworkListSearchState = {
  * needed here.
  */
 export function useFrameworkListData<Key extends ListResourceKey>(
-  { initialRows, resource }: { initialRows: ListResourceRow<Key>[]; resource: ListResourceRequest<Key> },
+  { initialRows, resource, autoRefresh = true }: { initialRows: ListResourceRow<Key>[]; resource: ListResourceRequest<Key>; autoRefresh?: boolean },
 ) {
   const [rows, setRows] = useState(initialRows);
   const [refreshing, setRefreshing] = useState(false);
@@ -290,7 +299,9 @@ export function useFrameworkListData<Key extends ListResourceKey>(
   // page's own server component calls the same registry loader), but not the
   // hasMore/locked/canManageLocks metadata — one client fetch on mount fills
   // that in without changing what's on screen.
-  useEffect(() => { void refresh(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [identity]);
+  // Detail rails opt out (`autoRefresh: false`): they remount on every record
+  // click, and refetching there made the whole rail reload on each navigation.
+  useEffect(() => { if (autoRefresh) void refresh(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [identity]);
 
   const refreshWithLastSearch = useCallback(() => refresh(lastSearchRef.current), [refresh]);
 
@@ -655,7 +666,7 @@ type StoredListControls = {
   appliedAdvancedQuery: string;
   sort: SortState;
 };
-type SearchOperator = ":" | "=" | ">" | ">=" | "<" | "<=";
+type SearchOperator = ":" | "=" | "!=" | "!:" | ">" | ">=" | "<" | "<=";
 type SearchToken<T> =
   | { kind: "free"; value: string }
   | { kind: "column"; col: ColumnDef<T>; op: SearchOperator; value: string };
@@ -724,7 +735,7 @@ function parseAdvancedQuery<T>(query: string, columns: ColumnDef<T>[]): SearchTo
   }
 
   return tokeniseQuery(query).map((token) => {
-    const match = token.match(/^([^:<>!=]+)(>=|<=|=|>|<|:)(.+)$/);
+    const match = token.match(ADVANCED_TOKEN);
     if (!match) return { kind: "free", value: token } satisfies SearchToken<T>;
     const [, key, op, value] = match;
     const col = columnByKey.get(normalizeSearchKey(key));
@@ -732,6 +743,79 @@ function parseAdvancedQuery<T>(query: string, columns: ColumnDef<T>[]): SearchTo
     return { kind: "column", col, op: op as SearchOperator, value };
   });
 }
+
+/**
+ * `key<op>value`. Longer operators first, so `!=` is not read as a key ending
+ * in `!` followed by `=`. The key may hold spaces because a COLUMN LABEL is a
+ * valid key here ("Lot state:Valued"); quotes around the value are stripped by
+ * tokeniseQuery.
+ */
+const ADVANCED_TOKEN = /^([^:<>!=]+)(>=|<=|!=|!:|=|>|<|:)(.+)$/;
+
+/**
+ * Rewrites an advanced query so every key is a column KEY, whatever the user
+ * typed — its label, its key, any casing, spaces or punctuation.
+ *
+ * The panel filters in the browser and knows labels; the server enforces the
+ * same query and does not. So a query written with labels used to filter
+ * correctly on screen and then be ignored server-side — the two disagreeing
+ * about the same list. Translating once, here, is what keeps them identical:
+ * everything downstream sees canonical keys.
+ *
+ * A token naming no column is left exactly as typed, so free text still works.
+ */
+export function canonicaliseAdvancedQuery<T>(query: string, columns: ColumnDef<T>[]): string {
+  const columnByKey = new Map<string, string>();
+  for (const col of columns.filter((c) => c.accessor)) {
+    columnByKey.set(normalizeSearchKey(col.key), col.key);
+    if (typeof col.label === "string") columnByKey.set(normalizeSearchKey(col.label), col.key);
+  }
+  const unquote = (value: string) => value.replace(/^"|"$/g, "");
+
+  // Each OR branch is canonicalised on its own and rejoined, so `|` survives
+  // and `&` is normalised away into the whitespace that already means AND.
+  const branches = splitAdvancedQueryGroups(query);
+  if (branches.length > 1 || /[|&]/.test(query)) {
+    return branches.map((branch) => canonicaliseAdvancedQuery(branch, columns)).join(" | ");
+  }
+
+  // Space is the token separator downstream, so a value holding one keeps its
+  // quotes. An unrecognised key is returned untouched, leaving it as free text.
+  const rewrite = (key: string, op: string, value: string, whole: string) => {
+    const resolved = columnByKey.get(normalizeSearchKey(unquote(key)));
+    if (!resolved) return whole.trim();
+    const plain = unquote(value).trim();
+    return `${resolved}${op}${/\s/.test(plain) ? `"${plain}"` : plain}`;
+  };
+
+  return [...query.matchAll(QUERY_TERM)]
+    .map((match) => {
+      const [whole, key, op, value, free] = match;
+      if (key !== undefined && op !== undefined) return rewrite(key, op, value, whole);
+      // A term quoted as a whole — `"Shutout reason:Late arrival"` — arrives
+      // here as one free token; its interior is still key/op/value.
+      const inner = free !== undefined && /^".*"$/.test(free) ? unquote(free).match(BARE_TERM) : null;
+      return inner ? rewrite(inner[1], inner[2], inner[3], whole) : whole.trim();
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * One term of an advanced query: `key <op> value`, or a bare free-text token.
+ *
+ * Whitespace around the operator is optional. People write `lotState != "Sold"`
+ * far more naturally than `lotState!="Sold"`, and splitting on spaces first
+ * turned that into three free-text tokens that matched nothing — a query that
+ * silently returned an empty list instead of saying it made no sense.
+ *
+ * Key and value may each be quoted, so a column heading with spaces works as
+ * the key ("Lot state" != Sold) and a value with spaces survives intact.
+ */
+const QUERY_TERM = /("[^"]*"|[^\s"]+?)\s*(>=|<=|!=|!:|=|>|<|:)\s*("[^"]*"|\S+)|("[^"]*"|\S+)/g;
+
+/** The same shape, unanchored to token boundaries — for a whole-quoted term. */
+const BARE_TERM = /^(.+?)\s*(>=|<=|!=|!:|=|>|<|:)\s*(.+)$/;
 
 function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: ColumnDef<T>[]) {
   if (token.kind === "free") {
@@ -741,7 +825,9 @@ function matchesAdvancedToken<T>(row: T, token: SearchToken<T>, searchCols: Colu
 
   const raw = token.col.accessor!(row);
   if (token.op === ":") return valueContains(raw, token.value.toLowerCase());
+  if (token.op === "!:") return !valueContains(raw, token.value.toLowerCase());
   if (token.op === "=") return searchableForms(raw).includes(token.value.toLowerCase());
+  if (token.op === "!=") return !searchableForms(raw).includes(token.value.toLowerCase());
 
   const left = comparableNumber(raw);
   const right = comparableNumber(token.value);
@@ -773,6 +859,13 @@ export function useListControls<T>(
   const [locked, setLocked] = useState<Record<string, string>>({});
   const [lockedAdvancedQuery, setLockedAdvancedQuery] = useState<string | null>(null);
   const seededSearchState = useRef(false);
+  // Set the moment the operator touches the panel. The saved-search restore
+  // below arrives from a fetch, so it can land AFTER a selection has been made
+  // — and it REPLACES the criteria map wholesale. That is what made the panel
+  // unreliable: pick Re-print = Yes, search (correctly filtered), then the
+  // restore resolves with the previously saved criteria and quietly drops the
+  // selection, so the next search sends the stale set instead.
+  const userEditedSearch = useRef(false);
 
   useEffect(() => {
     if (!options.searchState) return;
@@ -783,7 +876,8 @@ export function useListControls<T>(
     // it in unconditionally); the client never needs to splice it into what
     // it sends.
     setLockedAdvancedQuery(nextLockedAdvancedQuery ?? null);
-    if (!seededSearchState.current) {
+    // Never seed over live input — what the operator just chose wins.
+    if (!seededSearchState.current && !userEditedSearch.current) {
       seededSearchState.current = true;
       const merged = { ...(saved ?? {}), ...nextLocked };
       if (Object.keys(merged).length > 0) {
@@ -852,10 +946,14 @@ export function useListControls<T>(
 
   function setColumnSearch(key: string, value: string) {
     if (Object.hasOwn(locked, key)) return; // locked by an owner/manager for this role — not user-editable
+    userEditedSearch.current = true;
     setColumnSearches((prev) => ({ ...prev, [key]: value }));
   }
 
   function clearFilters() {
+    // Clearing is an edit: a restore landing afterwards must not put the old
+    // saved criteria back.
+    userEditedSearch.current = true;
     setFilters({});
     setColumnSearches({ ...locked });
     setAppliedColumnSearches({ ...locked });
@@ -866,9 +964,12 @@ export function useListControls<T>(
 
   function applySearch() {
     const merged = { ...columnSearches, ...locked };
+    // Labels become column keys the moment the query is applied, so the browser
+    // filter and the server enforcement act on exactly the same text.
+    const canonical = canonicaliseAdvancedQuery(advancedQuery, columns);
     setAppliedColumnSearches(merged);
-    setAppliedAdvancedQuery(advancedQuery);
-    options.onApplySearch?.(merged, advancedQuery);
+    setAppliedAdvancedQuery(canonical);
+    options.onApplySearch?.(merged, canonical);
   }
 
   const filterCols = useMemo(() => columns.filter((c) => c.filter && c.accessor), [columns]);
@@ -906,9 +1007,14 @@ export function useListControls<T>(
       );
     }
 
-    const advancedTokens = parseAdvancedQuery(appliedAdvancedQuery.trim(), searchCols);
-    if (advancedTokens.length > 0) {
-      result = result.filter((row) => advancedTokens.every((token) => matchesAdvancedToken(row, token, searchCols)));
+    // Each `|` branch is an AND-only query; a row survives if any branch does.
+    const advancedBranches = splitAdvancedQueryGroups(appliedAdvancedQuery)
+      .map((branch) => parseAdvancedQuery(branch, searchCols))
+      .filter((tokens) => tokens.length > 0);
+    if (advancedBranches.length > 0) {
+      result = result.filter((row) =>
+        advancedBranches.some((tokens) => tokens.every((token) => matchesAdvancedToken(row, token, searchCols))),
+      );
     }
 
     if (sort) {
@@ -944,7 +1050,9 @@ export function useListControls<T>(
     columnSearches,
     setColumnSearch,
     advancedQuery,
-    setAdvancedQuery,
+    // Typing here counts as editing too, so a late restore cannot wipe a query
+    // half-written.
+    setAdvancedQuery: (next: string) => { userEditedSearch.current = true; setAdvancedQuery(next); },
     applySearch,
     clearFilters,
     hasFilters: filterCols.length > 0,
@@ -1071,7 +1179,8 @@ export function ListSearchPanel<T>({
                   )}
                   <label className="grid gap-2 text-xs font-semibold text-stone-500 dark:text-stone-400">
                     {controls.lockedAdvancedQuery ? "Add your own terms (combined with the query above)" : "Advanced query"}
-                    <input value={controls.advancedQuery} onChange={(event) => controls.setAdvancedQuery(event.target.value)} placeholder='broker:BPML netKg>100 saleNo:019 "Galle"' className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100" />
+                    <input value={controls.advancedQuery} onChange={(event) => controls.setAdvancedQuery(event.target.value)} placeholder='lotState != "Sold" & netKg > 100   |   broker:BPML'
+                      title={'Use a column heading as the key, quoted if it has spaces. Compare with : contains · = equals · != not equals · !: does not contain · > >= < <=. Combine with & (and) or | (or); a space also means and, and & binds tighter than |.'} className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800 outline-none focus:border-green-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100" />
                   </label>
                 </div>
               </details>
