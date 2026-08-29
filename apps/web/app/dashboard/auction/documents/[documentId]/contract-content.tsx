@@ -1,3 +1,4 @@
+import { money } from "@/app/dashboard/auction/format";
 import { SubmitButton } from "@/components/submit-button";
 import { ConfirmSubmitButton } from "@/components/confirmation-dialog";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@tea/api";
 import { confirmContract, rejectImport } from "@/app/dashboard/auction/actions";
 import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { loadSaleRevenueCheck } from "@/app/dashboard/auction/_actions/revenue-check";
 
 /** A contract staged before rate parsing existed has no `rates` block. */
 const EMPTY_RATES = {
@@ -172,8 +174,56 @@ export async function ContractContent({
 
   const visibleContractLineRows = await applyServerListSearch(supabase, profile, "contract-lines", contractLineRows);
 
+  // Our recomputed revenue for the whole sale against what every confirmed
+  // sellers contract printed. Same shared check the sale detail page runs.
+  const { data: settlementRows } = await supabase
+    .from("settlements").select("net_proceeds").in("sale_id", groupIds);
+  const revenueCheck = await loadSaleRevenueCheck(
+    supabase,
+    profile.factory_id,
+    groupIds,
+    ((settlementRows ?? []) as { net_proceeds: string | number | null }[])
+      .reduce((sum, row) => sum + Number(row.net_proceeds ?? 0), 0),
+  );
+
   return (
     <div className="space-y-6">
+      {/* Re-validation against every sellers contract confirmed for this sale.
+          It lives here as well as on the sale page because this is the document
+          an operator would re-upload to correct a mismatch. */}
+      {revenueCheck.status === "mismatch" && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+          <p className="font-medium">
+            Total revenue is off the sellers contracts by LKR {money(Math.abs(revenueCheck.difference))}
+          </p>
+          <p className="mt-1 text-xs leading-5">
+            This sale computes LKR {money(revenueCheck.computed)}, while the {revenueCheck.documents} confirmed
+            contract{revenueCheck.documents === 1 ? "" : "s"} print LKR {money(revenueCheck.printed)}. The contracts
+            are the broker&apos;s own figures, so a gap means a line or a charge did not survive ingestion — check the
+            unmatched lines below, then re-run the settlement.
+          </p>
+        </div>
+      )}
+      {revenueCheck.status === "tallied" && (
+        <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800 dark:bg-green-950 dark:text-green-400">
+          Total revenue tallies with all {revenueCheck.documents} sellers contract{revenueCheck.documents === 1 ? "" : "s"} for this sale — LKR {money(revenueCheck.printed)}.
+        </div>
+      )}
+      {/* Everything reconciles once the broker's own insurance figure replaces
+          ours, so every other charge is right. A note, not an error. */}
+      {revenueCheck.status === "tallied-on-printed-insurance" && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          <p className="font-medium">
+            Tallies using the broker&apos;s insurance figure — LKR {money(revenueCheck.printed)}
+          </p>
+          <p className="mt-1 text-xs leading-5">
+            The contract charges LKR {money(revenueCheck.printedInsurance)} insurance where this sale calculates
+            LKR {money(revenueCheck.computedInsurance)}, a difference of LKR {money(Math.abs(revenueCheck.insuranceDifference))}.
+            Every other charge agrees to the cent. The broker insures only some of the lots and its contract does not
+            say which, so its figure is the one to trust here — no action needed unless the gap looks wrong to you.
+          </p>
+        </div>
+      )}
       <div>
         <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Reconciliation ② — valuation ↔ sale price</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">

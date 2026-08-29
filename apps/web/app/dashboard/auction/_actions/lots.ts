@@ -739,8 +739,9 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
     const { error: updateError } = await supabase
       .from("auction_lots")
       // `reprint` is left alone: the two facts are independent, and this row may
-      // already have been registered as a re-print.
-      .update({ skipped_sale: true, reprint_source_lot_id: originLotId })
+      // already have been registered as a re-print. The link goes in the
+      // skipped-sale column so nothing counts it as a re-print.
+      .update({ skipped_sale: true, skipped_source_lot_id: originLotId })
       .eq("id", currentLot.id as string)
       .eq("factory_id", profile.factory_id);
     if (updateError) return { ok: false, error: friendlyError(updateError) };

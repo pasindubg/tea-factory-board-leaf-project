@@ -88,6 +88,24 @@ export function LovCombobox({
   const loadedRef = useRef({ count: 0, hasMore: false, loading: false, query: "" });
   loadedRef.current = { count: options.length, hasMore, loading: loading || loadingMore, query: text.trim() };
 
+  // `defaultValue`/`defaultLabel` seed this control, but its owner can change
+  // them AFTER mount — a list search panel restores its saved criteria from a
+  // fetch that resolves later, so the box mounts empty and is handed a value a
+  // moment afterwards. Without this the widget silently ignored that value: the
+  // list came back filtered while its own dropdown showed nothing, and the next
+  // search sent whatever the box was displaying instead.
+  //
+  // Only follows the prop when it actually changes, and never while the list is
+  // open or the input focused — a resync mid-typing would eat the keystroke.
+  const seeded = useRef({ value: defaultValue, label: defaultLabel });
+  useEffect(() => {
+    if (seeded.current.value === defaultValue && seeded.current.label === defaultLabel) return;
+    seeded.current = { value: defaultValue, label: defaultLabel };
+    if (openRef.current || document.activeElement === inputRef.current) return;
+    setValue(defaultValue);
+    setText(defaultLabel);
+  }, [defaultValue, defaultLabel]);
+
   const position = useCallback(() => {
     const input = inputRef.current;
     const popover = popoverRef.current;

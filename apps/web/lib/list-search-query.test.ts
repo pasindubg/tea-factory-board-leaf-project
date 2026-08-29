@@ -159,6 +159,32 @@ describe("filterRowsByAdvancedQuery", () => {
   it("falls back to a free-text match when the key does not exist on the row", () => {
     expect(filterRowsByAdvancedQuery(rows, "missing:x")).toHaveLength(0);
   });
+
+  // Negation. Without it there is no way to ask for "everything except", which
+  // is the commonest thing an operator wants from a history list.
+  it("key!=value excludes exact matches", () => {
+    expect(filterRowsByAdvancedQuery(rows, "broker!=BPML").map((r) => r.id)).toEqual(["2"]);
+  });
+
+  it("key!:value excludes substring matches", () => {
+    expect(filterRowsByAdvancedQuery(rows, "area!:Akmeemana").map((r) => r.id)).toEqual(["3"]);
+  });
+
+  it("negation ANDs with everything else", () => {
+    expect(filterRowsByAdvancedQuery(rows, "broker:BPML netKg!=120").map((r) => r.id)).toEqual(["3"]);
+  });
+
+  it("!= is not misread as a key ending in ! — the longer operator wins", () => {
+    // A key`!`, op `=`, value `BPML` would match nothing and quietly return all
+    // rows as free text instead of excluding.
+    expect(filterRowsByAdvancedQuery(rows, "broker!=BPML")).toHaveLength(1);
+  });
+
+  it("booleans negate on the same Yes/No the column renders", () => {
+    const flagged = [{ id: "1", unsold: true }, { id: "2", unsold: false }];
+    expect(filterRowsByAdvancedQuery(flagged, "unsold!=Yes").map((r) => r.id)).toEqual(["2"]);
+    expect(filterRowsByAdvancedQuery(flagged, "unsold=Yes").map((r) => r.id)).toEqual(["1"]);
+  });
 });
 
 describe("splitPage", () => {

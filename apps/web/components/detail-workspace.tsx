@@ -7,6 +7,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import { LovCombobox } from "@/components/lov-combobox";
 import type { LovOption, LovSourceKey } from "@/lib/list-lov";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { refreshMountedListInstances } from "@/components/list-controls";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import {
@@ -95,6 +97,7 @@ export function DetailWorkspace({
   bodyClassName?: string;
 }) {
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railRefreshing, setRailRefreshing] = useState(false);
   const railId = `detail-workspace-rail-${useId().replace(/:/g, "")}`;
 
   return (
@@ -171,18 +174,34 @@ export function DetailWorkspace({
             <span className="truncate text-xs font-semibold uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">
               {railAriaLabel}
             </span>
-            <AppButton
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-controls={railId}
-              aria-expanded={true}
-              aria-label="Collapse record list"
-              title="Collapse record list"
-              onClick={() => setRailCollapsed(true)}
-            >
-              <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
-            </AppButton>
+            <span className="flex items-center gap-1">
+              <AppButton
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Refresh record list"
+                title="Refresh record list"
+                busy={railRefreshing}
+                onClick={() => {
+                  setRailRefreshing(true);
+                  void refreshMountedListInstances().finally(() => setRailRefreshing(false));
+                }}
+              >
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />
+              </AppButton>
+              <AppButton
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-controls={railId}
+                aria-expanded={true}
+                aria-label="Collapse record list"
+                title="Collapse record list"
+                onClick={() => setRailCollapsed(true)}
+              >
+                <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
+              </AppButton>
+            </span>
           </div>
           <div className="min-h-0 flex-1">{rail}</div>
         </div>

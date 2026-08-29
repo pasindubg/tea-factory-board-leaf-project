@@ -16,7 +16,11 @@ ok("detected as acknowledgement", isAcknowledgement(text));
 const ack = parseAcknowledgement(text);
 const byInv = (inv: string): AckLot | undefined => ack.lots.find((l) => l.invoiceNo === inv);
 
-ok("sale no 27", ack.saleNo === "27", `${ack.saleNo}`);
+// This document has no sale number to read — the old "27" was a Days Held
+// value the extractor had reflowed under the title, and the same "27" came out
+// of seven unrelated sales. Null, so the display falls back to the sale the
+// document was uploaded against.
+ok("no sale no is invented from the header", ack.saleNo === null, `${ack.saleNo}`);
 ok("sale date 19/05/2026 (first day of range)", ack.saleDate === "19/05/2026", `${ack.saleDate}`);
 ok("self-check clean", ack.issues.length === 0, ack.issues.join(" | ") || "no issues");
 ok("9 lots parsed, all catalogued", ack.lots.length === 9 && ack.lots.every((l) => l.section === "catalogued"),

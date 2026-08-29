@@ -414,6 +414,27 @@
       "when": 1787679214566,
       "tag": "0058_mixed_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1787859388504,
+      "tag": "0059_jazzy_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1787936134025,
+      "tag": "0060_dear_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1787995426706,
+      "tag": "0061_early_blacklash",
+      "breakpoints": true
     }
   ]
 }

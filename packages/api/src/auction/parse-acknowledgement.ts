@@ -166,7 +166,15 @@ const ASIA_FLAG_REASON: Record<string, string> = {
 };
 
 function parseAsiaSiyakaAcknowledgement(text: string): ParsedAcknowledgement {
-  const saleNo = text.match(/ACKNOWLEDGEMENT\s+(\d{1,4})\b/i)?.[1] ?? null;
+  // An Asia Siyaka acknowledgement does NOT print its sale number — only the
+  // date range ("SALE OF 21/07/2026 - 22/07/2026"). Reading the digits after
+  // the title returned whatever the extractor had reflowed to there: "27" in
+  // seven unrelated documents, because it is a Days Held value from a lot row.
+  //
+  // Null is the honest answer. The sale a document belongs to is the one it was
+  // uploaded against, which is what confirmAcknowledgement already stamps lots
+  // with — the display now takes the same view instead of showing this.
+  const saleNo = null;
   const saleDate = text.match(/SALE OF\s+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? null;
 
   const raw = [...text.matchAll(ASIA_ROW)].map((r) => ({

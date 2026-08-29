@@ -82,6 +82,16 @@ export const auctionLots = pgTable(
       (): AnyPgColumn => auctionLots.id,
       { onDelete: "set null" },
     ),
+    // The origin row a SKIPPED SALE came from. Deliberately its own column and
+    // never `reprint_source_lot_id`: a skipped sale is not a re-print, and
+    // sharing the link meant everything keyed on it — re-print counts, the
+    // re-prints page, the "Re-prints sold" figure — silently counted skipped
+    // sales as re-prints. `reprint_source_lot_id` now means re-print, and only
+    // re-print.
+    skippedSourceLotId: uuid("skipped_source_lot_id").references(
+      (): AnyPgColumn => auctionLots.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

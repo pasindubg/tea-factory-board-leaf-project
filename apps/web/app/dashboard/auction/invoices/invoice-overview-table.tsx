@@ -323,6 +323,18 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       filter: "select",
     },
     {
+      // Search-only: an invoice appears once per sale it has been through, and
+      // this list is the history. Setting it to Yes keeps just each invoice's
+      // latest sale. It ANDs with every other criterion like any column.
+      key: "activeInvoice",
+      label: "Active invoices",
+      accessor: (row) => row.activeInvoice,
+      boolean: true,
+      sortable: true,
+      filter: "select",
+      searchOnly: true,
+    },
+    {
       key: "reprint",
       label: "Re-print",
       accessor: (row) => row.reprint,

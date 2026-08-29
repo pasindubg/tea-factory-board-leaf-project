@@ -168,7 +168,6 @@ export type AuctionSalesSideListRow = {
   brokers: string[];
   saleDate: string | null;
   statuses: string[];
-  hasUnsold: boolean;
   reprintRegister: boolean;
 };
 
@@ -261,6 +260,8 @@ export type AuctionInvoiceOverviewListRow = {
   dispatchDate: string | null;
   saleDate: string | null;
   biStatus: string;
+  /** The invoice's latest sale. Other rows for it are earlier-sale history. */
+  activeInvoice: boolean;
 };
 
 export type AuctionReprintOverviewListRow = {

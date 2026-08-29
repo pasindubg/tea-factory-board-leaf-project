@@ -96,9 +96,14 @@ const MARK_HEADER = /(MF\d+[A-Z]?)\s+([A-Z][A-Z ]*?)\s+Valuation Report/g;
 const ROW =
   /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+(\d+)\s*B\s*@\s*(\d+)\s+([\d.]+)\s+([\d,]+(?:-[\d,]+)?)\s*\/=\s+([\d,]+\.\d{2})\s+(.*?)(?=\s+\d{3,4}\s+\d{3,4}\s+[A-Z][A-Z0-9]*\s+\d+\s*B|\s+Dear Sir|\s+LIQUORS|$)/g;
 
-const ASIA_MARK_HEADER = /(MF\d+[A-Z]?)\s+([A-Z][A-Z ]*?)(?=\s+\d{3,4}\s+\d{3,4}\s+[A-Z][A-Z0-9]*\s+[\d,.]+\s+[\d,.]+\s*\d)/g;
+// Asia Siyaka prints the "small leaf" grades in mixed case — BOPSp, FBOPFSp —
+// so the grade token must admit lowercase. Requiring [A-Z] throughout silently
+// dropped those rows: sale 023 lost lots 1297 and 1454 from the valuation,
+// which then showed as sold with no valuation at all.
+const ASIA_GRADE = "[A-Z][A-Za-z0-9]*";
+const ASIA_MARK_HEADER = new RegExp(`(MF\\d+[A-Z]?)\\s+([A-Z][A-Z ]*?)(?=\\s+\\d{3,4}\\s+\\d{3,4}\\s+${ASIA_GRADE}\\s+[\\d,.]+\\s+[\\d,.]+\\s*\\d)`, "g");
 const ASIA_ROW =
-  /(\d{3,4})\s+(\d{3,4})\s+([A-Z][A-Z0-9]*)\s+([\d,.]+)\s+([\d,]+\.\d{2})\s*(\d[\d,]*(?:\s*-\s*\d[\d,]*)?)\s+([\d,]+\.\d{2})(?=\s|$)/g;
+  new RegExp(`(\\d{3,4})\\s+(\\d{3,4})\\s+(${ASIA_GRADE})\\s+([\\d,.]+)\\s+([\\d,]+\\.\\d{2})\\s*(\\d[\\d,]*(?:\\s*-\\s*\\d[\\d,]*)?)\\s+([\\d,]+\\.\\d{2})(?=\\s|$)`, "g");
 
 const formatFourDigits = (value: string) => value.padStart(4, "0");
 

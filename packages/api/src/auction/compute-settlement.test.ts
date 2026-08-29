@@ -46,5 +46,47 @@ ok("invariant: TNP = net + output VAT", Math.abs(c.totalNetProceeds - (c.netProc
 ok("8 charge lines", c.charges.length === 8);
 ok("charges in order", c.charges[0].code === "insurance" && c.charges[7].code === "govt_relief_loan");
 
+// ── Unsold tea: handled, but neither brokered nor documented ──
+// Both BPML and Asia Siyaka charge Rs.3.58/kg handling on every lot they
+// received, including lots that did not sell. Brokerage is a percentage of
+// proceeds and documentation is per lot SOLD, so neither touches unsold tea.
+// Sending one weight for all three under-charged handling on every sale with
+// unsold lots, and computed net proceeds above the contract's own figure.
+const soldOnly = { contractNo: "2026/019/0103", netKg: 2420, lotCount: 9, proceedsTotal: 3721800 };
+const withUnsold = { ...soldOnly, handlingKg: 2660 }; // 9 sold (2420 kg) + 1 unsold (240 kg)
+
+const a = computeSettlement(BPML, soldOnly);
+const b = computeSettlement(BPML, withUnsold);
+
+ok("handling is charged on EVERY lot's weight",
+  b.handling === 9522.80, `got ${b.handling} (2660 × 3.58)`);
+ok("handling rises by exactly the unsold weight × rate",
+  Number((b.handling - a.handling).toFixed(2)) === 859.20, `got ${(b.handling - a.handling).toFixed(2)}`);
+ok("brokerage ignores unsold tea", b.brokerage === a.brokerage, `${b.brokerage} vs ${a.brokerage}`);
+ok("documentation ignores unsold tea", b.documentation === a.documentation, `${b.documentation} vs ${a.documentation}`);
+ok("e-platform ignores unsold tea", b.eplatform === a.eplatform, `${b.eplatform} vs ${a.eplatform}`);
+// Insurance follows the same weight as handling: the broker insured the tea it
+// held, sold or not. Read off the contracts, where the printed amount divides
+// by the all-lot weight on every contract that has an unsold lot.
+ok("insurance is charged on EVERY lot's weight too",
+  b.insurance === 159.60, `got ${b.insurance} (2660 × 0.06)`);
+ok("proceeds are unchanged — nothing was earned on the unsold lot",
+  b.proceedsTotal === a.proceedsTotal && b.outputVat === a.outputVat);
+ok("more handling means LESS net proceeds", b.netProceeds < a.netProceeds,
+  `${b.netProceeds} vs ${a.netProceeds}`);
+ok("the extra handling and insurance carry their own VAT into deductions",
+  Number((b.totalDeductions - a.totalDeductions).toFixed(2)) === 1030.85,
+  `got ${(b.totalDeductions - a.totalDeductions).toFixed(2)} (859.20 + 14.40 + 18% VAT)`);
+
+// Public sale expenses follow the lot COUNT the same way.
+const withExtraLot = computeSettlement(BPML, { ...withUnsold, chargedLots: 10 });
+ok("public sale expenses are charged on EVERY lot",
+  withExtraLot.publicSaleEx === 878.70, `got ${withExtraLot.publicSaleEx} (10 × 87.87)`);
+ok("...while documentation stays on the sold lots",
+  withExtraLot.documentation === b.documentation, `${withExtraLot.documentation} vs ${b.documentation}`);
+ok("omitting handlingKg keeps the old behaviour", a.handling === 8663.60, `got ${a.handling}`);
+ok("invariant still holds with two weights",
+  Math.abs(b.netProceeds - (b.proceedsTotal - b.totalDeductions)) < 0.01);
+
 console.log(failures === 0 ? "\nSETTLEMENT MATH: ALL CHECKS PASSED" : `\nSETTLEMENT MATH: ${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
