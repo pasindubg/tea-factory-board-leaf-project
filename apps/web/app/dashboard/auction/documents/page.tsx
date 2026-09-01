@@ -8,7 +8,7 @@ import { DocumentsSideList } from "./documents-side-list";
  * Fallback landing spot for the "Document Details" nav entry: redirects to
  * the most recently uploaded document if any exist. Acknowledgement/
  * valuation/contract documents are uploaded from a Sale Detail page; a GRN
- * from its broker invoice page. Only the bank statement CSV can be uploaded
+ * from its dispatch invoice page. Only the bank statement CSV can be uploaded
  * here directly, since it isn't tied to a single sale.
  */
 export default async function DocumentsPage() {

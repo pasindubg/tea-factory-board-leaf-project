@@ -23,7 +23,7 @@ type PrintoutProps = {
 };
 
 /**
- * The paper/PDF form of a Broker Invoice: its attributes plus the full lot
+ * The paper/PDF form of a Dispatch Invoice: its attributes plus the full lot
  * list. `window.print()` drives it directly, with no separate route or popup
  * window — a popup opened after the confirm round-trip has lost its user
  * gesture and browsers block it.
@@ -62,7 +62,7 @@ function PrintoutDocument({
   return (
     <div data-print-document className="hidden text-[11pt] leading-snug">
       <header className="mb-4 border-b-2 border-black pb-2">
-        <h1 className="text-[16pt] font-bold">Broker Invoice {saleNo ?? "—"}</h1>
+        <h1 className="text-[16pt] font-bold">Dispatch Invoice {saleNo ?? "—"}</h1>
         <p className="mt-1 text-[10pt]">
           {broker}
           {sellingMark ? ` · ${sellingMark}` : ""}
@@ -88,7 +88,7 @@ function PrintoutDocument({
       <section>
         <h2 className="mb-2 text-[12pt] font-semibold">Lots ({rows.length})</h2>
         {rows.length === 0 ? (
-          <p className="text-[10pt] italic">No lots on this broker invoice.</p>
+          <p className="text-[10pt] italic">No lots on this dispatch invoice.</p>
         ) : (
           <table className="w-full border-collapse text-[9.5pt]">
             <thead>

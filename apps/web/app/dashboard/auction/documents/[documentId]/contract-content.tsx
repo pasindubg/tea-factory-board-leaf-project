@@ -335,7 +335,7 @@ export async function ContractContent({
           <form action={rejectImport.bind(null, importId, saleId)}>
             <ConfirmSubmitButton
               title="Reject Sellers Contract?"
-              description="This discards the staged contract only. The sale, Broker Invoice, and lots will remain unchanged."
+              description="This discards the staged contract only. The sale, Dispatch Invoice, and lots will remain unchanged."
               confirmLabel="Reject contract"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >

@@ -141,14 +141,14 @@ export type AuctionDispatchListRow = {
   driver_name: string | null;
   transporter: string | null;
   bundle_dispatch_no: string | null;
-  /** `invoice` | `reprint-register` — which screen opened this Broker Invoice. */
+  /** `invoice` | `reprint-register` — which screen opened this Dispatch Invoice. */
   entry_source: string | null;
   created_date: string | null;
   status: string;
   brokers: { name: string } | null;
 };
 
-/** The physical outbound movement that groups two or more Broker Invoices. */
+/** The physical outbound movement that groups two or more Dispatch Invoices. */
 export type AuctionPhysicalDispatchListRow = {
   id: string;
   dispatchNo: string;
@@ -185,7 +185,7 @@ export type AuctionDocumentSideListRow = {
   uploadedAt: string | null;
 };
 
-/** Broker Invoices that may still be assigned to a physical dispatch. */
+/** Dispatch Invoices that may still be assigned to a physical dispatch. */
 export type AuctionEligibleBrokerInvoiceListRow = {
   id: string;
   invoiceNo: string;
@@ -225,9 +225,9 @@ export type AuctionDispatchLotListRow = {
 };
 
 /**
- * One lot invoice ("basic invoice") across every broker invoice in the
- * factory, carrying the parent broker invoice's own attributes so the overview
- * can be read and filtered without opening each broker invoice in turn.
+ * One lot invoice ("basic invoice") across every dispatch invoice in the
+ * factory, carrying the parent dispatch invoice's own attributes so the overview
+ * can be read and filtered without opening each dispatch invoice in turn.
  * `biStatus` is the raw broker-invoice status — the page gates editing and
  * deleting on it, so it must not be a display label.
  */
@@ -489,7 +489,7 @@ export type ListResourceContracts = {
   "auction.dispatches": { params: undefined; row: AuctionDispatchListRow };
   "auction.dispatch-lots": { params: { saleId: string }; row: AuctionDispatchLotListRow };
   "auction.reprint-overview": { params: undefined; row: AuctionReprintOverviewListRow };
-  "auction.invoice-overview": { params: undefined; row: AuctionInvoiceOverviewListRow };
+  "auction.invoice-overview": { params: { dispatchId: string } | undefined; row: AuctionInvoiceOverviewListRow };
   "auction.physical-dispatches": { params: undefined; row: AuctionPhysicalDispatchListRow };
   "auction.sales-side-list": { params: undefined; row: AuctionSalesSideListRow };
   "auction.documents-side-list": { params: undefined; row: AuctionDocumentSideListRow };
@@ -571,7 +571,11 @@ export type ListResourceRequest<Key extends ListResourceKey = ListResourceKey> =
   Key extends ListResourceKey
     ? ListResourceParams<Key> extends undefined
       ? { key: Key; params?: never }
-      : { key: Key; params: ListResourceParams<Key> }
+      // `X | undefined` — a list that is factory-wide unscoped and narrowed
+      // when params are given, so both call shapes have to typecheck.
+      : undefined extends ListResourceParams<Key>
+        ? { key: Key; params?: ListResourceParams<Key> }
+        : { key: Key; params: ListResourceParams<Key> }
     : never;
 
 /**

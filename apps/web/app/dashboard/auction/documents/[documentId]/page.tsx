@@ -105,7 +105,7 @@ export default async function DocumentDetailPage({
       <div className="mt-6">
         {!docRow.sale_id ? (
           <p className="rounded-md bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 px-3 py-2 text-sm text-stone-500 dark:text-stone-400">
-            This document&apos;s broker invoice was removed — historical record only.
+            This document&apos;s dispatch invoice was removed — historical record only.
           </p>
         ) : docRow.doc_type === "acknowledgement" ? (
           <AckContent supabase={supabase} profile={profile} saleId={docRow.sale_id} importId={documentId} />

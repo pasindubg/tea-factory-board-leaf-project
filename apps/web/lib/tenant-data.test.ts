@@ -107,7 +107,7 @@ describe("tenant data boundary", () => {
       message: 'update or delete on table "brokers" violates foreign key constraint "auction_sales_broker_id_fkey" on table "auction_sales"',
       details: 'Key (id)=(broker-1) is still referenced from table "auction_sales".',
     })).toBe(
-      "This record is being used by broker invoices and cannot be deleted. Remove or reassign those records first.",
+      "This record is being used by dispatch invoices and cannot be deleted. Remove or reassign those records first.",
     );
   });
 

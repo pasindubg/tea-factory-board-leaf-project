@@ -227,7 +227,7 @@ const COLUMNS: EntityListColumn<SaleLineRow>[] = [
   },
   {
     key: "dispatchSaleNo",
-    label: "Broker invoice no.",
+    label: "Dispatch invoice no.",
     accessor: (row) => row.dispatchSaleNo ?? null,
     sortable: true,
     filter: "text",
@@ -245,7 +245,7 @@ async function deleteSaleLines(rows: SaleLineRow[]): Promise<ListMutationResult>
   const failures: string[] = [];
   for (const row of rows) {
     if (!row.dispatchId) {
-      failures.push(`Invoice ${row.invoiceNo || row.id} is not linked to a broker invoice.`);
+      failures.push(`Invoice ${row.invoiceNo || row.id} is not linked to a dispatch invoice.`);
       continue;
     }
     const result = await deleteLot(row.id, row.dispatchId);
@@ -308,7 +308,7 @@ export function SaleLinesTable({
         action: (_ids, rows) => deleteSaleLines(rows),
         disabled: (rows) => rows.some((row) => !row.dispatchId),
         disabledReason: (rows) =>
-          rows.some((row) => !row.dispatchId) ? "Every selected lot must be linked to a broker invoice." : undefined,
+          rows.some((row) => !row.dispatchId) ? "Every selected lot must be linked to a dispatch invoice." : undefined,
         title: (count) => `Delete ${count} lot${count === 1 ? "" : "s"}?`,
         description: () => "This removes the selected lots plus their owned invoice and valuation records. Financial sale or VAT records safely block deletion. This cannot be undone.",
         confirmLabel: "Delete",

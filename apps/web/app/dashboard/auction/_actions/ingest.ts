@@ -97,7 +97,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .map((sale) => [sale.dispatch_date as string, sale.id as string]),
   );
   const currentBrokerId = (groupSales ?? [])[0]?.broker_id as string | undefined;
-  // The sale each broker invoice actually belongs to. This — not the document
+  // The sale each dispatch invoice actually belongs to. This — not the document
   // header — is what a lot created from the acknowledgement is stamped with;
   // see the provisional_sale_no assignment below.
   const targetSaleNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.target_sale_no as string | null]));
@@ -172,7 +172,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
         sale_id: targetSaleId,
         mark_id: markByCode.get(ackLot.markCode.toUpperCase()) ?? null,
         invoice_no: formatFourDigitNo(ackLot.invoiceNo),
-        // Taken from the broker invoice this lot is attached to, NOT from the
+        // Taken from the dispatch invoice this lot is attached to, NOT from the
         // parsed document header. Broker layouts differ and a header number can
         // be something else entirely — an Asia Siyaka acknowledgement prints a
         // "tbBOSS" report code right after the title, which was being read as
@@ -202,7 +202,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   // A broker prints the bare sequence ("0901"); the factory numbers the same
   // invoice with its index-cycle prefix ("26I02-0901"). A lot created from the
   // acknowledgement alone had no prefix at all, so it read as a different
-  // invoice from every sibling on the same broker invoice. Matching stays on
+  // invoice from every sibling on the same dispatch invoice. Matching stays on
   // the bare number (invoiceMatchKey) — this only decides what is STORED.
   const groupPrefix = (lotRows ?? [])
     .map((lot) => parseCompositeInvoiceNo(lot.invoice_no as string | null)?.prefix)
@@ -234,7 +234,7 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     if (outcome.status !== "matched") {
       if (outcome.status === "blocked") {
         const blockedDispatch = formatFourDigitNo(outcome.lot.auction_sales?.sale_no) || "—";
-        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on broker invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
+        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on dispatch invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
       }
       rowsToCreate.push(row);
       continue;
@@ -851,7 +851,7 @@ export async function rejectImport(importId: string, saleId: string) {
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (importError) return back(documentDetail, friendlyError(importError));
-  if (!importRow) return back(documentDetail, "The staged document was not found for this Broker Invoice.");
+  if (!importRow) return back(documentDetail, "The staged document was not found for this Dispatch Invoice.");
   if (importRow.status === "confirmed") return back(documentDetail, "A confirmed document cannot be rejected.");
 
   const { error: rejectError } = await supabase
@@ -873,6 +873,6 @@ export async function rejectImport(importId: string, saleId: string) {
     contract: "Sellers Contract",
   }[importRow.doc_type as string] ?? "Document";
   redirect(
-    `${documentDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Broker Invoice, or lot was created or changed.`)}`,
+    `${documentDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Dispatch Invoice, or lot was created or changed.`)}`,
   );
 }

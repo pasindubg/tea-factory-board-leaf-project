@@ -1,11 +1,11 @@
 /**
- * How a Broker Invoice came into existence, and the one place its chip label
+ * How a Dispatch Invoice came into existence, and the one place its chip label
  * and styling are defined. Mirrors `auction_sales.entry_source`.
  *
  * `invoice` is the ordinary flow: the factory entered a lot invoice and
  * physically dispatched the tea. `reprint-register` means the invoice was
  * opened by the Re-prints page for a re-print the factory already had
- * outstanding before it started using this system — a real Broker Invoice
+ * outstanding before it started using this system — a real Dispatch Invoice
  * carrying real lots through the same broker and sale flow, but nothing was
  * dispatched for it. Without the distinction on screen an operator reads a
  * cutover entry as a physical dispatch that never happened.

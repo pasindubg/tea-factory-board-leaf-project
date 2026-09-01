@@ -83,7 +83,7 @@ export default async function SalesPage() {
   const assignmentByLotId = new Map(assignmentRows.map((lot) => [lot.id, lot]));
   const summaries = new Map<string, SaleSummary>();
 
-  // Broker invoices establish an auction sale before individual lots have been
+  // Dispatch invoices establish an auction sale before individual lots have been
   // reconciled and assigned. Include them first, then enrich the same sale with
   // assignment and sale-line information below.
   for (const dispatch of dispatchRows) {

@@ -15,8 +15,10 @@ import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import { completeDispatchGrn, createBundledDispatch, deleteBundledDispatch, markDispatchDispatched, updateBundledDispatch } from "../actions";
 import { brokerInvoiceRank, canMarkDispatched, canRecordDispatchGrn, type DispatchStatus } from "../dispatch-status";
-import { BundledDispatchForm, type EligibleBrokerInvoice, type WarehouseOption } from "./bundled-dispatch-form";
-import { DispatchDetailLists, type DispatchInvoiceRow, type DispatchLotRow } from "./dispatch-detail-lists";
+import { BundledDispatchForm, type WarehouseOption } from "./bundled-dispatch-form";
+import { DispatchDetailLists, type DispatchInvoiceRow } from "./dispatch-detail-lists";
+import type { AuctionInvoiceOverviewListRow } from "@/lib/list-resources";
+import type { GradeOption, NewInvoiceDefaults } from "../invoices/new-invoice-row";
 import type { PhysicalDispatchListRow } from "./dispatch-list";
 import { DispatchSideList } from "./dispatch-side-list";
 
@@ -66,8 +68,9 @@ export function DispatchDetailView({
   summary,
   invoices,
   lots,
-  eligibleInvoices,
   warehouses,
+  grades,
+  invoiceDefaults,
   canCreate,
   isOwner,
 }: {
@@ -75,9 +78,11 @@ export function DispatchDetailView({
   dispatches: PhysicalDispatchListRow[];
   summary: DispatchDetailSummary;
   invoices: DispatchInvoiceRow[];
-  lots: DispatchLotRow[];
-  eligibleInvoices: EligibleBrokerInvoice[];
+  lots: AuctionInvoiceOverviewListRow[];
   warehouses: WarehouseOption[];
+  /** For the Invoice lots tab's own "+ New invoice" entry row. */
+  grades: GradeOption[];
+  invoiceDefaults: NewInvoiceDefaults;
   canCreate: boolean;
   isOwner: boolean;
 }) {
@@ -89,7 +94,7 @@ export function DispatchDetailView({
   const router = useRouter();
   // The status is derived server-side; the page only renders it. "Dispatched"
   // and "GRN" are the only two commands a person triggers — received (once
-  // recorded) and catalogued follow automatically from the broker invoices
+  // recorded) and catalogued follow automatically from the dispatch invoices
   // inside the dispatch.
   const status = dispatch.status;
   const canDispatch = canMarkDispatched(status);
@@ -143,16 +148,15 @@ export function DispatchDetailView({
   const grnCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("grn")).length;
   const cataloguedCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("catalogued")).length;
 
-  const hasEligibleInvoices = eligibleInvoices.length >= 2;
   const hasActiveWarehouse = warehouses.some((warehouse) => warehouse.active);
-  const createEnabled = canCreate && hasEligibleInvoices && hasActiveWarehouse;
+  // Eligible invoices are no longer a precondition: a dispatch is created from
+  // its own dates and warehouse, empty.
+  const createEnabled = canCreate && hasActiveWarehouse;
   const createDisabledReason = !canCreate
     ? "Only owners and managers can create physical dispatches."
     : !hasActiveWarehouse
       ? "Add an active warehouse in Warehouse Basic Data first."
-      : !hasEligibleInvoices
-        ? "At least two unbundled Broker Invoices are required."
-        : undefined;
+      : undefined;
 
   async function createNewDispatch(formData: FormData) {
     const result = await createBundledDispatch(formData);
@@ -180,6 +184,15 @@ export function DispatchDetailView({
         />
       }
       railAriaLabel="Physical dispatches"
+      // The rail's own create never renders — a records-only rail hides it —
+      // so this is the page's "+", the same one the invoice detail page uses.
+      // Always shown, disabled with its reason, rather than silently absent.
+      createAction={{
+        label: "New dispatch",
+        title: createDisabledReason ?? "New dispatch",
+        disabled: !createEnabled || creatingDispatch,
+        onClick: () => setCreatingDispatch(true),
+      }}
       searchAction={{ panelId: SEARCH_PANEL_ID }}
       state={{
         currentKey: status,
@@ -188,7 +201,7 @@ export function DispatchDetailView({
         // All four stages are always shown so the dispatcher can see what is
         // still ahead, even though only two of them are ever clicked.
         steps: [
-          { key: "draft", label: "Draft", metric: `${invoices.length} broker invoices` },
+          { key: "draft", label: "Draft", metric: `${invoices.length} dispatch invoices` },
           { key: "dispatched", label: "Dispatched", metric: `${lots.length} lots` },
           { key: "received", label: "Received", metric: `${grnCount}/${invoices.length} at GRN` },
           { key: "catalogued", label: "Catalogued", metric: `${cataloguedCount}/${invoices.length} acknowledged` },
@@ -214,7 +227,7 @@ export function DispatchDetailView({
       }}
       deleteAction={isOwner && !creatingDispatch ? {
         title: "Delete this dispatch?",
-        description: "This removes the physical dispatch. Its broker invoices are not deleted — they become unbundled and eligible for a new dispatch again. This cannot be undone.",
+        description: "This removes the physical dispatch. Its dispatch invoices are not deleted — they become unbundled and eligible for a new dispatch again. This cannot be undone.",
         confirmLabel: "Delete dispatch",
         errorMessage: "Could not delete this dispatch. Please try again.",
         action: () => deleteBundledDispatch(dispatch.id),
@@ -229,11 +242,11 @@ export function DispatchDetailView({
           tone="draft"
           eyebrow="New dispatch"
           title="Create physical dispatch"
-          description="Bundle eligible Broker Invoices into a new outbound dispatch."
+          description="Bundle eligible Dispatch Invoices into a new outbound dispatch."
           contentClassName="pt-5"
         >
           <BundledDispatchForm
-            invoices={eligibleInvoices}
+            today={dispatch.dateFrom}
             warehouses={warehouses}
             action={createNewDispatch}
             onCancel={() => setCreatingDispatch(false)}
@@ -317,14 +330,25 @@ export function DispatchDetailView({
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                   <DetailField label="Warehouse" value={dispatch.warehouse} />
                   <DetailField label="Invoices" value={summary.invoices} />
-                  <DetailField label="Broker invoices" value={summary.brokerInvoices} />
+                  <DetailField label="Dispatch invoices" value={summary.brokerInvoices} />
                   <DetailField label="Total bags" value={summary.totalBags} />
                   <DetailField label="Total net kg" value={`${summary.totalNetKg.toFixed(2)} kg`} />
                 </>
               )}
             </DetailRecordPanel>
           </form>
-          <DispatchDetailLists lots={lots} invoices={invoices} />
+          <DispatchDetailLists
+            dispatchId={dispatch.id}
+            lots={lots}
+            invoices={invoices}
+            isOwner={isOwner}
+            canEdit={canCreate}
+            canCreate={canCreate}
+            grades={grades}
+            // A lot invoice entered here belongs to THIS dispatch, so its
+            // dispatch date is the dispatch's own, not the last one worked on.
+            invoiceDefaults={{ ...invoiceDefaults, dispatchDate: dispatch.dateFrom }}
+          />
         </>
       )}
     </DetailWorkspace>

@@ -79,7 +79,7 @@ export async function AckContent({
   const confirmedDoc = imp.status === "confirmed";
 
   // reconcileAcknowledgement only knows the lots invoiced in THIS sale group,
-  // so a lot carried forward from an earlier broker invoice — including a
+  // so a lot carried forward from an earlier dispatch invoice — including a
   // re-print registered at cutover — arrives here with no `invoiced` side.
   // Resolving it against the register is what lets the screen say WHY the row
   // has no invoice of ours (a re-print, a roll-forward, or genuinely unknown).
@@ -205,13 +205,13 @@ export async function AckContent({
         canRegister: false,
         display: outcome.isReprint ? "re-print" : "rolled forward",
         carryForwardNote: outcome.isReprint
-          ? `Offered in sale ${fromSale} (broker invoice ${fromInvoice}) and did not sell — added here as a re-print`
+          ? `Offered in sale ${fromSale} (dispatch invoice ${fromInvoice}) and did not sell — added here as a re-print`
           : `Never offered in sale ${fromSale} — that sale is flagged as skipped and stops counting it; added here as a normal lot`,
       };
     }
     if (outcome?.status === "blocked") {
       const fromInvoice = formatFourDigitNo(outcome.lot.auction_sales?.sale_no ?? null) || "—";
-      return { ...row, ...registration, canRegister: false, display: row.status, carryForwardNote: `Matches a sold/settled lot on broker invoice ${fromInvoice} — resolve by hand` };
+      return { ...row, ...registration, canRegister: false, display: row.status, carryForwardNote: `Matches a sold/settled lot on dispatch invoice ${fromInvoice} — resolve by hand` };
     }
     return { ...row, ...registration, display: row.status, carryForwardNote: null };
   });
@@ -378,7 +378,7 @@ export async function AckContent({
           <form action={rejectImport.bind(null, importId, saleId)}>
             <ConfirmSubmitButton
               title="Reject Acknowledgement?"
-              description="This discards the staged acknowledgement only. The sale, Broker Invoice, and lots will remain unchanged."
+              description="This discards the staged acknowledgement only. The sale, Dispatch Invoice, and lots will remain unchanged."
               confirmLabel="Reject acknowledgement"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >

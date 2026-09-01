@@ -5,7 +5,7 @@ import { JOB_DEFINITIONS, JOB_STATE_CHIPS, isJobKey, type JobKey, type JobRunSta
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type BackgroundJobListRow, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
-import { parseListScopeParams, parseNoListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
+import { parseListScopeParams, parseNoListParams, parseOptionalUuidListParams, parsePaymentPeriodParams, parseUuidListParams, parseWeighingListParams } from "@/lib/list-resource-validation";
 import { requireModuleAccess, requireProfile } from "@/lib/profile";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "@/app/dashboard/auction/sale-number";
 import { brokerSaleKey, isNotValuedLot, isUnsoldLot, soldBrokerSaleKeys, stateBucket } from "@/app/dashboard/auction/state-buckets";
@@ -69,6 +69,8 @@ type ResourceDefinition = {
 const parseNoParams = parseNoListParams;
 const parseSaleParams = (input: unknown) => parseUuidListParams(input, "saleId");
 const parseRoleParams = (input: unknown) => parseUuidListParams(input, "roleId");
+/** Factory-wide by default; narrowed to one physical dispatch when asked. */
+const parseOptionalDispatchParams = (input: unknown) => parseOptionalUuidListParams(input, "dispatchId");
 
 function rateListRows(rows: Record<string, unknown>[]) {
   return rows.map((row) => ({
@@ -147,6 +149,7 @@ type RefreshInvoiceOverviewLot = {
     sale_date: string | null;
     status: string | null;
     broker_id: string | null;
+    bundled_dispatch_id: string | null;
     brokers: { name: string } | null;
     marks: { code: string; name: string | null } | null;
   } | null;
@@ -275,7 +278,7 @@ function reprintOverviewRows(lots: RefreshReprintLot[]) {
       dispatchId: lot.auction_sales?.id ?? lot.sale_id,
       dispatchNo: formatFourDigitNo(lot.auction_sales?.sale_no ?? null),
       // The sale this lot was FIRST offered in. The lot's own provisional sale
-      // wins over its broker invoice's target: a cutover register entry states
+      // wins over its dispatch invoice's target: a cutover register entry states
       // the original sale on the lot itself.
       saleNo: formatSaleNo(lot.provisional_sale_no ?? lot.auction_sales?.target_sale_no ?? null),
       broker: lot.auction_sales?.brokers?.name ?? "—",
@@ -1073,7 +1076,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             brokers: [...sale.brokers].sort((a, b) => a.localeCompare(b)),
             saleDate: sale.saleDate,
             statuses: [...sale.statuses].sort((a, b) => a.localeCompare(b)),
-            // The sale exists only to hold re-prints: every broker invoice under
+            // The sale exists only to hold re-prints: every dispatch invoice under
             // it was opened by the re-print register, never dispatched.
             reprintRegister: [...sale.entrySources].every((source) => source === "reprint-register"),
           })),
@@ -1179,7 +1182,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         .eq("sale_kind", "dispatch")
         .maybeSingle();
       if (brokerInvoiceError) return { ok: false, error: friendlyError(brokerInvoiceError) };
-      if (!brokerInvoice) return { ok: false, error: "Broker invoice not found." };
+      if (!brokerInvoice) return { ok: false, error: "Dispatch invoice not found." };
 
       const [{ data: lots, error: lotError }, { data: thresholds, error: thresholdError }] = await Promise.all([
         supabase
@@ -1292,21 +1295,21 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       return { ok: true, rows: reprintOverviewRows((data ?? []) as unknown as RefreshReprintLot[]) };
     },
   },
-  // Every lot invoice in the factory, joined to its broker invoice so the
+  // Every lot invoice in the factory, joined to its dispatch invoice so the
   // overview can show and filter on broker-invoice attributes. The lot's own
-  // mark and the broker invoice's selling mark are separate embeds — the two
+  // mark and the dispatch invoice's selling mark are separate embeds — the two
   // reach `marks` through different foreign keys (auction_lots.mark_id and
   // auction_sales.selling_mark_id) and are not interchangeable.
   "auction.invoice-overview": {
     moduleKey: "auction",
-    parse: parseNoParams,
-    async load({ supabase }) {
+    parse: parseOptionalDispatchParams,
+    async load({ supabase }, params) {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
           `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
-            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, brokers(name), marks(code, name))",
+            "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, bundled_dispatch_id, brokers(name), marks(code, name))",
         )
         .order("created_at", { ascending: false });
       if (error) return { ok: false, error: friendlyError(error) };
@@ -1342,7 +1345,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
 
       // "Next sale" is the sale a re-printed lot rolls into. Nothing records it
       // on the lot itself — the link is the child lot created in the next
-      // broker invoice, pointing back via reprint_source_lot_id. Every lot in
+      // dispatch invoice, pointing back via reprint_source_lot_id. Every lot in
       // the factory is already in this result, so the forward link is resolved
       // here rather than with a second query.
       const nextSaleByParent = new Map<string, string>();
@@ -1354,9 +1357,18 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       }
       const lotById = new Map(lots.map((lot) => [lot.id, lot]));
 
+      // Scoped LAST, never in the query: `unsold`, `activeInvoice` and the
+      // previous/next sale links are all answered against every lot in the
+      // factory, and narrowing the query first would quietly change what they
+      // say about the rows that remain.
+      const dispatchId = params.dispatchId as string | undefined;
+      const scoped = dispatchId
+        ? lots.filter((lot) => lot.auction_sales?.bundled_dispatch_id === dispatchId)
+        : lots;
+
       return {
         ok: true,
-        rows: lots.map((lot) => {
+        rows: scoped.map((lot) => {
           const invoice = lot.auction_sales;
           // gross_wt is not populated on current data, so fall back to the
           // bags x kg/bag product that net weight is already derived from.
@@ -1618,7 +1630,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
               .in("lot_id", lotIds),
             // Factory-wide, not scoped to this sale's lots: a re-print's chain
             // can span multiple sales (a failed lot re-catalogues into a new
-            // broker invoice/sale), so the id and state of every node need to
+            // dispatch invoice/sale), so the id and state of every node need to
             // be known to compute a chain-wide count for any lot in it.
             supabase
               .from("auction_lots")
@@ -1656,7 +1668,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         dispatch.target_sale_no as string | null,
       ]));
       // Which BROKER sold something in which sale. Built factory-wide, because
-      // a lot's broker invoice can be a sibling dispatch outside this group.
+      // a lot's dispatch invoice can be a sibling dispatch outside this group.
       const brokerBySaleId = new Map((allDispatches ?? []).map((d) => [d.id as string, d.broker_id as string | null]));
       const groupOf = (lot: { sale_id: string }) =>
         brokerSaleKey(brokerBySaleId.get(lot.sale_id), targetSaleNoByDispatchId.get(lot.sale_id));

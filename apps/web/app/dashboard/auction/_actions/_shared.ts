@@ -8,7 +8,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { parseBankCsv, reconcileBank } from "@tea/api";
 import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
-import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 
 export const AUC = "/dashboard/auction";
@@ -167,7 +167,7 @@ export async function stageImport(
     .eq("factory_id", factoryId)
     .maybeSingle();
   if (saleError) return { ok: false, error: friendlyError(saleError) };
-  if (!sale) return { ok: false, error: "The selected Broker Invoice was not found for this factory." };
+  if (!sale) return { ok: false, error: "The selected Dispatch Invoice was not found for this factory." };
 
   const filename = file.name;
   const contentHash = createHash("sha256")
@@ -311,6 +311,43 @@ export async function documentOrderBlockedReason(
   return `This broker's ${DOC_LABEL[later]} for this sale is already confirmed, so its ${DOC_LABEL[docType]} can no longer be uploaded. Reject the ${DOC_LABEL[later]} first if it was wrong.`;
 }
 
+/**
+ * A sale number names one day in the auction calendar: every dispatch invoice
+ * targeting sale 0036 is sold on the same date, whichever broker holds it.
+ *
+ * Nothing enforced that, so a mistyped sale date on a second invoice was simply
+ * stored, and the sale page — which reads its dates off its invoices — began
+ * reporting the sale as a RANGE ("2026-09-12 – 2026-09-23") rather than the day
+ * it happened. Rejecting the entry is the only honest answer: the two dates
+ * cannot both be right, and the app cannot know which one is.
+ *
+ * Returns the error to show, or null when the date agrees — or is the first one
+ * recorded for that sale.
+ */
+export async function conflictingSaleDateError(
+  supabase: Supa,
+  factoryId: string,
+  targetSaleNo: string,
+  saleDate: string,
+  excludeInvoiceId?: string,
+): Promise<string | null> {
+  if (!targetSaleNo || !saleDate) return null;
+  const { data, error } = await supabase
+    .from("auction_sales")
+    .select("id, sale_no, target_sale_no, sale_date")
+    .eq("factory_id", factoryId)
+    .eq("sale_kind", "dispatch")
+    .not("sale_date", "is", null);
+  if (error) return friendlyError(error);
+  const clash = (data ?? []).find((row) => {
+    if (excludeInvoiceId && row.id === excludeInvoiceId) return false;
+    const rowSaleNo = (row.target_sale_no as string | null) ?? (row.sale_no as string | null);
+    return saleNoMatches(rowSaleNo, targetSaleNo) && row.sale_date !== saleDate;
+  });
+  if (!clash) return null;
+  return `Sale ${formatSaleNo(targetSaleNo)} is already dated ${clash.sale_date} on dispatch invoice ${formatFourDigitNo(clash.sale_no as string)}. Use that date, or correct the sale number.`;
+}
+
 export async function unsoldBlockedReason(supabase: Supa, factoryId: string, saleId: string): Promise<string | null> {
   const { data: invoice } = await supabase
     .from("auction_sales")
@@ -345,7 +382,7 @@ export async function saleDetailPath(supabase: Supa, factoryId: string, saleId: 
 
 /**
  * The broker a document is being uploaded against. Every broker document is
- * attached to one broker invoice, so this is the house the file is claimed to
+ * attached to one dispatch invoice, so this is the house the file is claimed to
  * have come from — see brokerDocumentMismatch, which checks the PDF agrees.
  */
 export async function saleBrokerName(supabase: Supa, factoryId: string, saleId: string): Promise<string | null> {

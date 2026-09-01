@@ -20,7 +20,7 @@ export type BySaleRow = {
 const LKR = (amount: number) => `Rs ${amount.toLocaleString("en-LK", { maximumFractionDigits: 0 })}`;
 
 const COLUMNS: EntityListColumn<BySaleRow>[] = [
-  { key: "saleNo", label: "Broker invoice", accessor: (row) => row.saleNo, sortable: true, filter: "text", cellClassName: "font-medium", render: (row) => <Link href={`/dashboard/auction/${row.id}`} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
+  { key: "saleNo", label: "Dispatch invoice", accessor: (row) => row.saleNo, sortable: true, filter: "text", cellClassName: "font-medium", render: (row) => <Link href={`/dashboard/auction/${row.id}`} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
   { key: "targetSaleNo", label: "Sale", accessor: (row) => row.targetSaleNo ?? null, sortable: true, filter: "text", cellClassName: "tabular-nums text-stone-600 dark:text-stone-400", render: (row) => row.targetSaleNo || "—" },
   { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select" },
   { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${row.statusChip}`}>{row.status}</span> },
@@ -39,10 +39,10 @@ export function BySaleTable({ rows }: { rows: BySaleRow[] }) {
       initialRows={rows}
       definition={LIST}
       getId={(row) => row.id}
-      rowLabel={(row) => `broker invoice ${row.saleNo}`}
-      title="Broker invoices by sale"
-      description="Sale progress, proceeds and settlements across broker invoices."
-      emptyMessage="No broker invoices."
+      rowLabel={(row) => `dispatch invoice ${row.saleNo}`}
+      title="Dispatch invoices by sale"
+      description="Sale progress, proceeds and settlements across dispatch invoices."
+      emptyMessage="No dispatch invoices."
       filteredEmptyMessage="No sales match these filters."
       rowClassName={() => "hover:bg-stone-50 dark:hover:bg-stone-800/50"}
     />

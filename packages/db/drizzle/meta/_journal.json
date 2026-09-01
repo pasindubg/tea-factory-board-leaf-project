@@ -435,6 +435,13 @@
       "when": 1787995426706,
       "tag": "0061_early_blacklash",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788274915303,
+      "tag": "0062_left_lilandra",
+      "breakpoints": true
     }
   ]
 }

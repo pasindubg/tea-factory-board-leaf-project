@@ -31,18 +31,18 @@ describe("sidebar highlighting", () => {
     expect(matching(pathname)).toHaveLength(1);
   });
 
-  it("keeps Invoice Overview and Broker Invoice Details separate", () => {
+  it("keeps Invoice Overview and Dispatch Invoice Details separate", () => {
     expect(matching("/dashboard/auction/invoices")).toEqual(["auction-invoice-overview"]);
     expect(matching("/dashboard/auction/new")).toEqual(["auction-dispatch-detail"]);
   });
 
-  it("still highlights Broker Invoice Details on a real invoice", () => {
+  it("still highlights Dispatch Invoice Details on a real invoice", () => {
     const detail = moduleFor("auction-dispatch-detail");
     const id = "3f7c1a92-5b2e-4d18-9a63-0c8e4f1b7d55";
     expect(moduleMatchesPath(detail, `/dashboard/auction/${id}`)).toBe(true);
   });
 
-  it("keeps Document Details separate from Broker Invoice Details", () => {
+  it("keeps Document Details separate from Dispatch Invoice Details", () => {
     const documents = moduleFor("auction-documents");
     const dispatchDetail = moduleFor("auction-dispatch-detail");
     const id = "3f7c1a92-5b2e-4d18-9a63-0c8e4f1b7d55";
@@ -52,7 +52,7 @@ describe("sidebar highlighting", () => {
     expect(moduleMatchesPath(dispatchDetail, `/dashboard/auction/documents/${id}`)).toBe(false);
   });
 
-  it("does not treat a new static auction page as a broker invoice id", () => {
+  it("does not treat a new static auction page as a dispatch invoice id", () => {
     // The guarantee that replaced the old denylist: a slug is not a UUID, so a
     // page added later cannot accidentally be claimed by the detail route.
     const detail = moduleFor("auction-dispatch-detail");

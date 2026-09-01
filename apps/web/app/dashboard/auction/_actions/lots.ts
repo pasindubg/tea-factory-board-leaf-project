@@ -6,10 +6,11 @@ import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { invoiceMatchKey } from "@tea/api";
-import { AUC, str, num, writeAudit, gradeRulesByCode, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
+import { AUC, conflictingSaleDateError, str, num, writeAudit, gradeRulesByCode, isRecordId, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
 import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { isLotState } from "../lot-states";
+import { isPlaceholderBrokerName } from "../placeholder-broker";
 import type { LotRow } from "../[saleId]/lot-row";
 import { buildCompositeInvoiceNo, invoiceSeqOf, parseCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
 import { resolveBrokerInvoiceForLot } from "./sales";
@@ -30,7 +31,7 @@ async function dispatchEditError(
   if (error) return friendlyError(error);
   const status = sale?.status as string | null | undefined;
   if (status !== "draft" && status !== "dispatched") {
-    return "Only the owner can edit this broker invoice after it is confirmed.";
+    return "Only the owner can edit this dispatch invoice after it is confirmed.";
   }
   return null;
 }
@@ -59,7 +60,7 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
   ]);
   if (saleError || lotsError) return { ok: false, error: friendlyError(saleError ?? lotsError) };
   const current = sale?.status as string | null | undefined;
-  if (!current) return { ok: false, error: "Broker Invoice not found while updating its status." };
+  if (!current) return { ok: false, error: "Dispatch Invoice not found while updating its status." };
   if (["catalogued", "settled", "broker_statement"].includes(current)) return { ok: true };
 
   const states = (lots ?? []).map((lot) => lot.state as string | null);
@@ -81,7 +82,7 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
       .select("id")
       .maybeSingle();
     if (updateError) return { ok: false, error: friendlyError(updateError) };
-    if (!updated) return { ok: false, error: "Broker Invoice changed before its status could be updated." };
+    if (!updated) return { ok: false, error: "Dispatch Invoice changed before its status could be updated." };
   }
   return { ok: true };
 }
@@ -103,7 +104,7 @@ async function ensureInvoiceNumbersUnused(
     (row) => wanted.has(formatFourDigitNo(row.invoice_no as string)) && (!excludeLotId || row.lot_id !== excludeLotId),
   );
   if (conflict) {
-    return `Invoice ${conflict.invoice_no as string} is already attached to another broker invoice.`;
+    return `Invoice ${conflict.invoice_no as string} is already attached to another dispatch invoice.`;
   }
   return null;
 }
@@ -134,7 +135,7 @@ async function reusableReprintSourceForInvoices(
   const blocking = rows.find((lot) => !lot.unsold && !lot.reprint);
   if (blocking) {
     const conflict = conflicts.find((row) => row.lot_id === blocking.id);
-    return { ok: false, error: `Invoice ${conflict?.invoice_no as string} is already attached to another active broker invoice.` };
+    return { ok: false, error: `Invoice ${conflict?.invoice_no as string} is already attached to another active dispatch invoice.` };
   }
 
   return {
@@ -158,7 +159,7 @@ async function appliedThresholdForLot(
     .single();
   if (saleError) return { ok: false, error: friendlyError(saleError) };
   const brokerId = sale?.broker_id as string | null | undefined;
-  if (!brokerId) return { ok: false, error: "Broker Invoice has no broker for threshold validation." };
+  if (!brokerId) return { ok: false, error: "Dispatch Invoice has no broker for threshold validation." };
   const { data: gradeRow, error: gradeError } = await supabase
     .from("auction_grades")
     .select("id")
@@ -219,7 +220,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   const sampleKg = sampleAllowance(formData);
   const lotNo = formatFourDigitNo(str(formData.get("lot_no")));
   const newState = str(formData.get("state"));
-  // The Invoice Overview "Sale No." column shows the parent broker invoice's
+  // The Invoice Overview "Sale No." column shows the parent dispatch invoice's
   // own target_sale_no (every lot under it shares the one value — see
   // auction.invoice-overview in list-resource-registry.ts), so editing it here
   // writes through to auction_sales rather than this lot row.
@@ -302,6 +303,14 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     return { ok: false, error: `Could not update lot: ${updateError ? friendlyError(updateError) : "lot not found"}.` };
   }
   if (targetSaleNoRaw) {
+    // This moves the whole dispatch invoice to that sale, carrying its own sale
+    // date with it — so the same one-date-per-sale rule applies here.
+    const { data: invoiceDate } = await supabase
+      .from("auction_sales").select("sale_date").eq("id", saleId).eq("factory_id", profile.factory_id).maybeSingle();
+    const conflict = await conflictingSaleDateError(
+      supabase, profile.factory_id, targetSaleNoRaw, (invoiceDate?.sale_date as string | null) ?? "", saleId,
+    );
+    if (conflict) return { ok: false, error: conflict };
     const { data: updatedSale, error: saleUpdateError } = await supabase
       .from("auction_sales")
       .update({ target_sale_no: targetSaleNoRaw })
@@ -310,7 +319,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
       .select("id")
       .maybeSingle();
     if (saleUpdateError) return { ok: false, error: friendlyError(saleUpdateError) };
-    if (!updatedSale) return { ok: false, error: "Broker invoice not found." };
+    if (!updatedSale) return { ok: false, error: "Dispatch invoice not found." };
     // Lots that already have a final_sale_no carry an authoritative reconciled
     // assignment — this edit must not silently overwrite it, matching
     // updateSale's identical rule in _actions/sales.ts.
@@ -414,7 +423,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
       .eq("sale_id", saleId)
       .eq("factory_id", profile.factory_id)
       .eq("unsold", true);
-    if (rollbackError) return { ok: false, error: "The lot was marked un-sold, but its audit entry could not be saved. Review this broker invoice before retrying." };
+    if (rollbackError) return { ok: false, error: "The lot was marked un-sold, but its audit entry could not be saved. Review this dispatch invoice before retrying." };
     return { ok: false, error: friendlyError(auditError) };
   }
   const synced = await syncDispatchStatusFromLots(supabase, saleId, profile.factory_id);
@@ -437,7 +446,7 @@ export async function markReprint(lotId: string, saleId: string, formData: FormD
  * A broker prints the bare sequence ("0901"); the factory numbers the same
  * invoice with its index-cycle prefix ("26I02-0901"). Registering a lot the
  * system had no record of used to store the bare number, so it read as a
- * different invoice from every sibling on the same broker invoice — the same
+ * different invoice from every sibling on the same dispatch invoice — the same
  * bug the acknowledgement ingest already fixes with its group-prefix scan.
  *
  * The prefix is taken from whatever the sale group already uses; matching is
@@ -475,7 +484,7 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
-  if (!invoice) return { ok: false, error: "Broker invoice not found." };
+  if (!invoice) return { ok: false, error: "Dispatch invoice not found." };
 
   const matchKey = invoiceMatchKey(invoiceNo);
   const { data: brokerLots, error: brokerLotsError } = await supabase
@@ -514,7 +523,7 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
 
     if (!sourceSaleId) {
       const prefix = parseCompositeInvoiceNo(invoice.sale_no as string | null)?.prefix;
-      if (!prefix) return { ok: false, error: "This broker invoice has no number prefix to open the earlier sale under." };
+      if (!prefix) return { ok: false, error: "This dispatch invoice has no number prefix to open the earlier sale under." };
       const { data: createdInvoice, error: createInvoiceError } = await supabase
         .from("auction_sales")
         .insert({
@@ -614,7 +623,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
-  if (!invoice) return { ok: false, error: "Broker invoice not found." };
+  if (!invoice) return { ok: false, error: "Dispatch invoice not found." };
 
   const acknowledgedSaleNo = formatSaleNo((invoice.target_sale_no as string | null) || (invoice.sale_no as string | null));
   // Strictly EARLIER, not merely different: a skipped sale means the broker held
@@ -624,7 +633,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
   const dispatchedKey = Number(saleNoKey(dispatchedSaleNo));
   const acknowledgedKey = Number(saleNoKey(acknowledgedSaleNo));
   if (!Number.isFinite(dispatchedKey) || !Number.isFinite(acknowledgedKey)) {
-    return { ok: false, error: "This broker invoice has no sale number to compare against." };
+    return { ok: false, error: "This dispatch invoice has no sale number to compare against." };
   }
   if (dispatchedKey >= acknowledgedKey) {
     return { ok: false, error: `The dispatched sale must be earlier than sale ${acknowledgedSaleNo}, which is acknowledging it.` };
@@ -667,7 +676,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
 
     if (!originSaleId) {
       const prefix = parseCompositeInvoiceNo(invoice.sale_no as string | null)?.prefix;
-      if (!prefix) return { ok: false, error: "This broker invoice has no number prefix to open the earlier sale under." };
+      if (!prefix) return { ok: false, error: "This dispatch invoice has no number prefix to open the earlier sale under." };
       const { data: createdInvoice, error: createInvoiceError } = await supabase
         .from("auction_sales")
         .insert({
@@ -823,7 +832,7 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
       .eq("sale_id", lot.sale_id)
       .eq("factory_id", profile.factory_id)
       .eq("reprint", true);
-    if (rollbackError) return { ok: false, error: "The historic re-print was saved but its audit entry could not be created. Review the Broker Invoice before retrying." };
+    if (rollbackError) return { ok: false, error: "The historic re-print was saved but its audit entry could not be created. Review the Dispatch Invoice before retrying." };
     return { ok: false, error: friendlyError(auditError) };
   }
 
@@ -842,7 +851,7 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
  * Registers a re-print the factory already had outstanding when it started
  * using this system — a lot from a sale that predates every record here.
  *
- * It creates a REAL lot under a REAL Broker Invoice, entered exactly the way
+ * It creates a REAL lot under a REAL Dispatch Invoice, entered exactly the way
  * an ordinary lot invoice is (same prefix resolution, same grade and kg/bag
  * rules, same numbering), and only then moves it to `re-print`. That is the
  * whole point: once the lot exists in `re-print`, the acknowledgement
@@ -851,7 +860,7 @@ export async function registerHistoricReprint(formData: FormData): Promise<ListM
  * valuation, contract, or settlement path needs to know this register exists.
  * A parallel "outstanding re-prints" table would have needed exactly that.
  *
- * Its Broker Invoice is stamped `entry_source = 'reprint-register'` so the
+ * Its Dispatch Invoice is stamped `entry_source = 'reprint-register'` so the
  * operator can see it was entered here rather than dispatched.
  */
 export async function registerOutstandingReprint(formData: FormData): Promise<ListMutationResult> {
@@ -868,13 +877,13 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   if (!created.ok) {
     // Same cleanup contract as the Invoice Overview create: a lot can only be
     // validated once its parent exists, so a rejected entry would otherwise
-    // strand the broker invoice this call just opened.
+    // strand the dispatch invoice this call just opened.
     if (resolved.created) {
       const discarded = await discardEmptyBrokerInvoice(resolved.saleId);
       if (!discarded) {
         return {
           ok: false,
-          error: `${created.error} An empty broker invoice was left open — remove it from the broker invoice list.`,
+          error: `${created.error} An empty dispatch invoice was left open — remove it from the dispatch invoice list.`,
         };
       }
     }
@@ -885,7 +894,7 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   const lotId = created.row.id;
   const invoiceNo = created.row.invoice_no ?? formatFourDigitNo(str(formData.get("invoice_no")));
   const reason = str(formData.get("reason")) || "Outstanding re-print entered at cutover.";
-  // The broker invoice's target sale is the sale this re-print came out of —
+  // The dispatch invoice's target sale is the sale this re-print came out of —
   // that is what the operator enters on the form for a cutover entry.
   const originalSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
 
@@ -896,7 +905,7 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   // the sample weight entered on the form is what has ALREADY been taken, and
   // createDispatchedLotForList has applied it to net weight.
   // A re-print carries TWO sale numbers: the sale it was first printed for
-  // (provisional, already stamped from the broker invoice) and the sale it
+  // (provisional, already stamped from the dispatch invoice) and the sale it
   // actually sold in. The second is optional at cutover — an outstanding
   // re-print may not have sold yet — and is recorded on the lot itself so the
   // chain can state it before any child lot exists.
@@ -922,7 +931,7 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   if (updateError || !updatedLot) {
     const rollback = await deleteTenantRow(supabase, "auction_lots", lotId);
     if (rollback.error) {
-      return { ok: false, error: "The lot was created but could not be marked as a re-print, and could not be removed. Review the broker invoice before retrying." };
+      return { ok: false, error: "The lot was created but could not be marked as a re-print, and could not be removed. Review the dispatch invoice before retrying." };
     }
     if (resolved.created) await discardEmptyBrokerInvoice(resolved.saleId);
     return { ok: false, error: updateError ? friendlyError(updateError) : "The lot could not be marked as a re-print." };
@@ -939,14 +948,14 @@ export async function registerOutstandingReprint(formData: FormData): Promise<Li
   if (auditError) {
     const rollback = await deleteTenantRow(supabase, "auction_lots", lotId);
     if (rollback.error) {
-      return { ok: false, error: "The re-print was registered but its audit entry could not be saved, and the lot could not be removed. Review the broker invoice before retrying." };
+      return { ok: false, error: "The re-print was registered but its audit entry could not be saved, and the lot could not be removed. Review the dispatch invoice before retrying." };
     }
     if (resolved.created) await discardEmptyBrokerInvoice(resolved.saleId);
     return { ok: false, error: friendlyError(auditError) };
   }
 
   // Re-run now that the lot is `re-print`: createDispatchedLotForList synced
-  // the Broker Invoice while the lot was still `invoiced`, so without this the
+  // the Dispatch Invoice while the lot was still `invoiced`, so without this the
   // invoice would keep a status its own lot contradicts — and, being left
   // open, would quietly absorb the next unrelated register entry.
   const synced = await syncDispatchStatusFromLots(supabase, resolved.saleId, profile.factory_id);
@@ -1057,12 +1066,12 @@ export async function createDispatchedLotForList(
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (brokerInvoiceError) return { ok: false, error: friendlyError(brokerInvoiceError) };
-  if (!brokerInvoice) return { ok: false, error: "Broker Invoice not found." };
+  if (!brokerInvoice) return { ok: false, error: "Dispatch Invoice not found." };
   if (profile.role !== "owner" && !["draft", "dispatched"].includes(brokerInvoice.status as string)) {
-    return { ok: false, error: "Only the owner can edit this broker invoice after it is confirmed." };
+    return { ok: false, error: "Only the owner can edit this dispatch invoice after it is confirmed." };
   }
   const sellingMarkId = brokerInvoice.selling_mark_id as string | null;
-  if (!sellingMarkId) return { ok: false, error: "Assign a selling mark to the Broker Invoice before adding lots." };
+  if (!sellingMarkId) return { ok: false, error: "Assign a selling mark to the Dispatch Invoice before adding lots." };
   const isBelowAppliedThreshold = threshold != null && threshold > 0 && netWt < threshold;
   const { data: createdLot, error } = await supabase.from("auction_lots").insert({
     factory_id: profile.factory_id, sale_id: saleId, mark_id: sellingMarkId,
@@ -1151,7 +1160,7 @@ export async function createDispatchedLotForList(
 }
 
 /**
- * Removes a broker invoice that was opened for a lot entry which then failed,
+ * Removes a dispatch invoice that was opened for a lot entry which then failed,
  * so a rejected entry leaves nothing behind. Returns false if it could not be
  * removed, so the caller can say so rather than silently orphaning it.
  *
@@ -1175,10 +1184,10 @@ async function discardEmptyBrokerInvoice(saleId: string): Promise<boolean> {
 
 /**
  * Invoice Overview create: adds a lot invoice straight from the overview,
- * attaching it to the broker invoice for its broker + selling mark + dispatch
- * date and opening that broker invoice first if none is open yet. Both steps
+ * attaching it to the dispatch invoice for its broker + selling mark + dispatch
+ * date and opening that dispatch invoice first if none is open yet. Both steps
  * are the existing ones — this only sequences them, so the overview cannot
- * drift from what the broker invoice pages do.
+ * drift from what the dispatch invoice pages do.
  *
  * It returns no row: the overview's row shape is a join of lot and broker
  * invoice fields, so the list refetches through `invalidate` rather than
@@ -1194,7 +1203,7 @@ export async function createInvoiceFromOverview(formData: FormData): Promise<Lis
   const created = await createDispatchedLotForList(resolved.saleId, formData);
   if (!created.ok) {
     // A lot cannot be validated before its parent exists — it is created with
-    // the parent's id — so the broker invoice is already open by the time the
+    // the parent's id — so the dispatch invoice is already open by the time the
     // lot is rejected (below-minimum kg/bag, unknown grade, duplicate invoice
     // number...). Undo it, or every failed attempt leaves an empty draft
     // behind. Only when THIS call opened it, and only while it is still empty.
@@ -1203,7 +1212,7 @@ export async function createInvoiceFromOverview(formData: FormData): Promise<Lis
       if (!discarded) {
         return {
           ok: false,
-          error: `${created.error} An empty broker invoice was left open — remove it from the broker invoice list.`,
+          error: `${created.error} An empty dispatch invoice was left open — remove it from the dispatch invoice list.`,
         };
       }
     }
@@ -1212,7 +1221,7 @@ export async function createInvoiceFromOverview(formData: FormData): Promise<Lis
   const notice = "pending" in created
     ? created.notice
     : resolved.created
-      ? "Invoice created, and a new broker invoice was opened for it."
+      ? "Invoice created, and a new dispatch invoice was opened for it."
       : created.notice;
   return { ok: true, notice, invalidate: OVERVIEW_INVALIDATION(resolved.saleId) };
 }
@@ -1222,6 +1231,155 @@ const OVERVIEW_INVALIDATION = (saleId: string): NonNullable<Extract<ListMutation
   { kind: "all", key: "auction.dispatches" },
   { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId } } },
 ];
+
+/**
+ * Moves lots off one dispatch invoice onto another.
+ *
+ * The move is what turns a placeholder (IMB) invoice into real ones: tea is
+ * dispatched before the broker is decided, so it is filed under IMB and split
+ * across the real houses' invoices once they are known. A lot's parent invoice
+ * is `sale_id` and nothing else, so the move is that one column — its lot
+ * invoices, valuations and sale lines follow it by their own lot_id.
+ *
+ * The emptied source is deleted only when it was a placeholder: a real broker
+ * invoice with no lots is still a record of a dispatch that happened.
+ */
+export async function moveLotsToBroker(
+  lotIds: readonly string[],
+  brokerId: string,
+): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (lotIds.length === 0) return { ok: false, error: "Select at least one lot invoice to move." };
+  if (!brokerId) return { ok: false, error: "Pick the broker these lots go to." };
+  if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
+
+  const { data: broker, error: brokerError } = await supabase
+    .from("brokers").select("id, name").eq("id", brokerId).eq("factory_id", profile.factory_id).maybeSingle();
+  if (brokerError) return { ok: false, error: friendlyError(brokerError) };
+  if (!broker) return { ok: false, error: notAnExisting(brokerId, "broker") };
+
+  const { data: lots, error: lotsError } = await supabase
+    .from("auction_lots")
+    .select("id, sale_id, invoice_no, auction_sales(id, broker_id, selling_mark_id, dispatch_date, sale_date, target_sale_no, sale_no)")
+    .in("id", [...lotIds])
+    .eq("factory_id", profile.factory_id);
+  if (lotsError) return { ok: false, error: friendlyError(lotsError) };
+  const lotRows = (lots ?? []) as unknown as {
+    id: string;
+    sale_id: string;
+    invoice_no: string | null;
+    auction_sales: { id: string; broker_id: string; selling_mark_id: string | null; dispatch_date: string | null; sale_date: string | null; target_sale_no: string | null; sale_no: string | null } | null;
+  }[];
+  if (lotRows.length === 0) return { ok: false, error: "Those lot invoices could not be found." };
+
+  // A selection made on a physical dispatch can span several dispatch invoices,
+  // so the move runs per source invoice: each one resolves its own target (the
+  // picked broker's open invoice for that mark and dispatch date, created if
+  // there is none), which is the same grouping rule every other entry path uses.
+  const bySource = new Map<string, typeof lotRows>();
+  for (const lot of lotRows) {
+    bySource.set(lot.sale_id, [...(bySource.get(lot.sale_id) ?? []), lot]);
+  }
+
+  const targets = new Set<string>();
+  let moved = 0;
+  let deletedPlaceholders = 0;
+  for (const [sourceSaleId, sourceLots] of bySource) {
+    const source = sourceLots[0]!.auction_sales;
+    if (!source) return { ok: false, error: "A lot invoice has no dispatch invoice to move it off." };
+    if (source.broker_id === brokerId) continue;
+
+    const editError = await dispatchEditError(supabase, sourceSaleId, profile.factory_id, profile.role);
+    if (editError) return { ok: false, error: editError };
+
+    const form = new FormData();
+    form.set("broker_id", brokerId);
+    form.set("selling_mark_id", source.selling_mark_id ?? "");
+    form.set("dispatch_date", source.dispatch_date ?? "");
+    form.set("target_sale_no", source.target_sale_no ?? source.sale_no ?? "");
+    form.set("sale_date", source.sale_date ?? "");
+    const resolved = await resolveBrokerInvoiceForLot(form);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    if ("pending" in resolved) {
+      return { ok: false, error: "That broker has no open invoice, and opening one needs supervisor approval for this prefix." };
+    }
+
+    const { error: moveError } = await supabase
+      .from("auction_lots")
+      .update({ sale_id: resolved.saleId })
+      .in("id", sourceLots.map((lot) => lot.id))
+      .eq("sale_id", sourceSaleId)
+      .eq("factory_id", profile.factory_id);
+    // (sale_id, invoice_no) is unique: the target already holds that lot invoice.
+    if (moveError?.code === "23505") {
+      return { ok: false, error: `${broker.name} already has a lot invoice with one of these numbers. Move them one at a time, or renumber first.` };
+    }
+    if (moveError) return { ok: false, error: friendlyError(moveError) };
+    moved += sourceLots.length;
+    targets.add(resolved.saleId);
+
+    const emptied = await deletePlaceholderInvoiceIfEmpty(supabase, sourceSaleId, profile.factory_id);
+    if (!emptied.ok) return emptied;
+    if (emptied.deleted) deletedPlaceholders += 1;
+    else {
+      const synced = await syncDispatchStatusFromLots(supabase, sourceSaleId, profile.factory_id);
+      if (!synced.ok) return synced;
+    }
+  }
+
+  if (moved === 0) return { ok: false, error: `Those lot invoices are already with ${broker.name}.` };
+
+  for (const targetSaleId of targets) {
+    const synced = await syncDispatchStatusFromLots(supabase, targetSaleId, profile.factory_id);
+    if (!synced.ok) return synced;
+    // The physical dispatch bundling these invoices derives its own status
+    // from theirs, and both ends just moved.
+    await syncDispatchForBrokerInvoice(supabase, targetSaleId, profile.factory_id);
+  }
+
+  revalidatePath(AUC);
+  return {
+    ok: true,
+    notice: `${moved} lot invoice${moved === 1 ? "" : "s"} moved to ${broker.name}.${deletedPlaceholders > 0 ? ` ${deletedPlaceholders} empty placeholder invoice${deletedPlaceholders === 1 ? " was" : "s were"} deleted.` : ""}`,
+    invalidate: [
+      { kind: "all", key: "auction.invoice-overview" },
+      { kind: "all", key: "auction.dispatches" },
+      ...[...bySource.keys(), ...targets].map((saleId) => (
+        { kind: "exact", resource: { key: "auction.dispatch-lots", params: { saleId } } } as const
+      )),
+    ],
+  };
+}
+
+/**
+ * Drops a placeholder (IMB) dispatch invoice once its last lot has left. Any
+ * other invoice is kept: it records a dispatch that really happened.
+ */
+async function deletePlaceholderInvoiceIfEmpty(
+  supabase: Supa,
+  saleId: string,
+  factoryId: string,
+): Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }> {
+  const [{ count, error: countError }, { data: sale, error: saleError }] = await Promise.all([
+    supabase
+      .from("auction_lots")
+      .select("id", { count: "exact", head: true })
+      .eq("sale_id", saleId)
+      .eq("factory_id", factoryId),
+    supabase
+      .from("auction_sales")
+      .select("id, brokers(name)")
+      .eq("id", saleId)
+      .eq("factory_id", factoryId)
+      .maybeSingle(),
+  ]);
+  if (countError || saleError) return { ok: false, error: friendlyError(countError ?? saleError) };
+  const isPlaceholder = isPlaceholderBrokerName((sale?.brokers as unknown as { name: string } | null)?.name);
+  if ((count ?? 0) > 0 || !isPlaceholder) return { ok: true, deleted: false };
+  const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", saleId);
+  if (deleteError) return { ok: false, error: deleteError };
+  return { ok: true, deleted: true };
+}
 
 /** Replays a lot creation from an approved invoice_prefix_exceptions row. */
 export async function createLotFromApprovedException(
@@ -1244,8 +1402,8 @@ export async function createLotFromApprovedException(
 }
 
 // Only invoiced/pending lots can be removed by hand (to fix entry mistakes).
-// Lots on a draft broker invoice can be removed by any auction role, but only while
-// still invoiced/pending (fixing entry mistakes). Once the broker invoice is
+// Lots on a draft dispatch invoice can be removed by any auction role, but only while
+// still invoiced/pending (fixing entry mistakes). Once the dispatch invoice is
 // confirmed, the delete command is OWNER-ONLY. PostgreSQL cascades only wholly
 // owned operational rows (invoice aliases and valuation); financial sale/VAT
 // history remains restrictive and returns a dependent-record error.
@@ -1264,7 +1422,7 @@ export async function deleteLot(id: string, saleId: string): Promise<ListMutatio
   const isDraft = saleStatus === "draft" || saleStatus === "dispatched";
   const isOwner = profile.role === "owner";
   if (!isDraft && !isOwner) {
-    return { ok: false, error: "Only the owner can delete lots after the broker invoice is confirmed." };
+    return { ok: false, error: "Only the owner can delete lots after the dispatch invoice is confirmed." };
   }
   if (!isOwner && lot.state !== "invoiced") {
     return { ok: false, error: "Only invoiced lots can be removed." };

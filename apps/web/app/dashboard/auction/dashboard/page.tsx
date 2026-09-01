@@ -149,7 +149,7 @@ export default async function AuctionDashboardPage() {
         <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-8 text-center text-stone-500 dark:text-stone-400">
           Nothing to show yet.{" "}
           <Link href="/dashboard/auction/new" className="text-green-700 dark:text-green-400 hover:underline">
-            Create the first broker invoice
+            Create the first dispatch invoice
           </Link>{" "}
           to get started.
         </div>

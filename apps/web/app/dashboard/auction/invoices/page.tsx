@@ -44,8 +44,8 @@ export default async function InvoiceOverviewPage() {
       <div>
         <h2 className="text-xl font-semibold">Invoice Overview</h2>
         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-          Every lot invoice in the factory with its broker invoice&apos;s broker, selling mark, dates and state.
-          New invoices join the open broker invoice for their broker, selling mark and dispatch date.
+          Every lot invoice in the factory with its dispatch invoice&apos;s broker, selling mark, dates and state.
+          New invoices join the open dispatch invoice for their broker, selling mark and dispatch date.
         </p>
       </div>
       <InvoiceOverviewTable

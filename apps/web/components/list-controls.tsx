@@ -71,7 +71,7 @@ export type ColumnDef<T> = {
    * Separate from `lovSource` on purpose: a column often declares a source
    * purely so its SEARCH field offers the full set, while the value itself is
    * not editable on that list — the broker and selling mark shown against a
-   * lot belong to its parent broker invoice, not the lot. Rendering an editor
+   * lot belong to its parent dispatch invoice, not the lot. Rendering an editor
    * for those produced a field name the save action does not read, so the
    * typed value was silently dropped and the cell snapped back on refresh.
    * Set this only when the list's own save action consumes `lovName`/`key`.
@@ -145,6 +145,20 @@ export type ListDefinition<T> = {
   edit?: boolean;
   delete?: boolean;
   commands?: { id: string; label: string; requiresSelection?: boolean; destructive?: boolean }[];
+  /**
+   * Named shortcuts in the search panel for a query a list is asked for often
+   * ("Ignore IMB"). Ticking one writes its clause into the advanced query, so
+   * it persists, locks and runs server-side exactly like a typed one — and
+   * stays visible as the query it actually is.
+   */
+  searchToggles?: ListSearchToggle[];
+};
+
+export type ListSearchToggle = {
+  id: string;
+  label: string;
+  /** One advanced-query clause, written the way the parser reads it: `broker!=IMB`. */
+  query: string;
 };
 
 export type ListTab = {
@@ -1131,15 +1145,37 @@ export function FilterCell<T>({ col, controls }: { col: ColumnDef<T>; controls: 
   );
 }
 
+// A toggle owns exactly its own clause in the advanced query, ANDed with
+// whatever the user typed. Kept as plain text rather than parallel state so a
+// ticked toggle survives persistence, role locks and the server-side search
+// with no extra plumbing — it IS the query.
+const clausePattern = (clause: string) =>
+  new RegExp(`(^|\\s*&\\s*)${clause.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|\\s*[&|])`);
+
+function hasQueryClause(query: string, clause: string) {
+  return clausePattern(clause).test(query);
+}
+
+function addQueryClause(query: string, clause: string) {
+  if (hasQueryClause(query, clause)) return query;
+  return query.trim() ? `${query.trim()} & ${clause}` : clause;
+}
+
+function removeQueryClause(query: string, clause: string) {
+  return query.replace(clausePattern(clause), "").replace(/^\s*&\s*/, "").trim();
+}
+
 export function ListSearchPanel<T>({
   columns,
   controls,
   label = "Search",
   id,
   listScope,
+  toggles,
 }: {
   columns: ColumnDef<T>[];
   controls: ListControls<T>;
+  toggles?: ListSearchToggle[];
   label?: string;
   /** Stable id used when a list's search trigger lives in a surrounding workspace header. */
   id?: string;
@@ -1160,6 +1196,35 @@ export function ListSearchPanel<T>({
               <h3 className="text-base font-semibold text-stone-900 dark:text-stone-100">{label} criteria</h3>
               <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">Type a value or choose an LOV suggestion, then select Search to apply it.</p>
             </div>
+            {toggles && toggles.length > 0 && (
+              <div className="mb-4 flex flex-wrap gap-2">
+                {toggles.map((toggle) => {
+                  const on = hasQueryClause(controls.advancedQuery, toggle.query);
+                  return (
+                    <label
+                      key={toggle.id}
+                      className={`inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-full border px-4 text-xs font-semibold ${
+                        on
+                          ? "border-green-600 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-950/40 dark:text-green-300"
+                          : "border-stone-300 text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(event) => controls.setAdvancedQuery(
+                          event.target.checked
+                            ? addQueryClause(controls.advancedQuery, toggle.query)
+                            : removeQueryClause(controls.advancedQuery, toggle.query),
+                        )}
+                        className="h-4 w-4 accent-green-700"
+                      />
+                      {toggle.label}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label={`${label} by column`}>
               {searchCols.map((col) => (
                 <label key={col.key} className="grid gap-1.5 text-xs font-semibold text-stone-500 dark:text-stone-400">

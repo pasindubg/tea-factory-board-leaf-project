@@ -26,7 +26,7 @@ export async function loadSaleRevenueCheck(
       .eq("doc_type", "contract")
       .eq("status", "confirmed")
       .in("sale_id", saleIds),
-    // Our OWN insurance, per broker invoice, so it can be compared against the
+    // Our OWN insurance, per dispatch invoice, so it can be compared against the
     // contract that covers those same invoices rather than against the sale.
     supabase
       .from("settlements")

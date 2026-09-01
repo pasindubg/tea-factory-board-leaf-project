@@ -15,7 +15,7 @@ export type SalesReconciliationGroup = {
   broker: string;
   dispatchNos: string[];
   lotCount: number;
-  /** Broker invoice reached "catalogued" — the ack covers the whole group. */
+  /** Dispatch invoice reached "catalogued" — the ack covers the whole group. */
   ackDone: boolean;
   /** Any lot moved to valued/sold. */
   valuationDone: boolean;
@@ -83,7 +83,7 @@ function docTypesFor(group: SalesReconciliationGroup): DocTypeRow[] {
 
 const BROKER_COLUMNS: ColumnDef<SalesReconciliationGroup>[] = [
   { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "text" },
-  { key: "dispatchNos", label: "Broker invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
+  { key: "dispatchNos", label: "Dispatch invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text" },
   { key: "lotCount", label: "Lots", accessor: (row) => row.lotCount, sortable: true, lov: false, searchInput: "number" },
   { key: "stageLabel", label: "Stage", accessor: (row) => row.stageLabel, sortable: true, filter: "select" },
 ];

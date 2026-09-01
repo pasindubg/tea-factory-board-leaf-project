@@ -10,7 +10,7 @@ import { InvoiceSideList, INVOICE_SEARCH_PANEL_ID } from "../invoice-side-list";
 import { NewDispatchFields, type DispatchCreationOptions } from "../new-dispatch-form";
 
 /**
- * The factory's very first broker invoice. Deliberately renders the same
+ * The factory's very first dispatch invoice. Deliberately renders the same
  * workspace shell as the invoice detail page — rail, search, state strip,
  * one attribute panel — so creating the first record looks like editing any
  * later one rather than a separate standalone form.
@@ -24,7 +24,7 @@ export function NewBrokerInvoiceBootstrap(props: Omit<DispatchCreationOptions, "
       showAppToast(result.error, "error");
       return;
     }
-    showAppToast(result.notice ?? "Broker invoice created.");
+    showAppToast(result.notice ?? "Dispatch invoice created.");
     if (result.id) {
       startNavigationFeedback();
       router.push(`/dashboard/auction/${result.id}`);
@@ -34,7 +34,7 @@ export function NewBrokerInvoiceBootstrap(props: Omit<DispatchCreationOptions, "
   return (
     <DetailWorkspace
       rail={<InvoiceSideList rows={[]} currentId="" />}
-      railAriaLabel="Broker invoices"
+      railAriaLabel="Dispatch invoices"
       searchAction={{ panelId: INVOICE_SEARCH_PANEL_ID }}
       state={{
         currentKey: "draft",
@@ -50,9 +50,9 @@ export function NewBrokerInvoiceBootstrap(props: Omit<DispatchCreationOptions, "
       <form action={create}>
         <DetailRecordPanel
           tone="draft"
-          eyebrow="Draft broker invoice"
-          title={`Broker Invoice Details · ${props.nextDispatchNo}`}
-          description="No broker invoices exist yet for this factory. Enter the first invoice's details here."
+          eyebrow="Draft dispatch invoice"
+          title={`Dispatch Invoice Details · ${props.nextDispatchNo}`}
+          description="No dispatch invoices exist yet for this factory. Enter the first invoice's details here."
           contentClassName="pt-5"
           actions={<SubmitButton variant="primary" pendingText="Saving…">Save</SubmitButton>}
         >

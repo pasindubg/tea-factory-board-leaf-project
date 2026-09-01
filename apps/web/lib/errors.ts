@@ -16,7 +16,7 @@ import { ValidationError } from "./forms";
  */
 const REFERENCED_ENTITY_LABELS: Record<string, string> = {
   auction_grades: "tea grade",
-  auction_sales: "broker invoice",
+  auction_sales: "dispatch invoice",
   auction_warehouses: "warehouse",
   brokers: "broker",
   buyers: "buyer",
@@ -104,9 +104,9 @@ export function friendlyError(err: unknown): string {
 
 const DEPENDENT_RECORD_LABELS: Record<string, string> = {
   auction_audit: "auction audit history",
-  auction_bundled_dispatch_invoices: "bundled dispatch broker invoices",
+  auction_bundled_dispatch_invoices: "dispatch invoices in a physical dispatch",
   auction_lots: "auction lots",
-  auction_sales: "broker invoices",
+  auction_sales: "dispatch invoices",
   bank_txns: "bank transactions",
   broker_grade_thresholds: "broker and grade threshold settings",
   broker_rates: "broker rate cards",

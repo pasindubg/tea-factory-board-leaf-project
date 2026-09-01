@@ -20,7 +20,7 @@ export type SaleOverviewRow = {
 
 const COLUMNS: EntityListColumn<SaleOverviewRow>[] = [
   { key: "saleNo", label: "Sale no.", accessor: (row) => row.saleNo, sortable: true, filter: "text", cellClassName: "font-medium", render: (row) => <Link href={row.href} className="text-green-700 hover:underline dark:text-green-400">{row.saleNo}</Link> },
-  { key: "dispatchNos", label: "Broker invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.dispatchNos.join(", ") || "—" },
+  { key: "dispatchNos", label: "Dispatch invoices", accessor: (row) => row.dispatchNos.join(", ") || null, sortable: true, filter: "text", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.dispatchNos.join(", ") || "—" },
   { key: "brokers", label: "Brokers", accessor: (row) => row.brokers.join(", ") || null, sortable: true, filter: "text", render: (row) => row.brokers.join(", ") || "—" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.saleDate ?? "—" },
   { key: "lotsSold", label: "Lots sold", accessor: (row) => row.lotsSold, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
@@ -41,7 +41,7 @@ export function SalesOverviewTable({ rows }: { rows: SaleOverviewRow[] }) {
       getId={(row) => row.saleNo}
       rowLabel={(row) => `sale ${row.saleNo}`}
       title="Auction sales"
-      description="Sale-level totals assembled from all linked broker invoices."
+      description="Sale-level totals assembled from all linked dispatch invoices."
       emptyMessage="No sales yet. Confirm a sellers contract to record auction sales."
       filteredEmptyMessage="No sales match these filters."
     />

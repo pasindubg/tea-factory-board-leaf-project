@@ -6,7 +6,7 @@ import type { ListResourceKey, ListResourceRequest, ListResourceRow } from "@/li
 
 /**
  * The shared shape for every detail-page rail (the record list beside a
- * detail page — Sale, Broker invoice, Physical dispatch, etc.). Always
+ * detail page — Sale, Dispatch invoice, Physical dispatch, etc.). Always
  * registry-backed (`resource`, never a local `scope`), so every rail gets
  * the same real server-side search/lock enforcement identically instead of
  * each page choosing between the registry-backed path and the weaker

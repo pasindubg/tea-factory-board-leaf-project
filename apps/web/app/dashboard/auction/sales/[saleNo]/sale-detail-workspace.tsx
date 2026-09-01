@@ -49,7 +49,7 @@ export function SaleDetailWorkspace({
       headerActions={headerActions}
       deleteAction={isOwner ? {
         title: "Delete this sale?",
-        description: "This permanently removes every broker invoice under this sale, their lots and invoices, and all financial records for them — sale lines, VAT ledger entries, and settlements. Matched bank transactions are unlinked but kept. This cannot be undone.",
+        description: "This permanently removes every dispatch invoice under this sale, their lots and invoices, and all financial records for them — sale lines, VAT ledger entries, and settlements. Matched bank transactions are unlinked but kept. This cannot be undone.",
         confirmLabel: "Delete sale",
         errorMessage: "Could not delete this sale. Please try again.",
         action: () => deleteAuctionSaleGroup(saleNo),

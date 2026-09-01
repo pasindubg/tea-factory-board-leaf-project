@@ -31,7 +31,7 @@ const RESET_TABLES = [
   { table: "lot_invoices", label: "Lot invoice numbers" },
   { table: "auction_lots", label: "Lot invoices" },
   { table: "auction_bundled_dispatch_invoices", label: "Dispatch links" },
-  { table: "auction_sales", label: "Broker invoices" },
+  { table: "auction_sales", label: "Dispatch invoices" },
   { table: "auction_bundled_dispatches", label: "Physical dispatches" },
 ] as const;
 
