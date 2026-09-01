@@ -29,7 +29,7 @@ export default async function AuctionDataPage() {
         <p className="mt-1 max-w-3xl text-sm text-stone-500 dark:text-stone-400">
           Clear the auction transactions this factory has recorded, then load the historic Dispatch
           Schedule spreadsheet. Every row is entered through the ordinary Invoice Overview flow, so
-          broker invoices, dispatches, numbering and re-print chains are all created exactly as they
+          dispatch invoices, dispatches, numbering and re-print chains are all created exactly as they
           are by hand — and anything the application would reject is reported per row.
         </p>
       </div>

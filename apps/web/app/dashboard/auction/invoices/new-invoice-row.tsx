@@ -15,7 +15,7 @@ export type GradeOption = { code: string; name: string; sampleWeight: number | n
 
 /**
  * Dispatch date, sale date, and sale no. are all pre-filled from the most
- * recent broker invoice, and every one stays editable.
+ * recent dispatch invoice, and every one stays editable.
  */
 export type NewInvoiceDefaults = {
   dispatchDate: string | null;
@@ -34,18 +34,30 @@ const muted = "text-xs text-stone-400 dark:text-stone-500";
  * cells are in the same order as the table's columns so the entry lines up
  * under its own headers.
  *
- * Broker, mark and dispatch date decide which broker invoice the row joins;
- * sale no. and sale date are only used when no broker invoice is open for that
+ * Broker, mark and dispatch date decide which dispatch invoice the row joins;
+ * sale no. and sale date are only used when no dispatch invoice is open for that
  * combination yet and one has to be created.
+ *
+ * Broker is optional: left blank, the row joins the IMB placeholder invoice
+ * for that mark and date, and is moved onto a real broker's invoice from
+ * there (see the invoice detail page's "Add to a broker").
  */
 export function NewInvoiceRow({
   formId,
   grades,
   defaults,
+  hideDispatchDate = false,
+  bundledDispatchId,
 }: {
   formId: string;
   grades: GradeOption[];
   defaults: NewInvoiceDefaults;
+  /** The dispatch this list belongs to — the invoice is created inside it. */
+  bundledDispatchId?: string;
+  /** The list dropped its Dispatch date column, so this row drops the cell —
+   * the value still submits (hidden), because it decides which dispatch invoice
+   * the new lot invoice joins. */
+  hideDispatchDate?: boolean;
 }) {
   const [bags, setBags] = useState("10");
   const [kgPerBag, setKgPerBag] = useState("");
@@ -64,18 +76,26 @@ export function NewInvoiceRow({
 
   return (
     <>
+      {!hideDispatchDate && (
+        <td className="px-4 py-3">
+          <input
+            form={formId}
+            name="dispatch_date"
+            type="date"
+            required
+            defaultValue={defaults.dispatchDate ?? ""}
+            aria-label="Dispatch date"
+            className={dateInput}
+          />
+        </td>
+      )}
       <td className="px-4 py-3">
-        <input
-          form={formId}
-          name="dispatch_date"
-          type="date"
-          required
-          defaultValue={defaults.dispatchDate ?? ""}
-          aria-label="Dispatch date"
-          className={dateInput}
-        />
-      </td>
-      <td className="px-4 py-3">
+        {hideDispatchDate && (
+          <input form={formId} type="hidden" name="dispatch_date" defaultValue={defaults.dispatchDate ?? ""} />
+        )}
+        {bundledDispatchId && (
+          <input form={formId} type="hidden" name="bundled_dispatch_id" defaultValue={bundledDispatchId} />
+        )}
         <input
           form={formId}
           name="sale_date"
@@ -91,8 +111,7 @@ export function NewInvoiceRow({
           source="auction.brokers"
           name="broker_id"
           formId={formId}
-          required
-          placeholder="Broker…"
+          placeholder="Broker (optional)…"
           ariaLabel="Broker"
           className={cellInput}
         />
@@ -191,7 +210,7 @@ export function NewInvoiceRow({
       <td className="px-4 py-3">
         <input form={formId} name="lot_no" aria-label="Lot number" className={cellInput} />
       </td>
-      {/* Broker invoice, lot state and BI state are all server-assigned. */}
+      {/* Dispatch invoice, lot state and BI state are all server-assigned. */}
       <td className={`px-4 py-3 ${muted}`}>Auto</td>
       <td className={`px-4 py-3 ${muted}`}>New</td>
       <td className={`px-4 py-3 ${muted}`}>Draft</td>

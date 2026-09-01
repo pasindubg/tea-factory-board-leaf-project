@@ -1,6 +1,6 @@
 // Resolves the acknowledgement rows recon ① could not place against lots the
 // factory already holds elsewhere — a lot rolling forward from an earlier
-// broker invoice, or a re-print registered on the Re-prints page.
+// dispatch invoice, or a re-print registered on the Re-prints page.
 //
 // This module exists so the REVIEW SCREEN and the CONFIRM ACTION reach the
 // same answer. They used to disagree by construction: reconcileAcknowledgement

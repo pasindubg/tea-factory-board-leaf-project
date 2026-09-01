@@ -22,7 +22,7 @@ import type { JobRunItem } from "@/lib/background-jobs";
  * the handler never trusts anything else to know where it is.
  *
  * Rows are applied in sheet order and cannot be parallelised: a re-print's
- * chain depends on its earlier lot existing, and broker invoices group by
+ * chain depends on its earlier lot existing, and dispatch invoices group by
  * dispatch date.
  */
 

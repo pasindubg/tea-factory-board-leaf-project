@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
+import { colomboToday } from "../../_actions/_shared";
 import { NewBundledDispatchBootstrap } from "./new-bundled-dispatch-bootstrap";
 
 /**
@@ -21,16 +22,12 @@ export default async function DispatchDetailsPage() {
   const dispatchId = latestDispatch?.[0]?.id as string | undefined;
   if (dispatchId) redirect(`/dashboard/auction/dispatches/${dispatchId}`);
 
-  const [eligibleInvoices, warehouses] = await Promise.all([
-    loadListResource({ key: "auction.eligible-broker-invoices" }),
-    loadListResource({ key: "auction.warehouses" }),
-  ]);
-  if (!eligibleInvoices.ok) throw new Error(eligibleInvoices.error);
+  const warehouses = await loadListResource({ key: "auction.warehouses" });
   if (!warehouses.ok) throw new Error(warehouses.error);
 
   return (
     <NewBundledDispatchBootstrap
-      eligibleInvoices={eligibleInvoices.rows}
+      today={colomboToday()}
       warehouses={warehouses.rows}
       canCreate={profile.role === "owner" || profile.role === "manager"}
     />

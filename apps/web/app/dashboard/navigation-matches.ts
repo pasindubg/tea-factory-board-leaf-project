@@ -3,8 +3,8 @@ import type { ModuleDef } from "@/lib/roles";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The Broker Invoice Details destination owns exactly two shapes: the
- * bootstrap route (/dashboard/auction/new) and a broker invoice's own detail
+ * The Dispatch Invoice Details destination owns exactly two shapes: the
+ * bootstrap route (/dashboard/auction/new) and a dispatch invoice's own detail
  * route, whose first segment is the invoice id (plus its /ack, /valuation,
  * /contract and /bank sub-routes).
  *

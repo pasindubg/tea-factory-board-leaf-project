@@ -16,7 +16,7 @@ export default async function InvoicePrefixesPage() {
       <div>
         <h1 className="text-2xl font-semibold">Invoice number prefixes</h1>
         <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-          Each category (broker invoice, regular invoice) has one active numbering book at a time. When a book&apos;s cycle
+          Each category (dispatch invoice, regular invoice) has one active numbering book at a time. When a book&apos;s cycle
           runs out, create a new prefix and activate it — new entries then use it automatically.
         </p>
       </div>

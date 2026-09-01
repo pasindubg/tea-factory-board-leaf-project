@@ -118,7 +118,7 @@ export function DispatchDetailEditor({
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
   const isDraftStatus = isOpenDraft(sale.status);
-  // The owner can edit or delete a broker invoice in any state. Everyone else
+  // The owner can edit or delete a dispatch invoice in any state. Everyone else
   // may do so only while it is still an unconfirmed draft — once confirmed it
   // is downstream financial work and stops being theirs to change.
   const canDelete = isOwner || isDraftStatus;
@@ -193,7 +193,7 @@ export function DispatchDetailEditor({
       showAppToast(result.error, "error");
       return;
     }
-    showAppToast(result.notice ?? "Broker invoice created.");
+    showAppToast(result.notice ?? "Dispatch invoice created.");
     if (result.id) {
       startNavigationFeedback();
       router.push(`/dashboard/auction/${result.id}`);
@@ -233,7 +233,7 @@ export function DispatchDetailEditor({
   return (
     <>
     <DetailWorkspace
-      railAriaLabel="Broker invoices"
+      railAriaLabel="Dispatch invoices"
       rail={
         <InvoiceSideList
           rows={dispatches}
@@ -294,17 +294,17 @@ export function DispatchDetailEditor({
         canDelete && !creatingInvoice
           ? {
               label: "Delete",
-              title: "Delete broker invoice?",
+              title: "Delete dispatch invoice?",
               description:
-                "This removes the broker invoice and its operational lot records. Financial sale, VAT, or settlement records will safely block deletion instead. This cannot be undone.",
-              confirmLabel: "Delete broker invoice",
+                "This removes the dispatch invoice and its operational lot records. Financial sale, VAT, or settlement records will safely block deletion instead. This cannot be undone.",
+              confirmLabel: "Delete dispatch invoice",
               errorMessage:
-                "Could not delete the broker invoice. Please try again.",
+                "Could not delete the dispatch invoice. Please try again.",
               action: () => deleteSale(sale.id),
               onSuccess: () => {
                 startNavigationFeedback();
                 // No overview list to fall back to — go to whichever other
-                // broker invoice is now most recent, or the bootstrap/create
+                // dispatch invoice is now most recent, or the bootstrap/create
                 // page if that was the last one.
                 const remaining = dispatches.filter((row) => row.id !== sale.id);
                 const latest = [...remaining].sort((a, b) => {
@@ -321,8 +321,8 @@ export function DispatchDetailEditor({
         <form action={createNewDispatch}>
           <DetailRecordPanel
             tone="draft"
-            eyebrow="Draft broker invoice"
-            title={`Broker Invoice Details · ${liveCreation.nextDispatchNo}`}
+            eyebrow="Draft dispatch invoice"
+            title={`Dispatch Invoice Details · ${liveCreation.nextDispatchNo}`}
             description="Enter the invoice details here. The workspace stays in place after saving."
             contentClassName="pt-5"
             actions={
@@ -346,8 +346,8 @@ export function DispatchDetailEditor({
       ) : (
         <form ref={formRef} action={saveDispatch}>
           <DetailRecordPanel
-            eyebrow="Broker invoice details"
-            title={`Broker Invoice Details · ${sale.sale_no}`}
+            eyebrow="Dispatch invoice details"
+            title={`Dispatch Invoice Details · ${sale.sale_no}`}
             description={
               <>
                 {broker}
@@ -402,7 +402,7 @@ export function DispatchDetailEditor({
             <div className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
               <DetailField label="Broker" value={broker} />
               <DetailField
-                label="Broker invoice"
+                label="Dispatch invoice"
                 value={sale.sale_no ?? "—"}
               />
               <DetailField
@@ -475,7 +475,7 @@ export function DispatchDetailEditor({
       {creatingInvoice ? (
         <DetailEmptyPanel
           title="Lot invoices"
-          description="Save the broker invoice before adding its lot rows."
+          description="Save the dispatch invoice before adding its lot rows."
         />
       ) : (
         <LotsSection
@@ -494,7 +494,7 @@ export function DispatchDetailEditor({
     </DetailWorkspace>
     <AppDrawer
       open={grnOpen && canProceedToGrn}
-      title={`GRN · ${sale.sale_no ?? "Broker invoice"}`}
+      title={`GRN · ${sale.sale_no ?? "Dispatch invoice"}`}
       description="Upload a GRN document or continue without one."
       onClose={() => setGrnOpen(false)}
     >

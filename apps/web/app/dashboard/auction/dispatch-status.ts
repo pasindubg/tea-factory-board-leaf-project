@@ -7,11 +7,11 @@
  *
  *   draft      -> nothing has left yet
  *   dispatched -> the dispatcher marked it as gone (manual, the only one)
- *   received   -> every broker invoice in it reached GRN at the warehouse
- *   catalogued -> every broker invoice was acknowledged by its broker
+ *   received   -> every dispatch invoice in it reached GRN at the warehouse
+ *   catalogued -> every dispatch invoice was acknowledged by its broker
  *
  * Deriving instead of storing transitions keeps the dispatch honest: adding a
- * fresh broker invoice to a catalogued dispatch pulls it back automatically,
+ * fresh dispatch invoice to a catalogued dispatch pulls it back automatically,
  * which a one-way transition table would silently get wrong.
  */
 
@@ -19,7 +19,7 @@ export const DISPATCH_STATUSES = ["draft", "dispatched", "received", "catalogued
 export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 
 /**
- * How far a broker invoice has travelled. Only the ordering matters — a lot
+ * How far a dispatch invoice has travelled. Only the ordering matters — a lot
  * that is already sold has clearly passed GRN, so comparisons are ">=" against
  * a threshold rather than equality against one status.
  */
@@ -74,7 +74,7 @@ export function canMarkDispatched(status: string | null | undefined): boolean {
 }
 
 /**
- * Whether the dispatcher may bulk-complete GRN for every broker invoice inside
+ * Whether the dispatcher may bulk-complete GRN for every dispatch invoice inside
  * this dispatch. Only offered once the dispatch itself has been marked
  * dispatched, and not once it has already advanced past that on its own
  * (the invoices are already at or beyond GRN, so there is nothing left to do).

@@ -16,7 +16,7 @@ export const CATEGORY_LETTER: Record<InvoiceCategory, string> = {
 };
 
 export const CATEGORY_LABEL: Record<InvoiceCategory, string> = {
-  broker_invoice: "broker invoice",
+  broker_invoice: "dispatch invoice",
   regular_invoice: "regular invoice",
 };
 

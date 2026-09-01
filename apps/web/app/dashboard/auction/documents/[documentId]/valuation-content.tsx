@@ -32,7 +32,7 @@ export async function ValuationContent({
 
   const { data: sale } = await supabase.from("auction_sales").select("sale_no, target_sale_no, broker_id").eq("id", saleId).single();
   // Match broker-wide: a Not Valued invoice may reappear in a later sale's
-  // valuation while remaining attached to its original Broker Invoice.
+  // valuation while remaining attached to its original Dispatch Invoice.
   const { data: brokerInvoices } = await supabase
     .from("auction_sales")
     .select("id")
@@ -101,13 +101,13 @@ export async function ValuationContent({
       <div>
         <h3 className="text-lg font-semibold text-stone-800 dark:text-stone-100">Valuation review</h3>
         <p className="text-sm text-stone-500 dark:text-stone-400">
-          Report for sale {reportSaleNo || "—"} · on broker invoice sale {invoiceSaleNo || "—"} · {parsed.lots.length} lots · {matched} match an acknowledged lot
+          Report for sale {reportSaleNo || "—"} · on dispatch invoice sale {invoiceSaleNo || "—"} · {parsed.lots.length} lots · {matched} match an acknowledged lot
         </p>
       </div>
 
       {!confirmed && matchedHere === 0 && (
         <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
-          <p className="font-medium">This report cannot be confirmed against this broker invoice.</p>
+          <p className="font-medium">This report cannot be confirmed against this dispatch invoice.</p>
           <p className="mt-1">
             None of its {parsed.lots.length} invoice(s) match a lot in sale {invoiceSaleNo || "—"}
             {matched > 0 ? ` (${matched} matched lots in other sales)` : ""}. The report itself is for
@@ -171,7 +171,7 @@ export async function ValuationContent({
           <form action={rejectImport.bind(null, importId, saleId)}>
             <ConfirmSubmitButton
               title="Reject Valuation Report?"
-              description="This discards the staged valuation only. The sale, Broker Invoice, and lots will remain unchanged."
+              description="This discards the staged valuation only. The sale, Dispatch Invoice, and lots will remain unchanged."
               confirmLabel="Reject valuation"
               className="rounded-md border border-stone-300 dark:border-stone-600 px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             >

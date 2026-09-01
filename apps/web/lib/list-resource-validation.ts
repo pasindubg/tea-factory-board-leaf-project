@@ -25,6 +25,17 @@ export function parseUuidListParams(input: unknown, key: string): ResourceParamR
   return { ok: true, value: { [key]: value } };
 }
 
+/**
+ * A list that is normally factory-wide but can be narrowed to one record —
+ * the same rows, scoped. No params at all stays valid, so the unscoped page
+ * and the scoped tab share one resource key.
+ */
+export function parseOptionalUuidListParams(input: unknown, key: string): ResourceParamResult {
+  const none = parseNoListParams(input);
+  if (none.ok) return none;
+  return parseUuidListParams(input, key);
+}
+
 export function parsePaymentPeriodParams(input: unknown): ResourceParamResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "Invalid list parameters." };

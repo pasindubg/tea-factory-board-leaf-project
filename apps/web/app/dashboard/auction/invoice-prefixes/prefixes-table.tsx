@@ -25,7 +25,7 @@ const COLUMNS: EntityListColumn<PrefixTableRow>[] = [
     sortable: true,
     filter: "select",
     filterOptions: [
-      { value: "broker_invoice", label: "Broker invoice" },
+      { value: "broker_invoice", label: "Dispatch invoice" },
       { value: "regular_invoice", label: "Regular invoice" },
     ],
   },
@@ -96,7 +96,7 @@ export function PrefixesTable({ rows, canManage }: { rows: PrefixTableRow[]; can
       getId={(row) => row.id}
       rowLabel={(row) => row.prefix}
       title="Invoice number prefixes"
-      description="Numbering books for broker invoices and regular (lot) invoices. Only one prefix per category can be active."
+      description="Numbering books for dispatch invoices and regular (lot) invoices. Only one prefix per category can be active."
       emptyMessage="No prefixes yet."
       canCreate={canManage}
       create={{
@@ -108,7 +108,7 @@ export function PrefixesTable({ rows, canManage }: { rows: PrefixTableRow[]; can
           <form action={action} className="grid gap-3 sm:grid-cols-3">
             <select name="category" required defaultValue="" className={input}>
               <option value="" disabled>Choose category</option>
-              <option value="broker_invoice">Broker invoice</option>
+              <option value="broker_invoice">Dispatch invoice</option>
               <option value="regular_invoice">Regular invoice</option>
             </select>
             <div className="flex gap-2">

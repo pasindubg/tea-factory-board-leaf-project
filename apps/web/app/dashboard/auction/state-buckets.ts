@@ -45,7 +45,7 @@ export function stateBucketOptions(states: readonly (string | null)[]): { value:
 }
 
 /**
- * A Broker Invoice that has not been confirmed yet. Confirming it moves the
+ * A Dispatch Invoice that has not been confirmed yet. Confirming it moves the
  * status to "invoiced" and it never returns here, so this is exactly the
  * window in which the invoice may still be edited or deleted by a non-owner.
  * "dispatched" is the legacy name for an open draft and must stay included.
@@ -53,7 +53,7 @@ export function stateBucketOptions(states: readonly (string | null)[]): { value:
 const OPEN_DRAFT_STATUSES = ["draft", "dispatched"];
 
 /**
- * Every status a Broker Invoice can hold. Lives here beside the bucket map so
+ * Every status a Dispatch Invoice can hold. Lives here beside the bucket map so
  * a list can declare its full search options without re-deriving them.
  */
 export const BROKER_INVOICE_STATUSES = ["draft", "dispatched", "invoiced", "grn", "catalogued"] as const;
@@ -65,7 +65,7 @@ export function isOpenDraft(status: string | null | undefined): boolean {
 /**
  * Did this lot fail to sell? One rule, everywhere it is shown.
  *
- * The lot is still `valued` while a sibling on the SAME broker invoice reached
+ * The lot is still `valued` while a sibling on the SAME dispatch invoice reached
  * `sold`. The sibling proves that invoice's sale has been settled against a
  * contract; anything left at `valued` in it was offered and not bought.
  *
@@ -88,7 +88,7 @@ export function isUnsoldLot(
 /**
  * "That broker, in that sale" — the group `anySiblingSold` is asked about.
  *
- * NOT the broker invoice: one broker can hold several invoices in the same
+ * NOT the dispatch invoice: one broker can hold several invoices in the same
  * sale, and its contract settles the whole sale at once. Keying on the invoice
  * left a valued lot reading "sold: No" while its own broker had plainly sold
  * other lots in the same sale, on a sibling invoice.

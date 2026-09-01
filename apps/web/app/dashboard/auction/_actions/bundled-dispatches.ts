@@ -29,7 +29,7 @@ async function nextBundledDispatchNo(
 }
 
 /**
- * Recomputes one dispatch's status from the broker invoices inside it and
+ * Recomputes one dispatch's status from the dispatch invoices inside it and
  * writes it back when it has moved. Safe to call after any broker-invoice
  * status change — it is a pure re-derivation, not a transition, so calling it
  * twice or out of order cannot corrupt the dispatch.
@@ -78,7 +78,7 @@ export async function syncBundledDispatchStatus(
 }
 
 /**
- * Re-derives the dispatch a broker invoice belongs to, if any. The three
+ * Re-derives the dispatch a dispatch invoice belongs to, if any. The three
  * broker-invoice transitions (confirm, GRN, acknowledgement) each call this so
  * the dispatch keeps up without them knowing the dispatch rules.
  */
@@ -136,10 +136,10 @@ export async function markDispatchDispatched(id: string): Promise<ListMutationRe
 }
 
 /**
- * Bulk-completes GRN for every broker invoice inside a dispatched physical
+ * Bulk-completes GRN for every dispatch invoice inside a dispatched physical
  * dispatch. The goods for the whole dispatch arrive at the warehouse
  * together, so this is the normal way GRN is recorded — one action here
- * instead of opening each broker invoice individually. Only the status
+ * instead of opening each dispatch invoice individually. Only the status
  * moves; a GRN document can still be attached per invoice from its own
  * detail page.
  *
@@ -170,12 +170,12 @@ export async function completeDispatchGrn(dispatchId: string): Promise<ListMutat
     .eq("sale_kind", "dispatch");
   if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
   const invoices = (invoiceRows ?? []) as { id: string; sale_no: string; status: string }[];
-  if (invoices.length === 0) return { ok: false, error: "This dispatch has no broker invoices yet." };
+  if (invoices.length === 0) return { ok: false, error: "This dispatch has no dispatch invoices yet." };
 
   const unconfirmed = invoices.filter((invoice) => isOpenDraft(invoice.status));
   if (unconfirmed.length > 0) {
     const names = unconfirmed.map((invoice) => formatFourDigitNo(invoice.sale_no) || invoice.sale_no).join(", ");
-    return { ok: false, error: `Confirm Broker Invoice ${names} before recording GRN for this dispatch.` };
+    return { ok: false, error: `Confirm Dispatch Invoice ${names} before recording GRN for this dispatch.` };
   }
 
   const pendingIds = invoices.filter((invoice) => invoice.status === "invoiced").map((invoice) => invoice.id);
@@ -196,8 +196,8 @@ export async function completeDispatchGrn(dispatchId: string): Promise<ListMutat
   return {
     ok: true,
     notice: pendingIds.length > 0
-      ? `${pendingIds.length} broker invoice${pendingIds.length === 1 ? "" : "s"} moved to GRN.`
-      : "Every broker invoice was already at GRN.",
+      ? `${pendingIds.length} dispatch invoice${pendingIds.length === 1 ? "" : "s"} moved to GRN.`
+      : "Every dispatch invoice was already at GRN.",
     invalidate: [
       { kind: "all", key: "auction.physical-dispatches" },
       { kind: "all", key: "auction.dispatches" },
@@ -221,11 +221,10 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
     return { ok: false, error: "Dispatch start date must be on or before the end date." };
   }
   if (!warehouseId) return { ok: false, error: "Choose a warehouse." };
-  if (invoiceIds.length < 2) {
-    return { ok: false, error: "Select at least two Broker Invoices to create a bundled dispatch." };
-  }
+  // No minimum, and usually none at all: a dispatch is opened from its own
+  // attributes and the invoices dispatched on those dates join it afterwards.
 
-  // The server repeats the grouping rule: every selected Broker Invoice must be
+  // The server repeats the grouping rule: every selected Dispatch Invoice must be
   // eligible, unbundled, and dated within this physical dispatch range.
   const { data: invoices, error: invoiceError } = await supabase
     .from("auction_sales")
@@ -234,13 +233,13 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
     .eq("sale_kind", "dispatch")
     .in("id", invoiceIds);
   if (invoiceError || invoices?.length !== invoiceIds.length) {
-    return { ok: false, error: "One or more Broker Invoices are not eligible for bundling." };
+    return { ok: false, error: "One or more Dispatch Invoices are not eligible for bundling." };
   }
   if ((invoices ?? []).some((invoice) => !invoice.dispatch_date || invoice.dispatch_date < dispatchDateFrom || invoice.dispatch_date > dispatchDateTo)) {
-    return { ok: false, error: "Every selected Broker Invoice must fall within the dispatch date range." };
+    return { ok: false, error: "Every selected Dispatch Invoice must fall within the dispatch date range." };
   }
   if ((invoices ?? []).some((invoice) => invoice.bundled_dispatch_id)) {
-    return { ok: false, error: "A selected Broker Invoice already belongs to another bundled dispatch." };
+    return { ok: false, error: "A selected Dispatch Invoice already belongs to another bundled dispatch." };
   }
 
   // The value posted by the LOV is still untrusted. Resolve it within this
@@ -266,7 +265,7 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
     .in("broker_invoice_id", invoiceIds);
   if (alreadyBundledError) return { ok: false, error: friendlyError(alreadyBundledError) };
   if ((alreadyBundled ?? []).length > 0) {
-    return { ok: false, error: "A selected Broker Invoice already belongs to another bundled dispatch." };
+    return { ok: false, error: "A selected Dispatch Invoice already belongs to another bundled dispatch." };
   }
 
   const nextDispatch = await nextBundledDispatchNo(supabase);
@@ -309,17 +308,20 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
       ok: false,
       error: invoiceUpdateError
         ? friendlyError(invoiceUpdateError)
-        : "A selected Broker Invoice was assigned elsewhere. Review the available invoices and try again.",
+        : "A selected Dispatch Invoice was assigned elsewhere. Review the available invoices and try again.",
     };
   }
 
-  const { error: linksError } = await supabase.from("auction_bundled_dispatch_invoices").insert(
-    invoiceIds.map((brokerInvoiceId) => ({
-      factory_id: profile.factory_id,
-      bundled_dispatch_id: bundleId,
-      broker_invoice_id: brokerInvoiceId,
-    })),
-  );
+  // An empty dispatch has nothing to link, and PostgREST rejects an empty insert.
+  const { error: linksError } = invoiceIds.length === 0
+    ? { error: null }
+    : await supabase.from("auction_bundled_dispatch_invoices").insert(
+      invoiceIds.map((brokerInvoiceId) => ({
+        factory_id: profile.factory_id,
+        bundled_dispatch_id: bundleId,
+        broker_invoice_id: brokerInvoiceId,
+      })),
+    );
   if (linksError) {
     // The bundle FK clears invoice links and the join rows cascade atomically.
     const rollback = await deleteTenantRow(supabase, "auction_bundled_dispatches", bundleId);
@@ -343,10 +345,10 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
 /**
  * Owner-only. Edits the dispatch's own attributes — the date range and the
  * warehouse it leaves from. The dispatch number is system-assigned and the
- * set of bundled broker invoices is managed by create/delete, so neither is
+ * set of bundled dispatch invoices is managed by create/delete, so neither is
  * editable here.
  *
- * The date range still has to contain every broker invoice already bundled
+ * The date range still has to contain every dispatch invoice already bundled
  * into this dispatch: narrowing it past one of them would leave that invoice
  * in a dispatch whose dates it falls outside, which is exactly the state
  * createBundledDispatch refuses to produce.
@@ -402,7 +404,7 @@ export async function updateBundledDispatch(id: string, formData: FormData): Pro
   });
   if (outside.length > 0) {
     const names = outside.map((invoice) => formatFourDigitNo(invoice.sale_no as string) || "unknown").join(", ");
-    return { ok: false, error: `This date range excludes Broker Invoice ${names}, which is bundled into this dispatch. Widen the range or remove the invoice first.` };
+    return { ok: false, error: `This date range excludes Dispatch Invoice ${names}, which is bundled into this dispatch. Widen the range or remove the invoice first.` };
   }
 
   const { error: updateError } = await supabase
@@ -430,7 +432,7 @@ export async function updateBundledDispatch(id: string, formData: FormData): Pro
 
 /**
  * Owner-only. Deleting a bundled (physical) dispatch does not delete the
- * broker invoices linked to it — `auction_sales.bundled_dispatch_id` is
+ * dispatch invoices linked to it — `auction_sales.bundled_dispatch_id` is
  * ON DELETE SET NULL, so they simply become unbundled (eligible for a new
  * dispatch again) while the join rows cascade away with the dispatch.
  */

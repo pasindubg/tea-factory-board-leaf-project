@@ -287,6 +287,12 @@ export type EntityListCommand<Row> = {
   disabled?: (context: EntityListCommandContext<Row>) => boolean;
   disabledReason?: (context: EntityListCommandContext<Row>) => string | undefined;
   run?: (context: EntityListCommandContext<Row>) => Promise<ListMutationResult>;
+  /**
+   * Hands the selection to a workflow the page owns — a side drawer, a wizard
+   * — instead of running inline. Same escape hatch `create.onOpen` gives the
+   * "+ New" trigger, and it wins over `panel`/`confirm`/`run` when set.
+   */
+  onOpen?: (context: EntityListCommandContext<Row>) => void;
   confirm?: {
     title: string | ((context: EntityListCommandContext<Row>) => string);
     description: string | ((context: EntityListCommandContext<Row>) => string);
@@ -885,7 +891,8 @@ function EntityListPanel<Row>({
                 title={titleText}
                 disabled={disabled}
                 onClick={() => {
-                  if (command.panel) setPanelCommand(command.id);
+                  if (command.onOpen) command.onOpen(commandContext);
+                  else if (command.panel) setPanelCommand(command.id);
                   else if (command.confirm) setConfirmingCommand(command.id);
                   else void runCommand(command);
                 }}
@@ -964,7 +971,7 @@ function EntityListPanel<Row>({
       )}
 
       {(summary ?? beforeTable)?.(rows)}
-      <ListSearchPanel columns={definition.columns} controls={controls} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
+      <ListSearchPanel columns={definition.columns} controls={controls} toggles={definition.searchToggles} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
       {sideList ? (
         <div ref={sideScrollRef} className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {

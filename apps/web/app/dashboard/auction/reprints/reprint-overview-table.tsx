@@ -28,7 +28,7 @@ export type ReprintGradeOption = {
 };
 
 const COLUMNS: EntityListColumn<ReprintOverviewRow>[] = [
-  { key: "dispatchNo", label: "Broker invoice", accessor: (row) => row.dispatchNo ?? null, sortable: true, filter: "text", render: (row) => <Link href={`/dashboard/auction/${row.dispatchId}`} className="font-medium text-green-700 hover:underline dark:text-green-400">{row.dispatchNo ?? "—"}</Link> },
+  { key: "dispatchNo", label: "Dispatch invoice", accessor: (row) => row.dispatchNo ?? null, sortable: true, filter: "text", render: (row) => <Link href={`/dashboard/auction/${row.dispatchId}`} className="font-medium text-green-700 hover:underline dark:text-green-400">{row.dispatchNo ?? "—"}</Link> },
   // Where the chain STARTED. A re-print entered at cutover never had a
   // dispatch here, and reads as a real one without this.
   { key: "entrySource", label: "Origin", accessor: (row) => entrySourceChip(row.entrySource).label, sortable: true, filter: "select", filterOptions: entrySourceOptions(), minWidth: 150, render: (row) => { const chip = entrySourceChip(row.entrySource); return <span className={`rounded-full px-2 py-0.5 text-xs ${chip.style}`}>{chip.label}</span>; } },
@@ -106,7 +106,7 @@ const hint = "mt-1 block text-xs font-normal text-stone-500 dark:text-stone-400"
  *
  * - **Outstanding** — the lot is not in this system at all, because its sale
  *   predates it. Entered as an ordinary lot invoice (same numbering, prefix,
- *   grade and kg/bag rules) under a Broker Invoice badged `Re-print register`,
+ *   grade and kg/bag rules) under a Dispatch Invoice badged `Re-print register`,
  *   then moved straight to `re-print`.
  * - **Already entered** — the lot exists here and becomes the ROOT of a chain.
  */

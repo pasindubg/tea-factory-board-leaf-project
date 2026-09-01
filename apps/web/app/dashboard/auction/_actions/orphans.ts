@@ -34,7 +34,7 @@ export async function linkOrphanLot(input: {
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (lotError) return { ok: false, error: friendlyError(lotError) };
-  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Broker Invoice." };
+  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Dispatch Invoice." };
 
   let markId: string | null = null;
   if (input.candidateMarkCode) {
@@ -100,7 +100,7 @@ export async function linkOrphanLot(input: {
 }
 
 // The three resolver outcomes differ only by their state patch and audit label.
-// Every write is scoped to the selected Broker Invoice in the current factory.
+// Every write is scoped to the selected Dispatch Invoice in the current factory.
 type OrphanStateInput = { saleId: string; lotId: string; reason?: string };
 
 async function setOrphanState(
@@ -118,7 +118,7 @@ async function setOrphanState(
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (lotError) return { ok: false, error: friendlyError(lotError) };
-  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Broker Invoice." };
+  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Dispatch Invoice." };
 
   const { data: updated, error: updateError } = await supabase
     .from("auction_lots")
@@ -192,7 +192,7 @@ export async function rejectCandidate(input: {
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
   if (lotError) return { ok: false, error: friendlyError(lotError) };
-  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Broker Invoice." };
+  if (!lot) return { ok: false, error: "The unresolved invoice was not found for this Dispatch Invoice." };
 
   const { error: auditError } = await writeAudit(supabase, profile.factory_id, {
     saleId: input.saleId,

@@ -18,7 +18,7 @@ describe("isUnsoldLot", () => {
 
   it("still marks it un-sold when the sold lot is on a DIFFERENT invoice of that broker", () => {
     // Both invoices carry the same broker and sale, which is the whole point of
-    // keying on broker+sale rather than on the broker invoice id.
+    // keying on broker+sale rather than on the dispatch invoice id.
     const groups = soldBrokerSaleKeys([sold(BPML, "0024")]);
     expect(groups.has(brokerSaleKey(BPML, "0024"))).toBe(true);
   });

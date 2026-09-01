@@ -1,0 +1,1 @@
+DROP INDEX "uq_auction_sales_open_broker_mark";

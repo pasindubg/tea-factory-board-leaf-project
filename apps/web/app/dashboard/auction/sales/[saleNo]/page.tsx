@@ -107,7 +107,7 @@ function plural(n: number, singular: string, pluralText = `${singular}s`) {
   return `${n} ${n === 1 ? singular : pluralText}`;
 }
 
-// Human label for a broker invoice's furthest-progressed status — drives the
+// Human label for a dispatch invoice's furthest-progressed status — drives the
 // "Stage" column in the Document reconciliation assistant's broker list.
 const BROKER_STAGE_LABEL: Record<string, string> = {
   draft: "Draft",
@@ -186,7 +186,7 @@ export default async function SaleDetailPage({
   const allLotRows = (allLots ?? []) as unknown as LotRow[];
 
   // A sale can be identified by an explicit lot assignment after reconciliation,
-  // or by the target sale number on its broker invoice before that assignment is
+  // or by the target sale number on its dispatch invoice before that assignment is
   // present. Keep both paths so every row on the sales overview has a detail page.
   // A dispatch's own number identifies a sale ONLY when it has no target: broker
   // invoice 26B01-0020 must not leak into sale 20 when it targets sale 22.
@@ -220,14 +220,14 @@ export default async function SaleDetailPage({
       <DetailRecordPanel
         eyebrow="Sale details"
         title="No auction sales yet"
-        description="A sale appears here once a broker invoice is created and dispatched."
+        description="A sale appears here once a dispatch invoice is created and dispatched."
       >
-        <DetailField label="Broker invoices" value="0" />
+        <DetailField label="Dispatch invoices" value="0" />
         <DetailField label="Lots" value="0" />
       </DetailRecordPanel>
     );
   }
-  // The Invoices tab re-derives its sale from this broker invoice's own target,
+  // The Invoices tab re-derives its sale from this dispatch invoice's own target,
   // so it must be one that BELONGS to this sale. A dispatch pulled in only
   // because one of its lots was assigned here (a re-print register entry, say)
   // targets a different sale, and picking it emptied the tab down to that lot.
@@ -430,7 +430,7 @@ export default async function SaleDetailPage({
   // Weight offered in this sale, over the same lots the "Lots sold" ratio
   // counts, so the two figures always describe one population.
   const totalNetKg = lotRows.reduce((sum, lot) => sum + Number(lot.net_wt ?? 0), 0);
-  // One auction sale can span several broker invoices, and they need not share
+  // One auction sale can span several dispatch invoices, and they need not share
   // a sale date — show the span rather than silently picking the first.
   const saleDates = [...new Set(dispatches.map((dispatch) => dispatch.sale_date).filter(Boolean))].sort();
   const saleDateLabel = saleDates.length === 0
@@ -458,7 +458,7 @@ export default async function SaleDetailPage({
     {
       key: "settled",
       label: "Settled",
-      metric: settledCount > 0 ? plural(settledCount, "broker invoice", "broker invoices") : "Pending",
+      metric: settledCount > 0 ? plural(settledCount, "dispatch invoice", "dispatch invoices") : "Pending",
     },
   ];
   const flagCount = (flag: keyof LotRow) => issueLotRows.filter((lot) => lot[flag]).length;
@@ -582,7 +582,7 @@ export default async function SaleDetailPage({
       <DetailRecordPanel
         eyebrow="Sale details"
         title={`Sale ${displaySaleNo}`}
-        description={`${plural(dispatches.length, "broker invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${notSoldCount} not sold`}
+        description={`${plural(dispatches.length, "dispatch invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${notSoldCount} not sold`}
         contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
         footer={
           issueSteps.length > 0 || revenueCheck.status !== "pending" && revenueCheck.status !== "unavailable" ? (
@@ -709,7 +709,7 @@ export default async function SaleDetailPage({
               />
             ),
           },
-          { id: "dispatches", label: "Broker invoices", count: `${visibleDispatchTableRows.length} broker invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
+          { id: "dispatches", label: "Dispatch invoices", count: `${visibleDispatchTableRows.length} dispatch invoices`, content: <DispatchesInSaleTable rows={visibleDispatchTableRows} /> },
           { id: "documents", label: "Documents", count: `${visibleDocumentRows.length} documents`, content: <SaleDocumentsTable rows={visibleDocumentRows} /> },
         ]}
       />

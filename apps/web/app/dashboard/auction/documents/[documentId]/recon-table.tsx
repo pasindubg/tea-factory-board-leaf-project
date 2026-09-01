@@ -10,7 +10,7 @@ import { registerLotReprint, registerLotSkippedSale } from "@/app/dashboard/auct
 /**
  * What the row is SHOWN as. Two of these are not reconciliation statuses:
  * recon ① compares only against the lots invoiced in this sale group, so a lot
- * carried forward from an earlier broker invoice lands in `not-acknowledged`
+ * carried forward from an earlier dispatch invoice lands in `not-acknowledged`
  * there and is resolved afterwards (see resolveAckCarryForward). The
  * distinction is kept internally so a registered re-print can be told apart
  * from tea the broker catalogued that the factory has no record of; the

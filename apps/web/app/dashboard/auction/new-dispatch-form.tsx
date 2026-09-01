@@ -47,7 +47,7 @@ export function NewDispatchForm({
           pendingText="Creating…"
           className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
         >
-          Create broker invoice
+          Create dispatch invoice
         </SubmitButton>
         {onCancel && <button type="button" onClick={onCancel} className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 dark:border-stone-600 dark:text-stone-200">Cancel</button>}
       </div>
@@ -80,20 +80,22 @@ export function NewDispatchFields({
     setSaleDate(previousSameSale?.saleDate ?? addDays(invoiceDate, 14));
   }, [dispatchHistory, invoiceDate, targetSaleNo]);
 
-  if (brokers.length === 0 || marks.length === 0) {
+  // The broker may be decided after dispatch, so only the selling mark gates
+  // the form — a blank broker files the invoice under the IMB placeholder.
+  if (marks.length === 0) {
     return (
       <Link
         href="/dashboard/auction/registry"
         className="rounded-md bg-green-700 dark:bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:hover:bg-green-700"
       >
-        Add a broker and selling mark first
+        Add a selling mark first
       </Link>
     );
   }
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <DetailLovField label="Broker" source="auction.brokers" name="broker_id" required />
+        <DetailLovField label="Broker" source="auction.brokers" name="broker_id" placeholder="Leave blank to decide later" />
         <DetailLovField label="Selling mark" source="auction.marks" name="selling_mark_id" required />
         <div>
           <label className={label}>Broker lorry no.</label>
@@ -108,11 +110,11 @@ export function NewDispatchFields({
           <input name="transporter" placeholder="Transporter name" className={input} />
         </div>
         <div>
-          <label className={label}>Broker invoice number</label>
+          <label className={label}>Dispatch invoice number</label>
           <input
             value={nextDispatchNo}
             readOnly
-            aria-label="Broker invoice number"
+            aria-label="Dispatch invoice number"
             className={`${input} cursor-not-allowed bg-stone-50 font-mono tabular-nums text-stone-500 dark:bg-stone-800 dark:text-stone-400`}
           />
           {prefixes.length > 1 && (

@@ -458,7 +458,7 @@ export function DispatchedLotsTable({
         const totalNet = rows.reduce((sum, row) => sum + Number(row.net_wt ?? 0), 0);
         return `${rows.length} lot${rows.length === 1 ? "" : "s"} · ${totalNet.toFixed(2)} kg net`;
       }}
-      emptyMessage="No lots yet. Use New lot to enter the invoices under this broker invoice."
+      emptyMessage="No lots yet. Use New lot to enter the invoices under this dispatch invoice."
       filteredEmptyMessage="No lots match these filters."
       canCreate={canAdd}
       create={canAdd ? {
@@ -507,7 +507,7 @@ function ReprintForm({
     <form action={action} className="mt-1 space-y-3 rounded-lg border border-stone-200 p-3 text-left dark:border-stone-700">
       <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
       <p className="text-xs leading-5 text-stone-600 dark:text-stone-300">
-        This keeps the lot in this sale as history. Adding the same invoice to a later broker invoice links the new lot as the re-print.
+        This keeps the lot in this sale as history. Adding the same invoice to a later dispatch invoice links the new lot as the re-print.
       </p>
       <label className="block text-xs font-medium text-stone-600 dark:text-stone-300">
         Additional sample kg

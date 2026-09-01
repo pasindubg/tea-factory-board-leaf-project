@@ -5,6 +5,7 @@ import type { ColumnDef, ListDefinition } from "@/components/list-controls";
 import type { AuctionDispatchListRow } from "@/lib/list-resources";
 import { createDispatchWithId } from "./actions";
 import { entrySourceChip, entrySourceOptions } from "./entry-source";
+import { IMAGINARY_BROKER_NAME } from "./placeholder-broker";
 import { formatSaleNo } from "./sale-number";
 import { BROKER_INVOICE_STATUSES, stateBucket, stateBucketOptions } from "./state-buckets";
 
@@ -18,7 +19,7 @@ export function cappedDispatchStatus(status: string | null) {
 }
 
 const DISPATCH_LIST_COLUMNS: ColumnDef<DispatchListItem>[] = [
-  { key: "sale_no", label: "Broker invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
+  { key: "sale_no", label: "Dispatch invoice", accessor: (row) => row.sale_no ?? null, sortable: true, filter: "text" },
   { key: "broker", label: "Broker", accessor: (row) => row.brokers?.name ?? null, sortable: true, filter: "select" },
   { key: "target_sale_no", label: "Sale", accessor: (row) => row.target_sale_no ?? null, sortable: true, filter: "text" },
   { key: "dispatch_date", label: "Invoice date", accessor: (row) => row.dispatch_date ?? null, sortable: true, searchInput: "date" },
@@ -33,6 +34,11 @@ const DISPATCH_LIST = {
   add: true,
   edit: false,
   delete: false,
+  // Placeholder invoices are working state, not real dispatch invoices — this
+  // hides them without hiding them from anyone who wants to see them.
+  // No spaces around the operator: tokeniseAdvancedQuery splits on whitespace,
+  // so `broker != IMB` reads as three free-text tokens, not one clause.
+  searchToggles: [{ id: "ignore-imb", label: "Ignore IMB", query: `broker!=${IMAGINARY_BROKER_NAME}` }],
 } satisfies ListDefinition<DispatchListItem>;
 
 /**
@@ -59,18 +65,18 @@ export function InvoiceSideList({
       initialRows={rows}
       definition={{ ...DISPATCH_LIST, add: Boolean(onCreate) }}
       getId={(row) => row.id}
-      rowLabel={(row) => `Broker invoice ${row.sale_no ?? "unknown"}`}
+      rowLabel={(row) => `Dispatch invoice ${row.sale_no ?? "unknown"}`}
       canCreate={Boolean(onCreate)}
       create={onCreate ? {
         action: createDispatchWithId,
-        disabledReason: "Finish creating the current broker invoice first.",
+        disabledReason: "Finish creating the current dispatch invoice first.",
         onOpen: onCreate,
       } : undefined}
       chrome="records-only"
       searchPanelId={INVOICE_SEARCH_PANEL_ID}
       className="h-full min-h-0 xl:flex-col"
-      emptyMessage="No broker invoices."
-      filteredEmptyMessage="No broker invoices match."
+      emptyMessage="No dispatch invoices."
+      filteredEmptyMessage="No dispatch invoices match."
       sideList={{
         href: (dispatch) => `/dashboard/auction/${dispatch.id}`,
         onSelect,

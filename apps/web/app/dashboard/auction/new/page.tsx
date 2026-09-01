@@ -6,11 +6,11 @@ import { resolveInvoicePrefix } from "../invoice-number";
 import { NewBrokerInvoiceBootstrap } from "./new-broker-invoice-bootstrap";
 
 /**
- * Fallback landing spot for "Broker Invoice Details" nav/redirects: if any broker
+ * Fallback landing spot for "Dispatch Invoice Details" nav/redirects: if any broker
  * invoice exists, go straight to the latest one (same target the nav's
  * redirect-to-latest logic in dashboard/layout.tsx resolves). Only when a
- * factory has zero broker invoices ever does this show the bootstrap
- * creation form below — the one place a broker invoice can be created
+ * factory has zero dispatch invoices ever does this show the bootstrap
+ * creation form below — the one place a dispatch invoice can be created
  * without an existing record to start from.
  */
 export default async function NewBrokerInvoicePage() {

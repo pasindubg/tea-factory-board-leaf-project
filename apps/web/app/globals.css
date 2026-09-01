@@ -201,7 +201,7 @@ body {
 }
 
 /*
- * Printing a Broker Invoice. The workspace is never what should come out of
+ * Printing a Dispatch Invoice. The workspace is never what should come out of
  * the printer, so every direct child of <body> is removed except the printout
  * (which is portalled onto <body> for exactly this reason) and Next.js's own
  * dev/portal nodes are dropped with it.

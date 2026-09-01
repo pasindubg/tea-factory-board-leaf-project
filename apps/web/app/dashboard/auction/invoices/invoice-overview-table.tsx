@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { EntityList, type EntityListColumn } from "@/components/entity-list";
+import { EntityList, type EntityListColumn, type EntityListCommand } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import { LovCombobox } from "@/components/lov-combobox";
 import { displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
@@ -30,7 +30,7 @@ function OneLine({ value }: { value: string | null }) {
 }
 
 /**
- * An invoice may be changed while its broker invoice is still an open draft;
+ * An invoice may be changed while its dispatch invoice is still an open draft;
  * after that only the owner may touch it. Identical to the rule the broker
  * invoice detail page applies, and to what the server independently enforces
  * in lots.ts (dispatchEditError for updates, an inline check in deleteLot) —
@@ -58,14 +58,14 @@ function checkMarker(row: { state: string | null; reprint: boolean }) {
 
 /**
  * Column order is the one the factory's existing invoice sheet uses, so the
- * screen can be read against the paper it replaces. The broker invoice link,
+ * screen can be read against the paper it replaces. The dispatch invoice link,
  * lot state and BI state follow after it: they are not on that sheet, but the
  * BI state is what decides whether a row may still be edited, so hiding it
  * would make the locking rules look arbitrary.
  */
-function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOverviewRow>[] {
+function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean): EntityListColumn<InvoiceOverviewRow>[] {
   // Per-row gate: a locked row keeps showing its value instead of an input, so
-  // a confirmed broker invoice cannot be edited from here by a non-owner.
+  // a confirmed dispatch invoice cannot be edited from here by a non-owner.
   const cell = (
     row: InvoiceOverviewRow,
     display: ReactNode,
@@ -74,7 +74,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
 
   const num = (value: number | null | undefined) => (value != null ? value.toFixed(2) : "—");
 
-  return [
+  const all: EntityListColumn<InvoiceOverviewRow>[] = [
     {
       key: "dispatchDate",
       label: "Dispatch Date",
@@ -137,7 +137,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       render: (row) => row.grade ?? "—",
       // Keeps an explicit editor (unlike the broker-invoice lot list, which
       // just declares lovSource) because `cell` gates editing per row: a
-      // confirmed broker invoice's lot is owner-only.
+      // confirmed dispatch invoice's lot is owner-only.
       edit: (row, { formId }) => cell(row, row.grade ?? "—", () => (
         <LovCombobox
           source="auction.grades"
@@ -218,16 +218,16 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       sortable: true,
       filter: "text",
       render: (row) => row.saleNo ?? "—",
-      // This is the broker invoice's own target_sale_no, shared by every lot
+      // This is the dispatch invoice's own target_sale_no, shared by every lot
       // under it (see auction.invoice-overview in list-resource-registry.ts) —
-      // saving here renames the sale number for the whole broker invoice, not
+      // saving here renames the sale number for the whole dispatch invoice, not
       // just this one lot row.
       edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
         <input
           form={formId}
           name="target_sale_no"
           defaultValue={row.saleNo ?? ""}
-          title="Changes the sale number for the whole broker invoice this lot belongs to."
+          title="Changes the sale number for the whole dispatch invoice this lot belongs to."
           onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
           className={inputClass}
         />
@@ -271,7 +271,7 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
     // ---- Not on the paper sheet, kept after it ----
     {
       key: "brokerInvoiceNo",
-      label: "Broker invoice",
+      label: "Dispatch invoice",
       accessor: (row) => row.brokerInvoiceNo,
       sortable: true,
       filter: "text",
@@ -352,9 +352,12 @@ function columns(canEdit: boolean, isOwner: boolean): EntityListColumn<InvoiceOv
       render: (row) => <span className={`rounded-full px-2 py-0.5 text-xs ${stateBucket(row.biStatus).style}`}>{stateBucket(row.biStatus).label}</span>,
     },
   ];
+  // On a dispatch's own page the dispatch date is already in the header group,
+  // and every row here shares it — a column that repeats one value.
+  return scopedToDispatch ? all.filter((column) => column.key !== "dispatchDate") : all;
 }
 
-/** Each invoice deletes through its own broker invoice, so this fans out. */
+/** Each invoice deletes through its own dispatch invoice, so this fans out. */
 async function deleteInvoices(ids: string[], rows: InvoiceOverviewRow[]): Promise<ListMutationResult> {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const failures: string[] = [];
@@ -384,6 +387,9 @@ export function InvoiceOverviewTable({
   canCreate,
   grades,
   defaults,
+  dispatchId,
+  title,
+  commands,
 }: {
   rows: InvoiceOverviewRow[];
   isOwner: boolean;
@@ -391,9 +397,13 @@ export function InvoiceOverviewTable({
   canCreate: boolean;
   defaults: NewInvoiceDefaults;
   grades: GradeOption[];
+  /** Narrows the list to one physical dispatch — the dispatch detail tab. */
+  dispatchId?: string;
+  title?: string;
+  commands?: EntityListCommand<InvoiceOverviewRow>[];
 }) {
   const definition: ListDefinition<InvoiceOverviewRow> = {
-    columns: columns(canEdit, isOwner),
+    columns: columns(canEdit, isOwner, Boolean(dispatchId)),
     selectionMode: canEdit ? "multi" : "single",
     add: canCreate,
     edit: canEdit,
@@ -404,11 +414,13 @@ export function InvoiceOverviewTable({
 
   return (
     <EntityList
-      resource={{ key: "auction.invoice-overview" }}
+      resource={dispatchId ? { key: "auction.invoice-overview", params: { dispatchId } } : { key: "auction.invoice-overview" }}
       initialRows={rows}
       definition={definition}
       getId={(row) => row.id}
       rowLabel={(row) => `invoice ${row.invoiceNo || row.id}`}
+      title={title}
+      commands={commands}
       description={(all) => {
         const net = all.reduce((sum, row) => sum + Number(row.netWt ?? 0), 0);
         return `${all.length} invoice${all.length === 1 ? "" : "s"} · ${net.toFixed(2)} kg net`;
@@ -420,7 +432,13 @@ export function InvoiceOverviewTable({
         action: createInvoiceFromOverview,
         label: "New invoice",
         renderRow: ({ formId }) => (
-          <NewInvoiceRow formId={formId} grades={grades} defaults={defaults} />
+          <NewInvoiceRow
+            formId={formId}
+            grades={grades}
+            defaults={defaults}
+            hideDispatchDate={Boolean(dispatchId)}
+            bundledDispatchId={dispatchId}
+          />
         ),
       } : undefined}
       createPlacement="toolbar"
@@ -434,7 +452,7 @@ export function InvoiceOverviewTable({
         action: (ids, rows) => deleteInvoices(ids, rows),
         disabled: (selected) => locked(selected).length > 0,
         disabledReason: (selected) => locked(selected).length > 0
-          ? "Only the owner can delete an invoice after its broker invoice is confirmed."
+          ? "Only the owner can delete an invoice after its dispatch invoice is confirmed."
           : undefined,
         title: (count) => `Delete ${count} invoice${count === 1 ? "" : "s"}?`,
         description: () => "The lot and its invoice records are removed. Financial sale or VAT records safely block deletion. This cannot be undone.",

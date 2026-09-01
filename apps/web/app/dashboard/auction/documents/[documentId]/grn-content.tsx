@@ -27,9 +27,9 @@ export function GrnContent({
         </p>
       </div>
       <p className="rounded-md bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-700 px-3 py-2 text-sm text-stone-600 dark:text-stone-300">
-        The GRN is a stored receiving record with no per-lot reconciliation of its own — it&apos;s what moved this broker invoice to the GRN stage.{" "}
+        The GRN is a stored receiving record with no per-lot reconciliation of its own — it&apos;s what moved this dispatch invoice to the GRN stage.{" "}
         <Link href={`/dashboard/auction/${saleId}`} className="text-green-700 dark:text-green-400 hover:underline">
-          View the broker invoice
+          View the dispatch invoice
         </Link>
         .
       </p>

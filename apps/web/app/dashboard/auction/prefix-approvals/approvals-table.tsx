@@ -20,7 +20,7 @@ function formatDate(value: string | null) {
 function summarizePayload(row: AuctionPrefixExceptionListRow): string {
   const p = row.payload;
   if (row.category === "broker_invoice") {
-    return `Broker invoice for sale ${p.target_sale_no ?? "—"}`;
+    return `Dispatch invoice for sale ${p.target_sale_no ?? "—"}`;
   }
   const invoiceNo = Array.isArray(p.invoice_no) ? (p.invoice_no as string[]).join(", ") : String(p.invoice_no ?? "—");
   return `Lot invoice ${invoiceNo}, grade ${p.grade ?? "—"}`;
