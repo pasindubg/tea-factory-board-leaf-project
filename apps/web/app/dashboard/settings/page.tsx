@@ -5,6 +5,7 @@ import { loadListResource } from "@/lib/list-resource-registry";
 import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES, ROLE_LABELS } from "@/lib/roles";
 import { changeOwnPassword, changeOwnUsername, saveFactoryBranding, savePersonalProfile } from "./actions";
+import { ELEVATIONS } from "./elevations";
 import { StaffDirectory } from "./staff-directory";
 
 type PersonalProfile = {
@@ -48,7 +49,7 @@ export default async function SettingsPage() {
       .maybeSingle(),
     supabase
       .from("factories")
-      .select("name, logo_path")
+      .select("name, logo_path, elevation")
       .eq("id", profile.factory_id)
       .maybeSingle(),
     loadListResource({ key: "users.staff-directory" }),
@@ -261,6 +262,15 @@ export default async function SettingsPage() {
                 )}
                 <Field label="Factory name" required>
                   <input name="factory_name" required maxLength={160} defaultValue={factory.name} className={inputClass} />
+                </Field>
+                <Field label="Elevation" hint="Printed on every dispatch invoice.">
+                  <select name="factory_elevation" defaultValue={factory.elevation ?? "Low Grown"} className={inputClass}>
+                    {ELEVATIONS.map((elevation) => (
+                      <option key={elevation} value={elevation}>
+                        {elevation}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
                 <Field label="Factory image" hint="JPG, PNG, or WebP. Maximum 5 MB.">
                   <input

@@ -158,6 +158,11 @@ type RefreshInvoiceOverviewLot = {
 type RefreshDispatchLotRow = RefreshLotRow & {
   shutout_reason: string | null;
   lot_source: string | null;
+  mf_date: string | null;
+  bag_type: string | null;
+  chest_type: string | null;
+  chest_numbers: string | null;
+  moisture_level: string | number | null;
   marks: { code: string; name: string } | null;
 };
 
@@ -1187,7 +1192,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const [{ data: lots, error: lotError }, { data: thresholds, error: thresholdError }] = await Promise.all([
         supabase
           .from("auction_lots")
-          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, skipped_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, mf_date, bag_type, chest_type, chest_numbers, moisture_level, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, skipped_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
           .eq("sale_id", saleId)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
@@ -1252,6 +1257,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             kg_per_bag: lot.kg_per_bag == null ? null : Number(lot.kg_per_bag),
             sample_allowance: lot.sample_allowance == null ? null : Number(lot.sample_allowance),
             net_wt: lot.net_wt == null ? null : Number(lot.net_wt),
+            mf_date: lot.mf_date ?? null,
+            bag_type: lot.bag_type ?? null,
+            chest_type: lot.chest_type ?? null,
+            chest_numbers: lot.chest_numbers ?? null,
+            moisture_level: lot.moisture_level == null ? null : Number(lot.moisture_level),
             state: lot.state,
             shutout: Boolean(lot.shutout),
             shutout_reason: lot.shutout_reason ?? null,

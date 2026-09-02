@@ -51,6 +51,16 @@ export default async function SaleDetailPage({
   const sellingMark = (marks ?? []).find((mark) => mark.id === (sale as { selling_mark_id?: string | null }).selling_mark_id);
   const currentDispatch = dispatchResult.rows.find((dispatch) => dispatch.id === saleId);
 
+  // The printed estate invoice carries the factory's own letterhead.
+  const { data: factory } = await supabase
+    .from("factories")
+    .select("name, logo_path, elevation")
+    .eq("id", profile.factory_id)
+    .single();
+  const { data: signedLogo } = factory?.logo_path
+    ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
+    : { data: null };
+
   const soldLotIds = (saleLines ?? []).map((line) => line.lot_id as string).filter(Boolean);
 
   const dispatchPrefixes = (dispatchPrefixRows ?? []) as { id: string; prefix: string; active: boolean }[];
@@ -78,6 +88,8 @@ export default async function SaleDetailPage({
           status: sale.status as string | null,
           selling_mark_id: (sale as { selling_mark_id?: string | null }).selling_mark_id ?? null,
           selling_mark: sellingMark ? `${sellingMark.code as string}${sellingMark.name ? ` — ${sellingMark.name as string}` : ""}` : null,
+          selling_mark_code: (sellingMark?.code as string | undefined) ?? null,
+          selling_mark_name: (sellingMark?.name as string | undefined) ?? null,
           broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
           transporter: (sale as { transporter?: string | null }).transporter ?? null,
@@ -86,6 +98,11 @@ export default async function SaleDetailPage({
         }}
         dispatches={dispatchResult.rows}
         broker={broker}
+        factory={{
+          name: factory?.name ?? "",
+          logoUrl: signedLogo?.signedUrl ?? null,
+          elevation: (factory?.elevation as string | null) ?? null,
+        }}
         rows={lotResult.rows}
         isOwner={isOwner}
         marks={(marks ?? []).map((m) => ({ id: m.id as string, code: m.code as string, name: m.name as string | null }))}

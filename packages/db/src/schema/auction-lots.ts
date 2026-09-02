@@ -40,6 +40,15 @@ export const auctionLots = pgTable(
     netWt: numeric("net_wt", { precision: 10, scale: 2 }).notNull(),
     store: text("store"),
     category: text("category"),
+    // Columns the printed TEA ESTATE INVOICE carries that nothing else in the
+    // auction flow derives. Everything else on that form is already a lot
+    // column: packages = bags, net weight each = kg_per_bag, sample allow =
+    // sample_allowance, total net = net_wt, total gross = net_wt + sample.
+    mfDate: text("mf_date"), // manufacture date, as printed
+    bagType: text("bag_type"), // F/H/B — Full Bag, Half Bag, Bulk
+    chestType: text("chest_type"), // e.g. RIGID SAC, PAPER SACK
+    chestNumbers: text("chest_numbers"), // e.g. 1 - 20
+    moistureLevel: numeric("moisture_level", { precision: 5, scale: 2 }),
     // Where this row originated. `factory` = entered from factory invoice data;
     // `acknowledgement` = broker acknowledgement contained a lot that was not
     // in the factory-entered dispatch.

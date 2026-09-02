@@ -9,6 +9,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { createDispatchedLotForList, deleteLot, markReprint, updateLot } from "../actions";
+import { BAG_TYPES } from "../bag-types";
 import { LOT_STATES } from "../lot-states";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { stateBucket } from "../state-buckets";
@@ -195,6 +196,68 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       render: (row) => Number(row.net_wt ?? 0).toFixed(2),
     },
     {
+      key: "mf_date",
+      label: "M/F date",
+      accessor: (row) => row.mf_date ?? null,
+      sortable: true,
+      filter: "text",
+      render: (row) => row.mf_date ?? "—",
+      edit: (row, { formId }) => (
+        <input form={formId} name="mf_date" type="date" defaultValue={row.mf_date ?? ""} className={inputClass} />
+      ),
+    },
+    {
+      key: "bag_type",
+      label: "F/H/B",
+      accessor: (row) => row.bag_type ?? null,
+      sortable: true,
+      filter: "select",
+      filterOptions: BAG_TYPES.map((bagType) => ({ value: bagType, label: bagType })),
+      render: (row) => row.bag_type ?? "—",
+      edit: (row, { formId }) => (
+        <select form={formId} name="bag_type" defaultValue={row.bag_type ?? ""} className={inputClass}>
+          <option value="">—</option>
+          {BAG_TYPES.map((bagType) => <option key={bagType} value={bagType}>{bagType}</option>)}
+        </select>
+      ),
+    },
+    {
+      key: "chest_type",
+      label: "Type of chests",
+      accessor: (row) => row.chest_type ?? null,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      render: (row) => row.chest_type ?? "—",
+      edit: (row, { formId }) => (
+        <input form={formId} name="chest_type" defaultValue={row.chest_type ?? ""} placeholder="RIGID SAC" className={inputClass} />
+      ),
+    },
+    {
+      key: "chest_numbers",
+      label: "Chest nos.",
+      accessor: (row) => row.chest_numbers ?? null,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      render: (row) => row.chest_numbers ?? "—",
+      edit: (row, { formId }) => (
+        <input form={formId} name="chest_numbers" defaultValue={row.chest_numbers ?? ""} placeholder="1 - 20" className={inputClass} />
+      ),
+    },
+    {
+      key: "moisture_level",
+      label: "Moisture %",
+      accessor: (row) => row.moisture_level == null ? null : Number(row.moisture_level),
+      sortable: true,
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      render: (row) => row.moisture_level == null ? "—" : Number(row.moisture_level).toFixed(1),
+      edit: (row, { formId }) => (
+        <input form={formId} name="moisture_level" type="number" min="0" step="0.1" defaultValue={row.moisture_level == null ? "" : Number(row.moisture_level)} className={numberInputClass} />
+      ),
+    },
+    {
       key: "state",
       label: "State",
       accessor: (row) => soldLotIds.has(row.id) ? "sold" : row.state ?? null,
@@ -366,6 +429,33 @@ function InlineCreateCells({
         />
       </td>
       <td className="px-4 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400">Calculated</td>
+      <td className="px-4 py-3">
+        <input form={formId} name="mf_date" type="date" aria-label="Manufacture date" className={createInputClass} />
+      </td>
+      <td className="px-4 py-3">
+        <select form={formId} name="bag_type" defaultValue="" aria-label="Full, half, or bulk bag" className={createInputClass}>
+          <option value="">—</option>
+          {BAG_TYPES.map((bagType) => <option key={bagType} value={bagType}>{bagType}</option>)}
+        </select>
+      </td>
+      <td className="px-4 py-3">
+        <input form={formId} name="chest_type" placeholder="RIGID SAC" aria-label="Type of chests" className={createInputClass} />
+      </td>
+      <td className="px-4 py-3">
+        <input form={formId} name="chest_numbers" placeholder="1 - 20" aria-label="Chest numbers" className={createInputClass} />
+      </td>
+      <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="moisture_level"
+          type="number"
+          min="0"
+          step="0.1"
+          placeholder="0.0"
+          aria-label="Moisture level"
+          className={`${createInputClass} text-right`}
+        />
+      </td>
       <td className="px-4 py-3">
         <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800 dark:bg-blue-900 dark:text-blue-300">
           Invoiced
