@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
+import { BAG_TYPES } from "../bag-types";
 import { formatFourDigitNo } from "../sale-number";
 
 const input = "mt-1 w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-2 text-sm";
@@ -83,6 +84,37 @@ export function DispatchLotForm({
         <div>
           <label className={label}>Sample kg</label>
           <input name="sample_allowance" type="number" min="0" step="0.01" placeholder="0.00" className={input} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={label}>M/F date</label>
+            <input name="mf_date" type="date" className={input} />
+          </div>
+          <div>
+            <label className={label}>F/H/B</label>
+            <select name="bag_type" defaultValue="" className={`${input} appearance-none`}>
+              <option value="">—</option>
+              {BAG_TYPES.map((bagType) => (
+                <option key={bagType} value={bagType}>
+                  {bagType}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={label}>Type of chests</label>
+            <input name="chest_type" placeholder="RIGID SAC" className={input} />
+          </div>
+          <div>
+            <label className={label}>Chest numbers</label>
+            <input name="chest_numbers" placeholder="1 - 20" className={input} />
+          </div>
+        </div>
+        <div>
+          <label className={label}>Moisture level (%)</label>
+          <input name="moisture_level" type="number" min="0" step="0.1" placeholder="0.0" className={input} />
         </div>
       <div className="flex flex-wrap gap-2">
         <SubmitButton

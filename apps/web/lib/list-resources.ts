@@ -206,6 +206,11 @@ export type AuctionDispatchLotListRow = {
   kg_per_bag: number | null;
   sample_allowance: string | number | null;
   net_wt: string | number | null;
+  mf_date: string | null;
+  bag_type: string | null;
+  chest_type: string | null;
+  chest_numbers: string | null;
+  moisture_level: string | number | null;
   state: string | null;
   shutout: boolean;
   shutout_reason: string | null;

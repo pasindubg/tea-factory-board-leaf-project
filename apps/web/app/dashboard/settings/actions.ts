@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { friendlyError } from "@/lib/errors";
 import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES } from "@/lib/roles";
+import { ELEVATIONS } from "./elevations";
 
 const SETTINGS_PATH = "/dashboard/settings";
 const EMPLOYMENT_TYPES = new Set(["permanent", "contract", "temporary", "part_time", "seasonal"]);
@@ -123,6 +124,10 @@ export async function saveFactoryBranding(formData: FormData) {
   const factoryName = String(formData.get("factory_name") ?? "").trim();
   if (!factoryName) goToSettings("error", "Factory name is required.");
   if (factoryName.length > 160) goToSettings("error", "Factory name is too long.");
+  const elevation = String(formData.get("factory_elevation") ?? "").trim();
+  if (!ELEVATIONS.includes(elevation as (typeof ELEVATIONS)[number])) {
+    goToSettings("error", "Choose a valid elevation.");
+  }
 
   const { data: currentFactory, error: currentError } = await supabase
     .from("factories")
@@ -159,7 +164,7 @@ export async function saveFactoryBranding(formData: FormData) {
 
   const { data: updated, error: updateError } = await supabase
     .from("factories")
-    .update({ name: factoryName, logo_path: nextLogoPath })
+    .update({ name: factoryName, elevation, logo_path: nextLogoPath })
     .eq("id", profile.factory_id)
     .select("id")
     .maybeSingle();

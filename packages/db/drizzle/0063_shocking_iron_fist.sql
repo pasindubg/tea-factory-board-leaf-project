@@ -1,0 +1,1 @@
+ALTER TABLE "factories" ADD COLUMN "elevation" text DEFAULT 'Low Grown';

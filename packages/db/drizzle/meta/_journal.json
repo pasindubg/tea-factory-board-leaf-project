@@ -442,6 +442,20 @@
       "when": 1788274915303,
       "tag": "0062_left_lilandra",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788279402790,
+      "tag": "0063_shocking_iron_fist",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1788283779201,
+      "tag": "0064_famous_nightmare",
+      "breakpoints": true
     }
   ]
 }

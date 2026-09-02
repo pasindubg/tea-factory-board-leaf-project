@@ -46,6 +46,8 @@ type SaleDetail = {
   status: string | null;
   selling_mark_id: string | null;
   selling_mark: string | null;
+  selling_mark_code: string | null;
+  selling_mark_name: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
   transporter: string | null;
@@ -90,6 +92,7 @@ export function DispatchDetailEditor({
   sale,
   dispatches,
   broker,
+  factory,
   rows,
   marks,
   grades,
@@ -101,6 +104,7 @@ export function DispatchDetailEditor({
   sale: SaleDetail;
   dispatches: DispatchListItem[];
   broker: string;
+  factory: { name: string; logoUrl: string | null; elevation: string | null };
   rows: LotRow[];
   marks: MarkOption[];
   grades: GradeOption[];
@@ -522,18 +526,16 @@ export function DispatchDetailEditor({
         creating a new invoice, which has nothing to print yet. */}
     {!creatingInvoice && (
       <BrokerInvoicePrintout
-        saleNo={sale.sale_no}
+        factoryName={factory.name}
+        factoryLogoUrl={factory.logoUrl}
+        elevation={factory.elevation}
         broker={broker}
-        sellingMark={sale.selling_mark}
+        sellingMarkCode={sale.selling_mark_code}
+        sellingMarkName={sale.selling_mark_name}
         dispatchDate={sale.dispatch_date}
-        saleDate={sale.sale_date}
-        promptDate={sale.prompt_date}
-        targetSaleNo={sale.target_sale_no}
         transporter={sale.transporter}
         brokerLorryNo={sale.broker_lorry_no}
         driverName={sale.driver_name}
-        bundleDispatchNo={sale.bundle_dispatch_no}
-        status={displayStatus}
         rows={liveRows}
       />
     )}

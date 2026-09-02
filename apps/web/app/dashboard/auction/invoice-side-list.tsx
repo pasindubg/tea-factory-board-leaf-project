@@ -86,19 +86,12 @@ export function InvoiceSideList({
         showSelectionSummary: false,
         content: (dispatch, { active }) => {
           const bucket = stateBucket(active ? currentDisplayStatus : cappedDispatchStatus(dispatch.status));
-          // Nothing was physically dispatched for a re-print register invoice,
-          // so it is called out on the rail rather than reading as a dispatch.
-          const isRegister = dispatch.entry_source === "reprint-register";
-          const origin = entrySourceChip(dispatch.entry_source);
           return (
             <>
               <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold tabular-nums text-green-700 dark:text-green-400">{dispatch.sale_no ?? "—"}</span>
                 {active && <span className="text-stone-400">‹</span>}
               </div>
-              {isRegister && (
-                <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs ${origin.style}`}>{origin.label}</span>
-              )}
               <p className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{dispatch.brokers?.name ?? "—"}</p>
               {dispatch.selling_mark && (
                 <p className="mt-0.5 truncate text-xs text-stone-400 dark:text-stone-500">{dispatch.selling_mark}</p>

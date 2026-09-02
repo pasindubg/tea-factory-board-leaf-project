@@ -49,6 +49,24 @@ function sampleAllowance(formData: FormData) {
   return Math.max(0, num(formData.get("sample_allowance")) || 0);
 }
 
+const ESTATE_INVOICE_SELECT = "mf_date, bag_type, chest_type, chest_numbers, moisture_level";
+
+/**
+ * The columns the printed TEA ESTATE INVOICE carries and nothing else derives.
+ * All optional, and all written the same way on create and on edit, so the two
+ * paths cannot drift into accepting different fields.
+ */
+function estateInvoiceFields(formData: FormData) {
+  const moisture = str(formData.get("moisture_level"));
+  return {
+    mf_date: str(formData.get("mf_date")) || null,
+    bag_type: str(formData.get("bag_type")) || null,
+    chest_type: str(formData.get("chest_type")) || null,
+    chest_numbers: str(formData.get("chest_numbers")) || null,
+    moisture_level: moisture ? num(formData.get("moisture_level")) : null,
+  };
+}
+
 function netWeight(bags: number, kgPerBag: number, sampleKg = 0) {
   return Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2));
 }
@@ -181,7 +199,11 @@ async function appliedThresholdForLot(
   return { ok: true, threshold: Number(threshold.min_net_kg ?? 0) };
 }
 
-type SavedLotPatch = Pick<LotRow, "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" | "state">;
+type SavedLotPatch = Pick<
+  LotRow,
+  "invoice_no" | "lot_no" | "grade" | "bags" | "kg_per_bag" | "sample_allowance" | "net_wt" |
+  "mf_date" | "bag_type" | "chest_type" | "chest_numbers" | "moisture_level" | "state"
+>;
 
 export type UpdateLotResult =
   | { ok: true; row: SavedLotPatch; notice: string; invalidate?: Extract<ListMutationResult, { ok: true }>["invalidate"] }
@@ -247,6 +269,11 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   if (kgPerBag > 0) updates.kg_per_bag = kgPerBag;
   if (formData.has("sample_allowance")) updates.sample_allowance = sampleKg;
   if (bags > 0 && kgPerBag > 0) updates.net_wt = netWeight(bags, kgPerBag, sampleKg);
+  // Estate-invoice columns are free text the operator owns, so an empty field
+  // means "clear it" — only a field the form actually submitted is touched.
+  for (const [field, value] of Object.entries(estateInvoiceFields(formData))) {
+    if (formData.has(field)) updates[field] = value;
+  }
 
   // State override — owners only, for when the PDF parser missed something.
   const isOwner = profile.role === "owner";
@@ -282,7 +309,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     const invoiceConflict = await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], id);
     if (invoiceConflict) return { ok: false, error: invoiceConflict };
   }
-  const lotSelect = "invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state";
+  const lotSelect = `invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state`;
   const { data: updatedLot, error: updateError } = Object.keys(updates).length > 0
     ? await supabase
       .from("auction_lots")
@@ -366,6 +393,11 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
       kg_per_bag: updatedLot.kg_per_bag as number | null,
       sample_allowance: updatedLot.sample_allowance as string | number | null,
       net_wt: updatedLot.net_wt as string | number | null,
+      mf_date: updatedLot.mf_date as string | null,
+      bag_type: updatedLot.bag_type as string | null,
+      chest_type: updatedLot.chest_type as string | null,
+      chest_numbers: updatedLot.chest_numbers as string | null,
+      moisture_level: updatedLot.moisture_level as string | number | null,
       state: updatedLot.state as string | null,
     },
   };
@@ -1082,13 +1114,14 @@ export async function createDispatchedLotForList(
     kg_per_bag: kgPerBag,
     sample_allowance: sampleKg,
     net_wt: netWt,
+    ...estateInvoiceFields(formData),
     state: "invoiced",
     shutout: isBelowAppliedThreshold,
     reprint: Boolean(reprintSource.sourceLotId),
     shutout_reason: isBelowAppliedThreshold ? `Below broker minimum ${threshold.toFixed(2)} kg for ${grade}` : null,
     lot_source: "factory",
     reprint_source_lot_id: reprintSource.sourceLotId,
-  }).select("id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, shutout, shutout_reason, lot_source").single();
+  }).select(`id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, shutout, shutout_reason, lot_source`).single();
   if (error || !createdLot) return { ok: false, error: friendlyError(error ?? { message: "Could not create the lot." }) };
   const { error: invoiceInsertError } = await supabase.from("lot_invoices").insert(invoiceList.map((invoice) => ({
     factory_id: profile.factory_id,
@@ -1139,6 +1172,11 @@ export async function createDispatchedLotForList(
       kg_per_bag: createdLot.kg_per_bag as number | null,
       sample_allowance: createdLot.sample_allowance as string | number | null,
       net_wt: createdLot.net_wt as string | number | null,
+      mf_date: createdLot.mf_date as string | null,
+      bag_type: createdLot.bag_type as string | null,
+      chest_type: createdLot.chest_type as string | null,
+      chest_numbers: createdLot.chest_numbers as string | null,
+      moisture_level: createdLot.moisture_level as string | number | null,
       state: createdLot.state as string | null,
       shutout: Boolean(createdLot.shutout),
       shutout_reason: createdLot.shutout_reason as string | null,
