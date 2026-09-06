@@ -19,7 +19,8 @@
   "pnpm": {
     "overrides": {
       "react": "19.2.3",
-      "react-dom": "19.2.3"
+      "react-dom": "19.2.3",
+      "@expo/dom-webview": "57.0.1"
     },
     "supportedArchitectures": {
       "os": ["current"],

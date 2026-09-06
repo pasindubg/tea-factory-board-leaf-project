@@ -1,5 +1,6 @@
 import { requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES, MODULES, ROLE_LABELS, pagesForModule, type Role } from "@/lib/roles";
+import { ALL_WEB_ROLES, ROLE_LABELS } from "@/lib/roles";
+import { visibleModules } from "@/lib/visible-modules";
 import { DashboardShell } from "./dashboard-shell";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -15,41 +16,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
     : { data: null };
 
-  // Existing module overrides remain the fallback for the migrated system
-  // roles. A configured role-page row takes precedence for custom roles.
-  const [{ data: overrides }, { data: pagePermissions }] = await Promise.all([
-    supabase.from("module_permissions").select("module_key, allowed_roles"),
-    profile.access_role_id
-      ? supabase.from("role_page_permissions").select("page_key, can_view").eq("role_id", profile.access_role_id)
-      : Promise.resolve({ data: [] }),
-  ]);
-
-  const overrideMap = Object.fromEntries(
-    (overrides ?? []).map((r) => [r.module_key, r.allowed_roles as string[]]),
-  );
-  const pagePermissionMap = new Map((pagePermissions ?? []).map((row) => [row.page_key as string, Boolean(row.can_view)]));
-
-  // Owner always sees everything; others respect overrides → defaults. The
-  // module's base `roles` list is a hard ceiling a custom role's explicit
-  // page-permission rows can only narrow, never widen — otherwise a role
-  // that used to be allowed (before a module's base roles were tightened)
-  // keeps seeing it forever via its stale `can_view: true` row.
-  //
-  // A custom role (profile.access_role_id set) always has an explicit row
-  // per page that existed when it was created. A missing row means the page
-  // was added later, which must default to "not yet granted" — never a
-  // fallback to the base role's default access — or every existing custom
-  // role silently inherits full access to any brand-new page the moment it
-  // ships.
-  const nav = MODULES.filter((mod) => {
-    if (mod.visibleInNavigation === false) return false;
-    if (profile.role === "owner") return true;
-    if (!mod.roles.includes(profile.role as Role)) return false;
-    const pageKey = pagesForModule(mod.key)[0]?.key;
-    if (profile.access_role_id) return pageKey ? pagePermissionMap.get(pageKey) === true : false;
-    const allowed: string[] = overrideMap[mod.key] ?? [...mod.roles];
-    return allowed.includes(profile.role as Role);
-  });
+  const nav = await visibleModules(supabase, profile);
   const wantsDispatchDetail = nav.some((mod) => mod.key === "auction-dispatch-detail");
   // Undated dispatches exist, and Postgres sorts NULLs first on DESC.
   const { data: latestDispatchRows } = wantsDispatchDetail

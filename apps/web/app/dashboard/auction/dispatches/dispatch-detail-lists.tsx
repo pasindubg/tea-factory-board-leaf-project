@@ -183,7 +183,7 @@ function AssignBrokerAssistant({ lots, onClose }: { lots: InvoiceOverviewRow[] |
       title="Assign broker"
       description={`${selected.length} lot invoice${selected.length === 1 ? "" : "s"} selected.`}
       onClose={onClose}
-      widthClass="max-w-xl"
+      widthClass="w-[min(36rem,calc(100vw-2rem))]"
     >
       <div className="space-y-5">
         <div>

@@ -6,5 +6,7 @@ import { useSession } from "@/lib/session";
 export default function Index() {
   const { session, profile } = useSession();
   if (!session) return <Redirect href="/login" />;
-  return <Redirect href={profile?.role === "driver" ? "/(driver)/home" : "/(supplier)/home"} />;
+  if (profile?.role === "driver") return <Redirect href="/(driver)/home" />;
+  if (profile?.role === "field_officer") return <Redirect href="/(field)/lines" />;
+  return <Redirect href="/(supplier)/home" />;
 }

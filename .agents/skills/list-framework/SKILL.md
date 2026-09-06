@@ -118,6 +118,28 @@ controls and selection context; page components must not import
   that is the only step; the parsing is generic. Never re-implement this check
   in a page, a server action, or an input handler: duplicating it in app code
   is what lets the two disagree.
+- **An "assistant" is a declared command, never a hand-built drawer.** When a
+  list needs multi-step work performed ON a selected record without leaving
+  the list — assigning children to it, walking a document workflow, running a
+  reconciliation — declare `assistant` on its `EntityListCommand`. The
+  framework owns the `AppDrawer`: overlay, Escape, the close control, the
+  scroll container, and the title/description built from the selection. Give
+  it a `disabled` that requires exactly one selected row unless the workflow
+  genuinely spans several. Inside the drawer, render an ordinary `EntityList`
+  with `initialRows={[]}` and its resource — the framework fetches on mount.
+  `close` dismisses the drawer, `refresh` reloads the list behind it (usually
+  unnecessary: a mutation's `invalidate` already refreshes matching mounted
+  lists).
+  - `assistant` is for a workflow; `panel` is for a single form; `onOpen` is
+    the escape hatch for a workflow the page itself owns, and only that.
+  - **Every assistant must be reachable from its list's toolbar.** A record
+    whose only way in is a link inside a table cell is not discoverable — the
+    user selects the row and looks at the toolbar. A detail page may still
+    exist for deep linking, but it is never the sole route.
+  - The auction document reconciliation
+    (`auction/sales/[saleNo]/sales-reconciliation-assistant.tsx`) predates this
+    element and still composes `AppButton` + `AppDrawer` by hand. Move it onto
+    `assistant` when it is next touched; do not copy its shape into new work.
 - Use `EntityList.tabs` when one live entity is partitioned into lanes, and
   `EntityListTabs` when two or more independent full lists share one work
   surface. Do not stack full lists vertically or import `TabbedListSurface`

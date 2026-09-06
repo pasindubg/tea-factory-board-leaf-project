@@ -14,7 +14,7 @@ const COLLECTOR_COLUMNS: EntityListColumn<CollectorIntakeRow>[] = [
 ];
 
 const RECENT_COLUMNS: EntityListColumn<RecentWeighingRow>[] = [
-  { key: "supplier", label: "Supplier", accessor: (row) => row.supplier, sortable: true, filter: "select", cellClassName: "font-medium" },
+  { key: "supplier", label: "Customer", accessor: (row) => row.supplier, sortable: true, filter: "select", cellClassName: "font-medium" },
   { key: "collector", label: "Collector", accessor: (row) => row.collector, sortable: true, filter: "select" },
   { key: "collectedAt", label: "Collected", accessor: (row) => row.collectedAt, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => formatDateTime(row.collectedAt) },
   { key: "weightKg", label: "Weight kg", accessor: (row) => row.weightKg, sortable: true, searchInput: "number", headerClassName: "text-right", cellClassName: "text-right font-medium tabular-nums", render: (row) => `${row.weightKg.toFixed(2)} kg` },

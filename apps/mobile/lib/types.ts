@@ -10,7 +10,8 @@ export type Role =
   | "accountant"
   | "collector"
   | "supplier"
-  | "driver";
+  | "driver"
+  | "field_officer";
 
 export type Profile = {
   id: string;
@@ -71,6 +72,26 @@ export type SupplierMessage = {
   sent_at: string;
   read_at: string | null;
 };
+
+// --- Field officer: customer registration by line ---
+export type LineRow = {
+  id: string;
+  line_no: string;
+  name: string | null;
+  vehicles: { vehicle_no: string } | null;
+};
+
+export type CustomerRow = {
+  id: string;
+  customer_no: string;
+  name: string;
+  phone: string;
+  address: string | null;
+  latitude: string;
+  longitude: string;
+};
+
+export type DeviceRegistration = "bound" | "claimed" | "blocked" | "invalid";
 
 // --- Legacy collector shapes (parked M4 collector screens) ---
 export type CollectorRow = { id: string; name: string; area: string | null };

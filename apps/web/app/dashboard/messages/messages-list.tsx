@@ -44,7 +44,7 @@ export function MessagesList({
       getId={(row) => row.id}
       rowLabel={(row) => row.title}
       title="Recent messages"
-      description="Messages already delivered to the supplier field app."
+      description="Messages already delivered to the customer field app."
       emptyMessage="No messages sent yet."
       create={{
         action: sendMessage,

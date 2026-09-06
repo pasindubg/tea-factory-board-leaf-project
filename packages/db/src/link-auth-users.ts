@@ -46,27 +46,32 @@ async function main() {
 
     const [row] = await sql`select id from users where email = ${email}`;
     if (!row) throw new Error(`no public.users row for ${email} — run db:seed first`);
-    // get_email_for_login resolves username -> email, so a missing username
-    // makes password sign-in fail with "Invalid credentials" even though the
-    // auth user and its password are fine.
-    await sql`update users set username = ${username} where email = ${email} and username is distinct from ${username}`;
-    if (row.id === authId) {
+    if (row.id !== authId) {
+      // users.id is referenced by several tables, so: copy the row under the
+      // new id, repoint the children, then drop the old row. The copy leaves
+      // username NULL — username is UNIQUE, and both rows exist at once.
+      await sql.begin(async (tx) => {
+        await tx`
+          insert into users (id, factory_id, name, email, phone, role, active, created_at)
+          select ${authId}, factory_id, name, email, phone, role, active, created_at
+          from users where id = ${row.id}
+          on conflict (id) do nothing`;
+        await tx`update collectors set user_id = ${authId} where user_id = ${row.id}`;
+        await tx`update drivers set user_id = ${authId} where user_id = ${row.id}`;
+        await tx`update user_devices set user_id = ${authId} where user_id = ${row.id}`;
+        await tx`update suppliers set registered_by_user_id = ${authId} where registered_by_user_id = ${row.id}`;
+        await tx`delete from users where id = ${row.id}`;
+      });
+      console.log(`linked    ${email}  ${seedId} -> ${authId}`);
+    } else {
       console.log(`ok        ${email} already linked to ${authId}`);
-      continue;
     }
 
-    // users.id is referenced by collectors.user_id, so: copy row under the
-    // new id, repoint collectors, then drop the old row.
-    await sql.begin(async (tx) => {
-      await tx`
-        insert into users (id, factory_id, name, email, phone, username, role, active, created_at)
-        select ${authId}, factory_id, name, email, phone, username, role, active, created_at
-        from users where id = ${row.id}
-        on conflict (id) do nothing`;
-      await tx`update collectors set user_id = ${authId} where user_id = ${row.id}`;
-      await tx`delete from users where id = ${row.id}`;
-    });
-    console.log(`linked    ${email}  ${seedId} -> ${authId}`);
+    // get_email_for_login resolves username -> email, so a missing username
+    // makes password sign-in fail with "Invalid credentials" even though the
+    // auth user and its password are fine. Set it only once the duplicate row
+    // is gone.
+    await sql`update users set username = ${username} where email = ${email} and username is distinct from ${username}`;
   }
   await sql.end();
 }

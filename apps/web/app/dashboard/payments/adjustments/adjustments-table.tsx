@@ -28,7 +28,7 @@ type SupplierOption = { id: string; name: string };
 
 const COLUMNS: EntityListColumn<AdjustmentRow>[] = [
   { key: "occurredOn", label: "Date", accessor: (row) => row.occurredOn, sortable: true, render: (row) => <span className="text-stone-500 dark:text-stone-400">{row.occurredOn}</span> },
-  { key: "supplierName", label: "Supplier", accessor: (row) => row.supplierName, sortable: true, filter: "select", render: (row) => <span className="font-medium">{row.supplierName}</span> },
+  { key: "supplierName", label: "Customer", accessor: (row) => row.supplierName, sortable: true, filter: "select", render: (row) => <span className="font-medium">{row.supplierName}</span> },
   { key: "kind", label: "Kind", accessor: (row) => KIND_LABELS[row.kind] ?? row.kind, sortable: true, filter: "select" },
   { key: "label", label: "Detail", accessor: (row) => row.label ?? null, sortable: true, filter: "text", render: (row) => <span className="text-stone-500 dark:text-stone-400">{row.label ?? "—"}</span> },
   {
@@ -79,7 +79,7 @@ export function AdjustmentsTable({
         render: ({ action, close }) => (
           <>
             <form action={action} className="flex flex-wrap items-end gap-3">
-              <label className="text-sm">Supplier<select name="supplier_id" required defaultValue="" className={`${input} w-52`}><option value="" disabled>Select supplier</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+              <label className="text-sm">Customer<select name="supplier_id" required defaultValue="" className={`${input} w-52`}><option value="" disabled>Select customer</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
               <label className="text-sm">Kind<select name="kind" required defaultValue="advance" className={`${input} w-44`}>{Object.entries(KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <label className="text-sm">Mode<select name="mode" defaultValue="amount" className={`${input} w-36`}><option value="amount">Amount (LKR)</option><option value="percent">Percent (%)</option></select></label>
               <label className="text-sm">Value<input name="value" type="number" step="0.01" min="0.01" required placeholder={`e.g. ${waterDefault}`} className={`${input} w-28`} /></label>

@@ -9,6 +9,7 @@ import { displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix"
 import type { ListMutationResult } from "@/lib/list-mutations";
 import type { AuctionInvoiceOverviewListRow } from "@/lib/list-resources";
 import { createInvoiceFromOverview, deleteLot, updateLot } from "../actions";
+import { BAG_TYPES } from "../bag-types";
 import { BROKER_INVOICE_STATUSES, isOpenDraft, stateBucket, stateBucketOptions } from "../state-buckets";
 import { LOT_STATES } from "../lot-states";
 import { formatSaleNo } from "../sale-number";
@@ -188,6 +189,75 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       headerClassName: "text-right",
       cellClassName: "text-right tabular-nums font-medium",
       render: (row) => num(row.netWt),
+    },
+    {
+      key: "mfDate",
+      label: "M/F Date",
+      accessor: (row) => row.mfDate,
+      sortable: true,
+      lov: false,
+      searchInput: "date",
+      headerClassName: "whitespace-nowrap",
+      cellClassName: "tabular-nums whitespace-nowrap min-w-36",
+      render: (row) => row.mfDate ?? "—",
+      edit: (row, { formId }) => cell(row, row.mfDate ?? "—", () => (
+        <input form={formId} name="mf_date" type="date" defaultValue={row.mfDate ?? ""} className={inputClass} />
+      )),
+    },
+    {
+      key: "bagType",
+      label: "F/H/B",
+      accessor: (row) => row.bagType,
+      sortable: true,
+      filter: "select",
+      filterOptions: BAG_TYPES.map((bagType) => ({ value: bagType, label: bagType })),
+      render: (row) => row.bagType ?? "—",
+      edit: (row, { formId }) => cell(row, row.bagType ?? "—", () => (
+        <select form={formId} name="bag_type" defaultValue={row.bagType ?? ""} className={inputClass}>
+          <option value="">—</option>
+          {BAG_TYPES.map((bagType) => <option key={bagType} value={bagType}>{bagType}</option>)}
+        </select>
+      )),
+    },
+    {
+      key: "chestType",
+      label: "Type of Chests",
+      accessor: (row) => row.chestType,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      cellClassName: "min-w-32 max-w-44",
+      render: (row) => <OneLine value={row.chestType} />,
+      edit: (row, { formId }) => cell(row, row.chestType ?? "—", () => (
+        <input form={formId} name="chest_type" defaultValue={row.chestType ?? ""} placeholder="RIGID SAC" className={inputClass} />
+      )),
+    },
+    {
+      key: "chestNumbers",
+      label: "Chest Numbers",
+      accessor: (row) => row.chestNumbers,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      cellClassName: "min-w-28 max-w-40",
+      render: (row) => <OneLine value={row.chestNumbers} />,
+      edit: (row, { formId }) => cell(row, row.chestNumbers ?? "—", () => (
+        <input form={formId} name="chest_numbers" defaultValue={row.chestNumbers ?? ""} placeholder="1 - 20" className={inputClass} />
+      )),
+    },
+    {
+      key: "moistureLevel",
+      label: "Moisture Level",
+      accessor: (row) => row.moistureLevel,
+      sortable: true,
+      lov: false,
+      searchInput: "number",
+      headerClassName: "text-right",
+      cellClassName: "text-right tabular-nums",
+      render: (row) => row.moistureLevel == null ? "—" : row.moistureLevel.toFixed(1),
+      edit: (row, { formId }) => cell(row, row.moistureLevel == null ? "—" : row.moistureLevel.toFixed(1), () => (
+        <input form={formId} name="moisture_level" type="number" step="0.1" min="0" defaultValue={row.moistureLevel ?? ""} className={`${inputClass} text-right`} />
+      )),
     },
     {
       key: "sellingMark",

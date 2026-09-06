@@ -69,6 +69,7 @@ type ResourceDefinition = {
 const parseNoParams = parseNoListParams;
 const parseSaleParams = (input: unknown) => parseUuidListParams(input, "saleId");
 const parseRoleParams = (input: unknown) => parseUuidListParams(input, "roleId");
+const parseLineParams = (input: unknown) => parseUuidListParams(input, "lineId");
 /** Factory-wide by default; narrowed to one physical dispatch when asked. */
 const parseOptionalDispatchParams = (input: unknown) => parseOptionalUuidListParams(input, "dispatchId");
 
@@ -107,7 +108,7 @@ type RefreshLotRow = {
   skipped_source_lot_id: string | null;
   lot_invoices: { invoice_no: string }[] | null;
   marks: { code: string; name: string | null } | null;
-} & LotFlagColumns;
+} & LotFlagColumns & EstateInvoiceColumns;
 
 type LotFlagColumns = {
   shutout?: boolean | null;
@@ -124,6 +125,20 @@ type LotFlagColumns = {
 };
 
 const LOT_FLAG_SELECT = "shutout, shutout_reason, unsold, reprint, reprint_registered, skipped_sale, skipped_sale_no, withdrawn, not_valued, missing, settled";
+// The columns of the printed TEA ESTATE INVOICE that only the lot carries.
+// Every list that shows a lot invoice selects them, so the same lot reads the
+// same everywhere it appears.
+const ESTATE_INVOICE_SELECT = "mf_date, bag_type, chest_type, chest_numbers, moisture_level";
+
+// Optional because a list that has no use for them simply leaves them out of
+// its select — the ones that do read them fall back to null either way.
+type EstateInvoiceColumns = {
+  mf_date?: string | null;
+  bag_type?: string | null;
+  chest_type?: string | null;
+  chest_numbers?: string | null;
+  moisture_level?: string | number | null;
+};
 
 type RefreshInvoiceOverviewLot = {
   id: string;
@@ -153,16 +168,11 @@ type RefreshInvoiceOverviewLot = {
     brokers: { name: string } | null;
     marks: { code: string; name: string | null } | null;
   } | null;
-} & LotFlagColumns;
+} & LotFlagColumns & EstateInvoiceColumns;
 
 type RefreshDispatchLotRow = RefreshLotRow & {
   shutout_reason: string | null;
   lot_source: string | null;
-  mf_date: string | null;
-  bag_type: string | null;
-  chest_type: string | null;
-  chest_numbers: string | null;
-  moisture_level: string | number | null;
   marks: { code: string; name: string } | null;
 };
 
@@ -839,24 +849,57 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: { columns: {
       active: { column: "active", mode: "equals" },
+      lineNo: { column: "lines.line_no", mode: "contains", embed: "lines" },
     } },
     async load({ supabase }, _params, search) {
-      const query = search.apply(supabase.from("suppliers").select("id, name, phone, nic_number, area, land_size_acres, collector_id, active, collectors(name)"));
+      const query = search.apply(
+        supabase
+          .from("suppliers")
+          .select(
+            "id, customer_no, name, phone, nic_number, area, address, land_size_acres, cultivated_area_acres, latitude, longitude, bank_account_no, bank_name, bank_parse_status, photo_path, bank_book_path, collector_id, line_id, active, collectors(name), lines(line_no)",
+          ),
+      );
       const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
+
+      // One batched signing call for the page's images; the bucket is private,
+      // so a raw path is useless to the browser.
+      const paths = page.flatMap((supplier) =>
+        [supplier.photo_path, supplier.bank_book_path].filter((path): path is string => Boolean(path)),
+      );
+      const signed = new Map<string, string>();
+      if (paths.length) {
+        const { data: urls } = await supabase.storage.from("supplier-documents").createSignedUrls(paths, 60 * 60);
+        for (const entry of urls ?? []) {
+          if (entry.path && entry.signedUrl) signed.set(entry.path, entry.signedUrl);
+        }
+      }
+
       return {
         ok: true,
         hasMore,
         rows: page.map((supplier) => ({
           id: supplier.id,
+          customerNo: supplier.customer_no,
           name: supplier.name,
           area: supplier.area,
+          address: supplier.address,
           phone: supplier.phone,
           nicNumber: supplier.nic_number,
           collectorId: supplier.collector_id,
           collectorName: (supplier.collectors as unknown as { name: string } | null)?.name ?? "—",
+          lineId: supplier.line_id,
+          lineNo: (supplier.lines as unknown as { line_no: string } | null)?.line_no ?? "—",
           landSizeAcres: supplier.land_size_acres,
+          cultivatedAreaAcres: supplier.cultivated_area_acres,
+          latitude: supplier.latitude,
+          longitude: supplier.longitude,
+          bankAccountNo: supplier.bank_account_no,
+          bankName: supplier.bank_name,
+          bankParseStatus: supplier.bank_parse_status,
+          photoUrl: supplier.photo_path ? signed.get(supplier.photo_path) ?? null : null,
+          bankBookUrl: supplier.bank_book_path ? signed.get(supplier.bank_book_path) ?? null : null,
           active: Boolean(supplier.active),
         })),
       };
@@ -884,6 +927,158 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           nicNumber: collector.nic_number,
           active: Boolean(collector.active),
         })),
+      };
+    },
+  },
+  "users.devices": {
+    moduleKey: "users",
+    parse: parseNoParams,
+    async load({ supabase }) {
+      const { data, error } = await supabase
+        .from("user_devices")
+        .select("id, user_id, device_id, platform, model, app_version, last_seen_at, created_at, users(name, role)")
+        .is("revoked_at", null)
+        .order("last_seen_at", { ascending: false, nullsFirst: false });
+      if (error) return { ok: false, error: friendlyError(error) };
+      return {
+        ok: true,
+        rows: (data ?? []).map((device) => {
+          const user = device.users as unknown as { name: string; role: string } | null;
+          return {
+            id: device.id,
+            userId: device.user_id,
+            userName: user?.name ?? "—",
+            role: user?.role ?? "—",
+            deviceId: device.device_id,
+            platform: device.platform,
+            model: device.model,
+            appVersion: device.app_version,
+            lastSeenAt: device.last_seen_at,
+            createdAt: device.created_at,
+          };
+        }),
+      };
+    },
+  },
+  "leaf.vehicles": {
+    moduleKey: "vehicles",
+    parse: parseNoParams,
+    search: { columns: {
+      active: { column: "active", mode: "equals" },
+    } },
+    async load({ supabase }, _params, search) {
+      const query = search.apply(supabase.from("vehicles").select("id, vehicle_no, make_model, capacity_kg, active"));
+      const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("vehicle_no").order("id"), search.page);
+      if (error) return { ok: false, error: friendlyError(error) };
+      const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
+      return {
+        ok: true,
+        hasMore,
+        rows: page.map((vehicle) => ({
+          id: vehicle.id,
+          vehicleNo: vehicle.vehicle_no,
+          makeModel: vehicle.make_model,
+          capacityKg: vehicle.capacity_kg,
+          active: Boolean(vehicle.active),
+        })),
+      };
+    },
+  },
+  "leaf.drivers": {
+    moduleKey: "drivers",
+    parse: parseNoParams,
+    search: { columns: {
+      active: { column: "active", mode: "equals" },
+    } },
+    async load({ supabase }, _params, search) {
+      const query = search.apply(supabase.from("drivers").select("id, name, phone, nic_number, licence_no, active"));
+      const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
+      if (error) return { ok: false, error: friendlyError(error) };
+      const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
+      return {
+        ok: true,
+        hasMore,
+        rows: page.map((driver) => ({
+          id: driver.id,
+          name: driver.name,
+          phone: driver.phone,
+          nicNumber: driver.nic_number,
+          licenceNo: driver.licence_no,
+          active: Boolean(driver.active),
+        })),
+      };
+    },
+  },
+  "leaf.lines": {
+    moduleKey: "lines",
+    parse: parseNoParams,
+    search: { columns: {
+      active: { column: "active", mode: "equals" },
+      vehicleNo: { column: "vehicles.vehicle_no", mode: "contains", embed: "vehicles" },
+    } },
+    async load({ supabase }, _params, search) {
+      const query = search.apply(
+        supabase.from("lines").select("id, line_no, name, vehicle_id, active, vehicles(vehicle_no), line_drivers(drivers(name))"),
+      );
+      const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("line_no").order("id"), search.page);
+      if (error) return { ok: false, error: friendlyError(error) };
+      const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
+
+      const lineIds = page.map((line) => line.id as string);
+      const counts = new Map<string, number>();
+      if (lineIds.length) {
+        const { data: customers, error: countError } = await supabase
+          .from("suppliers")
+          .select("line_id")
+          .in("line_id", lineIds);
+        if (countError) return { ok: false, error: friendlyError(countError) };
+        for (const row of customers ?? []) {
+          const lineId = row.line_id as string;
+          counts.set(lineId, (counts.get(lineId) ?? 0) + 1);
+        }
+      }
+
+      return {
+        ok: true,
+        hasMore,
+        rows: page.map((line) => ({
+          id: line.id,
+          lineNo: line.line_no,
+          name: line.name,
+          vehicleId: line.vehicle_id,
+          vehicleNo: (line.vehicles as unknown as { vehicle_no: string } | null)?.vehicle_no ?? "—",
+          driverNames:
+            (line.line_drivers as unknown as { drivers: { name: string } | null }[] | null)
+              ?.map((link) => link.drivers?.name)
+              .filter(Boolean)
+              .join(", ") || "—",
+          customerCount: counts.get(line.id as string) ?? 0,
+          active: Boolean(line.active),
+        })),
+      };
+    },
+  },
+  "leaf.line-drivers": {
+    moduleKey: "lines",
+    parse: parseLineParams,
+    async load({ supabase }, params) {
+      const { data, error } = await supabase
+        .from("line_drivers")
+        .select("id, driver_id, drivers(name, phone, licence_no)")
+        .eq("line_id", params.lineId as string);
+      if (error) return { ok: false, error: friendlyError(error) };
+      return {
+        ok: true,
+        rows: (data ?? []).map((link) => {
+          const driver = link.drivers as unknown as { name: string; phone: string | null; licence_no: string | null } | null;
+          return {
+            id: link.id,
+            driverId: link.driver_id,
+            driverName: driver?.name ?? "—",
+            phone: driver?.phone ?? null,
+            licenceNo: driver?.licence_no ?? null,
+          };
+        }),
       };
     },
   },
@@ -1317,7 +1512,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const { data, error } = await supabase
         .from("auction_lots")
         .select(
-          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, ` +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, bundled_dispatch_id, brokers(name), marks(code, name))",
         )
@@ -1395,6 +1590,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             kgPerBag: lot.kg_per_bag == null ? null : Number(lot.kg_per_bag),
             sampleKg: lot.sample_allowance == null ? null : Number(lot.sample_allowance),
             netWt: lot.net_wt == null ? null : Number(lot.net_wt),
+            mfDate: lot.mf_date ?? null,
+            bagType: lot.bag_type ?? null,
+            chestType: lot.chest_type ?? null,
+            chestNumbers: lot.chest_numbers ?? null,
+            moistureLevel: lot.moisture_level == null ? null : Number(lot.moisture_level),
             state: lot.state,
             shutout: Boolean(lot.shutout),
             shutoutReason: lot.shutout_reason ?? null,
@@ -1610,7 +1810,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
       ]);
@@ -1730,6 +1930,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
             kgPerBag: lot.kg_per_bag != null ? Number(lot.kg_per_bag) : null,
             sampleKg: lot.sample_allowance != null ? Number(lot.sample_allowance) : null,
             netWt: Number(line?.net_wt ?? lot.net_wt ?? 0),
+            mfDate: lot.mf_date ?? null,
+            bagType: lot.bag_type ?? null,
+            chestType: lot.chest_type ?? null,
+            chestNumbers: lot.chest_numbers ?? null,
+            moistureLevel: lot.moisture_level == null ? null : Number(lot.moisture_level),
             pricePerKg: line?.price_per_kg != null ? Number(line.price_per_kg) : null,
             proceeds: line?.proceeds != null ? Number(line.proceeds) : null,
             vatAmount: line?.vat_amount != null ? Number(line.vat_amount) : null,

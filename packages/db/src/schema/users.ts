@@ -20,7 +20,7 @@ export const users = pgTable(
     phone: text("phone"),
     username: text("username"),
     role: text("role", {
-      enum: ["owner", "manager", "supervisor", "accountant", "collector", "supplier", "driver"],
+      enum: ["owner", "manager", "supervisor", "accountant", "collector", "supplier", "driver", "field_officer"],
     }).notNull(),
     // The legacy/base role remains the database-RLS authority. This optional
     // named role carries the factory's configurable page/action permissions.

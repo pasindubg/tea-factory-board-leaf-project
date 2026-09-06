@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LovCombobox } from "@/components/lov-combobox";
+import { BAG_TYPES } from "../bag-types";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 
 /**
@@ -180,6 +181,32 @@ export function NewInvoiceRow({
         />
       </td>
       <td className="px-4 py-3 text-right tabular-nums font-medium">{net.toFixed(2)}</td>
+      <td className="px-4 py-3">
+        <input form={formId} name="mf_date" type="date" aria-label="Manufacture date" className={cellInput} />
+      </td>
+      <td className="px-4 py-3">
+        <select form={formId} name="bag_type" defaultValue="" aria-label="Full, half, or bulk bag" className={cellInput}>
+          <option value="">—</option>
+          {BAG_TYPES.map((bagType) => <option key={bagType} value={bagType}>{bagType}</option>)}
+        </select>
+      </td>
+      <td className="px-4 py-3">
+        <input form={formId} name="chest_type" placeholder="RIGID SAC" aria-label="Type of chests" className={cellInput} />
+      </td>
+      <td className="px-4 py-3">
+        <input form={formId} name="chest_numbers" placeholder="1 - 20" aria-label="Chest numbers" className={cellInput} />
+      </td>
+      <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="moisture_level"
+          type="number"
+          step="0.1"
+          min="0"
+          aria-label="Moisture level"
+          className={`${cellInput} text-right`}
+        />
+      </td>
       <td className="px-4 py-3">
         <LovCombobox
           source="auction.marks"

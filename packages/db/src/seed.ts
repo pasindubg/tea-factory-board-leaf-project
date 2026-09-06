@@ -12,9 +12,24 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema/index";
 import { SEED_IDS } from "./seed-ids";
 
+/** Mirrors ALL_WEB_ROLES + field_officer in apps/web/lib/roles.ts. */
+const BUILT_IN_ROLES = [
+  { key: "owner", name: "Owner", baseRole: "owner" },
+  { key: "manager", name: "Manager", baseRole: "manager" },
+  { key: "supervisor", name: "Supervisor", baseRole: "supervisor" },
+  { key: "accountant", name: "Accountant", baseRole: "accountant" },
+  { key: "collector", name: "Collector", baseRole: "collector" },
+  { key: "field_officer", name: "Field officer", baseRole: "field_officer" },
+] as const;
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
+  // This wipes the factory book. It has already cost a set of hand-configured
+  // roles once; refuse anything that is not the local stack.
+  if (!/127\.0\.0\.1|localhost/.test(url)) {
+    throw new Error(`Refusing to seed ${url.replace(/:\/\/.*@/, "://***@")} — db:seed truncates tenant data and is for the local stack only.`);
+  }
   const sql = postgres(url, { max: 1 });
   const db = drizzle(sql, { schema });
 
@@ -24,6 +39,17 @@ async function main() {
     { id: SEED_IDS.factoryA, name: "Galle Valley Tea Factory", location: "Galle", contactPhone: "0912234567" },
     { id: SEED_IDS.factoryB, name: "Kandy Hills Tea Factory", location: "Kandy", contactPhone: "0812234567" },
   ]);
+
+  // The truncate above cascades access_roles away, so every factory is re-given
+  // the built-in role set. They carry no role_page_permissions rows on purpose:
+  // a role with no grants means "not yet configured", and the owner ticks the
+  // pages. Seeded users have no access_role_id, so they fall back to their base
+  // role's defaults and stay usable regardless.
+  await db.insert(schema.accessRoles).values(
+    [SEED_IDS.factoryA, SEED_IDS.factoryB].flatMap((factoryId) =>
+      BUILT_IN_ROLES.map((role) => ({ factoryId, ...role, systemRole: true })),
+    ),
+  );
 
   await db.insert(schema.users).values([
     { id: SEED_IDS.ownerA, factoryId: SEED_IDS.factoryA, name: "Owner A", email: "owner-a@example.com", username: "owner.a", role: "owner" },
@@ -44,16 +70,16 @@ async function main() {
   const suppliersA = await db
     .insert(schema.suppliers)
     .values([
-      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, name: "K. Gunasekara", area: "Akmeemana", landSizeAcres: "2.50" },
-      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, name: "W. Silva", area: "Baddegama", landSizeAcres: "1.25" },
-      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, name: "P. Fernando", area: "Akmeemana", landSizeAcres: "4.00" },
+      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, customerNo: "0001", name: "K. Gunasekara", phone: "0771000001", area: "Akmeemana", landSizeAcres: "2.50", latitude: "6.0367000", longitude: "80.2170000" },
+      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, customerNo: "0002", name: "W. Silva", phone: "0771000002", area: "Baddegama", landSizeAcres: "1.25", latitude: "6.1750000", longitude: "80.1830000" },
+      { factoryId: SEED_IDS.factoryA, collectorId: colA.id, customerNo: "0003", name: "P. Fernando", phone: "0771000003", area: "Akmeemana", landSizeAcres: "4.00", latitude: "6.0420000", longitude: "80.2240000" },
     ])
     .returning();
   const suppliersB = await db
     .insert(schema.suppliers)
     .values([
-      { factoryId: SEED_IDS.factoryB, collectorId: colB.id, name: "R. Dissanayake", area: "Gampola", landSizeAcres: "3.00" },
-      { factoryId: SEED_IDS.factoryB, collectorId: colB.id, name: "S. Herath", area: "Nawalapitiya", landSizeAcres: "1.75" },
+      { factoryId: SEED_IDS.factoryB, collectorId: colB.id, customerNo: "0001", name: "R. Dissanayake", phone: "0772000001", area: "Gampola", landSizeAcres: "3.00", latitude: "7.1640000", longitude: "80.5680000" },
+      { factoryId: SEED_IDS.factoryB, collectorId: colB.id, customerNo: "0002", name: "S. Herath", phone: "0772000002", area: "Nawalapitiya", landSizeAcres: "1.75", latitude: "7.0540000", longitude: "80.5340000" },
     ])
     .returning();
 

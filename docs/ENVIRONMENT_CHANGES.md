@@ -322,3 +322,89 @@ Use this file to track changes that matter when hosting or rebuilding the projec
   - run `pnpm --dir packages/api test:contract`;
   - run `db:verify-rls` and `db:verify-auth`;
   - run the repo lint and typecheck commands.
+
+## 2026-09-03 - Field Customer Registration (Lines, Devices, Documents)
+
+- Migration `0065_smiling_star_brand.sql` adds `vehicles`, `drivers`, `lines`,
+  `line_drivers` and `user_devices` (all `factory_id`-scoped with the standard
+  `factory_isolation` policy, except `user_devices` which is narrowed to
+  own-row reads plus management writes), and extends `suppliers` with
+  `customer_no`, `line_id`, `cultivated_area_acres`, `address`,
+  `location_accuracy_m`, `location_captured_at`, `photo_path`,
+  `bank_book_path`, `bank_account_no`, `bank_name`, `bank_branch`,
+  `bank_parse_status`, `registered_by_user_id`, `registered_at` and
+  `client_uuid`.
+- `customer_no` is the identifier the customer already carries in the factory's
+  existing system. It is text (leading zeros and prefixes must survive) and
+  unique per factory, so a second registration of the same number is refused by
+  the database.
+- The migration also adds `public.current_device_id()`,
+  `public.device_is_bound()` and `public.register_device(...)`, plus a
+  RESTRICTIVE policy `field_officer_device_bound` on `suppliers`. A
+  `field_officer` login writes only from the phone it is bound to; every other
+  role is unaffected. The device id travels as an `x-device-id` request header,
+  which PostgREST exposes through `request.headers` — verified against the
+  local stack rather than assumed.
+- **Drizzle emits composite foreign keys before the unique indexes they
+  reference**, so `0065` was hand-reordered to create
+  `uq_vehicles_factory_id`, `uq_drivers_factory_id` and `uq_lines_factory_id`
+  ahead of the `ALTER TABLE ... ADD CONSTRAINT` block. Regenerating this
+  migration would reintroduce the failure (`42830`).
+- Migration `0066_supplier_documents_bucket.sql` is hand-written (journal entry
+  added manually) and creates the private `supplier-documents` storage bucket,
+  10 MB limit, JPEG/PNG/WebP/HEIC, pathed `factory_id/supplier_id/*.jpg`.
+- New base role `field_officer` in `apps/web/lib/roles.ts` and the `users.role`
+  enum. It appears in `CUSTOMIZABLE_BASE_ROLES` so owners can create the login,
+  and in no `MODULES`/`PAGE_DEFINITIONS` entry, so it reaches no web page.
+- New web pages: `/dashboard/lines` (+ `[id]` detail for driver assignment),
+  `/dashboard/vehicles`, `/dashboard/drivers`, and
+  `/dashboard/user-handling/devices` for releasing a bound phone.
+- `apps/mobile` gains `expo-secure-store`, `expo-location`,
+  `expo-image-picker` and `expo-application`; `app.json` declares the camera
+  and location permission strings. The Supabase client now wraps `fetch` to
+  attach `x-device-id` to every request.
+- New gate `pnpm --dir packages/db db:verify-device-binding`.
+
+## 2026-09-03 - Mandatory Customer Fields (DESTRUCTIVE)
+
+- **Migration `0067_customer_mandatory_fields.sql` DELETES EVERY CUSTOMER ROW**
+  and every dependent `payment_lines`, `payments`, `supplier_adjustments`,
+  `supplier_tiers`, `supplier_requests`, `supplier_messages` and `weighings`
+  row, and nulls `users.supplier_id`, before making `customer_no`, `phone`,
+  `latitude` and `longitude` NOT NULL. Requested explicitly; the concern about
+  the hosted database was raised and the full wipe was confirmed. **Do not
+  merge to `blm-cloud-release` while any leaf-handling data matters.**
+- `uq_suppliers_factory_customer_no` drops its `WHERE customer_no IS NOT NULL`
+  clause (the column can no longer be null), and four CHECK constraints reject
+  blank numbers/phones and out-of-range coordinates.
+- The web create form gained required Latitude/Longitude inputs — office staff
+  cannot read GPS, so coordinates are typed there; the field app still captures
+  them from the device. `friendlyError` now names the offending column for
+  `23502`, and maps the new `23514` check constraints.
+- `db:seed` now inserts the built-in `access_roles` set (owner, manager,
+  supervisor, accountant, collector, field officer) per factory. The truncate
+  cascades that table away, so a re-seed used to leave the factory with zero
+  roles — failing `verify-rls` and wiping any role an owner had configured in
+  the app. The seeded roles carry no `role_page_permissions` rows on purpose:
+  no grants means "not yet configured", and seeded users have no
+  `access_role_id` so they fall back to base-role defaults regardless.
+- `db:seed` now REFUSES a non-local `DATABASE_URL`. It truncates the factory
+  book, and has already destroyed a set of hand-configured roles once.
+- `db:link-auth` set `users.username` BEFORE copying the row to its auth id,
+  so the copy collided with `users_username_key` and the whole script aborted
+  after any re-seed. The username is now written once the duplicate row is
+  gone, and the relink repoints `drivers`, `user_devices` and
+  `suppliers.registered_by_user_id` alongside `collectors`.
+- `access_roles.base_role` accepts `field_officer` (TS enum on a text column;
+  no migration needed).
+- Verification checklist for this change:
+  - apply migrations through `0067_customer_mandatory_fields.sql`;
+  - `db:seed`, then `db:link-auth`, then `db:verify-rls`, `db:verify-auth` and
+    `db:verify-device-binding`;
+  - confirm a customer cannot be saved without number, mobile or coordinates
+    from either the web form or the field app;
+  - run the repo lint and typecheck commands.
+- Verification checklist for this change:
+  - apply migrations through `0066_supplier_documents_bucket.sql`;
+  - run `db:verify-rls`, `db:verify-auth` and `db:verify-device-binding`;
+  - run the repo lint and typecheck commands.

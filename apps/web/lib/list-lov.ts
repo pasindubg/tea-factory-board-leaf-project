@@ -27,7 +27,10 @@ export type LovSourceKey =
   | "auction.buyers"
   | "auction.warehouses"
   | "leaf.suppliers"
-  | "leaf.collectors";
+  | "leaf.collectors"
+  | "leaf.vehicles"
+  | "leaf.drivers"
+  | "leaf.lines";
 
 export const LOV_SOURCE_KEYS = [
   "auction.brokers",
@@ -37,6 +40,9 @@ export const LOV_SOURCE_KEYS = [
   "auction.warehouses",
   "leaf.suppliers",
   "leaf.collectors",
+  "leaf.vehicles",
+  "leaf.drivers",
+  "leaf.lines",
 ] as const satisfies readonly LovSourceKey[];
 
 /**

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireProfile } from "@/lib/profile";
-import { ALL_WEB_ROLES, MODULES, type Role } from "@/lib/roles";
+import { ALL_WEB_ROLES } from "@/lib/roles";
+import { visibleModules } from "@/lib/visible-modules";
 import { groupForSectionSlug } from "../../section-routes";
 
 export default async function HandlingSectionPage({ params }: { params: Promise<{ section: string }> }) {
@@ -10,14 +11,7 @@ export default async function HandlingSectionPage({ params }: { params: Promise<
   if (!group) notFound();
 
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
-  const { data: overrides } = await supabase.from("module_permissions").select("module_key, allowed_roles");
-  const overrideMap = Object.fromEntries((overrides ?? []).map((row) => [row.module_key, row.allowed_roles as string[]]));
-  const modules = MODULES.filter((module) => {
-    if (module.group !== group) return false;
-    if (module.visibleInNavigation === false) return false;
-    if (profile.role === "owner") return true;
-    return (overrideMap[module.key] ?? [...module.roles]).includes(profile.role as Role);
-  });
+  const modules = (await visibleModules(supabase, profile)).filter((module) => module.group === group);
 
   return (
     <div>
