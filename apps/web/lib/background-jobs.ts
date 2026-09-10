@@ -56,11 +56,10 @@ export const JOB_DEFINITIONS: Record<JobKey, JobDefinition> = {
     unit: { one: "row", many: "rows" },
     metrics: [
       { key: "imported", label: "Imported", tone: "success" },
-      { key: "reprints", label: "Re-prints registered", tone: "info" },
       { key: "skipped", label: "Skipped", tone: "neutral" },
       { key: "failed", label: "Failed", tone: "danger" },
     ],
-    itemTones: { imported: "success", reprint: "info", skipped: "neutral", failed: "danger" },
+    itemTones: { imported: "success", skipped: "neutral", failed: "danger" },
     itemRefLabel: "Sheet row",
     attentionStatuses: ["failed", "skipped"],
   },

@@ -13,6 +13,7 @@ import { isLotState } from "../lot-states";
 import { isPlaceholderBrokerName } from "../placeholder-broker";
 import type { LotRow } from "../[saleId]/lot-row";
 import { buildCompositeInvoiceNo, invoiceSeqOf, parseCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
+import { lotRangeError } from "../lot-fields";
 import { resolveBrokerInvoiceForLot } from "./sales";
 
 async function dispatchEditError(
@@ -87,6 +88,12 @@ function netWeight(bags: number, kgPerBag: number, sampleKg = 0) {
   return Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2));
 }
 
+/** Blank moisture is "not measured", not zero — a range check must skip it. */
+function moistureOf(formData: FormData): number | null {
+  const raw = str(formData.get("moisture_level"));
+  return raw ? num(formData.get("moisture_level")) : null;
+}
+
 async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factoryId: string): Promise<ListMutationResult> {
   const [{ data: sale, error: saleError }, { data: lots, error: lotsError }] = await Promise.all([
     supabase.from("auction_sales").select("status").eq("id", saleId).eq("factory_id", factoryId).maybeSingle(),
@@ -121,24 +128,61 @@ async function syncDispatchStatusFromLots(supabase: Supa, saleId: string, factor
   return { ok: true };
 }
 
+/**
+ * Where a clashing invoice number already sits, said plainly.
+ *
+ * "Already attached to another dispatch invoice" was asserted without ever
+ * checking: re-using a number inside the SAME invoice reported it as being on
+ * a different one, and sent the operator hunting for an invoice that did not
+ * exist. Naming the actual invoice — or saying "this one" — is the difference
+ * between a fixable message and a wild goose chase.
+ */
+async function invoiceConflictMessage(
+  supabase: Supa,
+  factoryId: string,
+  invoiceNo: string,
+  conflictLotId: string | null,
+  currentSaleId?: string,
+): Promise<string> {
+  const { data: lot } = conflictLotId
+    ? await supabase.from("auction_lots").select("sale_id").eq("id", conflictLotId).eq("factory_id", factoryId).maybeSingle()
+    : { data: null };
+  const conflictSaleId = (lot?.sale_id as string | undefined) ?? null;
+  if (conflictSaleId && currentSaleId && conflictSaleId === currentSaleId) {
+    return `Invoice ${invoiceNo} is already on THIS dispatch invoice. Use a different invoice number for this lot.`;
+  }
+  const { data: sale } = conflictSaleId
+    ? await supabase.from("auction_sales").select("sale_no").eq("id", conflictSaleId).eq("factory_id", factoryId).maybeSingle()
+    : { data: null };
+  const where = sale?.sale_no ? `dispatch invoice ${sale.sale_no as string}` : "another dispatch invoice";
+  return `Invoice ${invoiceNo} is already attached to ${where}.`;
+}
+
 async function ensureInvoiceNumbersUnused(
   supabase: Supa,
   factoryId: string,
   invoices: string[],
   excludeLotId?: string,
+  currentSaleId?: string,
 ) {
   if (invoices.length === 0) return null;
   const wanted = new Set(invoices.map(formatFourDigitNo));
   const { data, error } = await supabase
     .from("lot_invoices")
     .select("invoice_no, lot_id")
-    .eq("factory_id", factoryId);
+    .eq("factory_id", factoryId)
+    // Filtered in the database, not after downloading it. This used to pull
+    // EVERY lot invoice the factory has ever issued to check one number, so
+    // each saved lot got slower as the season went on. Both spellings are
+    // asked for because a legacy row may not be zero-padded, and the
+    // comparison below still normalises whatever comes back.
+    .in("invoice_no", [...new Set([...invoices, ...wanted])]);
   if (error) return friendlyError(error);
   const conflict = (data ?? []).find(
     (row) => wanted.has(formatFourDigitNo(row.invoice_no as string)) && (!excludeLotId || row.lot_id !== excludeLotId),
   );
   if (conflict) {
-    return `Invoice ${conflict.invoice_no as string} is already attached to another dispatch invoice.`;
+    return invoiceConflictMessage(supabase, factoryId, conflict.invoice_no as string, (conflict.lot_id as string) ?? null, currentSaleId);
   }
   return null;
 }
@@ -147,13 +191,17 @@ async function reusableReprintSourceForInvoices(
   supabase: Supa,
   factoryId: string,
   invoices: string[],
+  currentSaleId?: string,
 ): Promise<{ ok: true; sourceLotId: string | null } | { ok: false; error: string }> {
   if (invoices.length === 0) return { ok: true, sourceLotId: null };
   const wanted = new Set(invoices.map(formatFourDigitNo));
   const { data: invoiceRows, error: invoiceError } = await supabase
     .from("lot_invoices")
     .select("invoice_no, lot_id")
-    .eq("factory_id", factoryId);
+    .eq("factory_id", factoryId)
+    // Same reason as ensureInvoiceNumbersUnused: ask for the handful of
+    // numbers in hand rather than the factory's whole invoice history.
+    .in("invoice_no", [...new Set([...invoices, ...wanted])]);
   if (invoiceError) return { ok: false, error: friendlyError(invoiceError) };
   const conflicts = (invoiceRows ?? []).filter((row) => wanted.has(formatFourDigitNo(row.invoice_no as string)));
   if (conflicts.length === 0) return { ok: true, sourceLotId: null };
@@ -169,7 +217,7 @@ async function reusableReprintSourceForInvoices(
   const blocking = rows.find((lot) => !lot.unsold && !lot.reprint);
   if (blocking) {
     const conflict = conflicts.find((row) => row.lot_id === blocking.id);
-    return { ok: false, error: `Invoice ${conflict?.invoice_no as string} is already attached to another active dispatch invoice.` };
+    return { ok: false, error: await invoiceConflictMessage(supabase, factoryId, conflict?.invoice_no as string, blocking.id, currentSaleId) };
   }
 
   return {
@@ -268,6 +316,13 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
   if (grade) updates.grade = grade;
   // Always update lot_no if present in the form (even if clearing it)
   if (formData.has("lot_no")) updates.lot_no = lotNo || null;
+  const rangeError = lotRangeError({
+    bags: bags > 0 ? bags : null,
+    kgPerBag: kgPerBag > 0 ? kgPerBag : null,
+    sampleKg: formData.has("sample_allowance") ? sampleKg : null,
+    moisture: moistureOf(formData),
+  });
+  if (rangeError) return { ok: false, error: rangeError };
   if (bags > 0 && kgPerBag > 0 && sampleKg >= bags * kgPerBag) {
     return { ok: false, error: "Sample weight must be less than the gross lot weight." };
   }
@@ -322,7 +377,7 @@ export async function updateLot(id: string, saleId: string, formData: FormData):
     return { ok: false, error: "No lot changes were supplied." };
   }
   if (invoiceNo) {
-    const invoiceConflict = await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], id);
+    const invoiceConflict = await ensureInvoiceNumbersUnused(supabase, profile.factory_id, [invoiceNo], id, saleId);
     if (invoiceConflict) return { ok: false, error: invoiceConflict };
   }
   const lotSelect = `invoice_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state`;
@@ -1062,6 +1117,8 @@ export async function createDispatchedLotForList(
   if (!rawInvoiceNo) return { ok: false, error: "Invoice number is required." };
   if (!grade) return { ok: false, error: "Grade is required." };
   if (!(bags > 0) || !(kgPerBag > 0)) return { ok: false, error: "Bags and kg/bag must be positive." };
+  const rangeError = lotRangeError({ bags, kgPerBag, sampleKg, moisture: moistureOf(formData) });
+  if (rangeError) return { ok: false, error: rangeError };
   if (sampleKg >= bags * kgPerBag) return { ok: false, error: "Sample weight must be less than the gross lot weight." };
   const gradeRule = (await gradeRulesByCode(supabase, profile.factory_id, [grade])).get(grade);
   // The foreign key would reject this too, but only the caller knows which
@@ -1103,7 +1160,7 @@ export async function createDispatchedLotForList(
   }
   const invoiceList = rawInvoiceList.map((n) => buildCompositeInvoiceNo(prefixString, invoiceSeqOf(n)));
   const invoiceNo = invoiceList[0] ?? "";
-  const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList);
+  const reprintSource = await reusableReprintSourceForInvoices(supabase, profile.factory_id, invoiceList, saleId);
   if (!reprintSource.ok) return reprintSource;
   const netWt = netWeight(bags, kgPerBag, sampleKg);
   const thresholdResult = await appliedThresholdForLot(supabase, profile.factory_id, saleId, grade);

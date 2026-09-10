@@ -24,7 +24,26 @@ ok("mark names resolve to codes", normalizeMarkCode("Kumudu") === "MF1530" && no
 ok("a grid that is not this sheet is refused",
   parseDispatchSheet([["Name", "Address"], ["x", "y"]]).issues.length > 0);
 
-const WORKBOOK = "/Users/pasindu/Desktop/invoices/sale 19/Dispatch new  100% 10 .xlsx";
+// The book is a working spreadsheet: a revision put a numbering column in front
+// of everything and a "Reprint" column in the middle. Columns are found by
+// their heading, so neither shifts what is read, and the heading row is found
+// wherever it sits.
+const rearranged = parseDispatchSheet([
+  ["Dispatch Schedule — April 2026"],
+  ["#", "Mark", "Dispatch Date", "Broker", "Invoice No.", "Bags", "Weight / Bag", "Grade", "Reprint", "Check"],
+  ["1", "Kumudu", "46119", "A/S", "901.0", "10", "50", "PEKOE", "Reprint", "OK"],
+]);
+const rearrangedRow = rearranged.rows[0];
+ok("columns are read by their heading, not their position",
+  rearranged.rows.length === 1 &&
+    rearrangedRow.sheetRow === 3 &&
+    rearrangedRow.invoiceNo === "901" &&
+    rearrangedRow.markCode === "MF1530" &&
+    rearrangedRow.brokerName === "ASIA SIYAKA" &&
+    rearrangedRow.dispatchDate === "2026-04-07",
+  JSON.stringify(rearrangedRow ?? rearranged.skipped));
+
+const WORKBOOK = "/Users/pasindu/Desktop/Dispatch new  100% 10 .xlsx";
 if (!existsSync(WORKBOOK)) {
   console.log(`\nSKIP  workbook not present at ${WORKBOOK}`);
   process.exit(failures === 0 ? 0 : 1);
@@ -39,12 +58,12 @@ if (!sheet.ok) {
 ok("the workbook's sheets are listed", sheet.sheetNames.includes(DISPATCH_SHEET_NAME), sheet.sheetNames.join(" | "));
 
 // A styled-but-empty cell is written self-closing. If those are mishandled the
-// columns after them shift left, which silently reads the wrong field — this
-// row has two of them (K2, L2) immediately before the sale numbers.
-const row2 = sheet.rows[1];
+// columns after them shift left, which silently reads the wrong field — sheet
+// row 9 (invoice 901) has two of them immediately before the sale numbers.
+const row9 = sheet.rows[8];
 ok("empty self-closing cells do not shift later columns",
-  row2[10] === null && row2[11] === null && row2[12] === "24.0" && row2[13] === "Reprint",
-  JSON.stringify(row2.slice(9, 15)));
+  row9[11] === null && row9[12] === null && row9[13] === "24.0" && row9[14] === "Reprint",
+  JSON.stringify(row9.slice(10, 16)));
 
 const parsed = parseDispatchSheet(sheet.rows);
 ok("the sheet parses without issues", parsed.issues.length === 0, parsed.issues.join(" | "));
@@ -57,46 +76,40 @@ ok("nothing is both imported and skipped",
 ok("every skipped row says why", parsed.skipped.every((row) => row.reason.length > 0));
 
 const dates = parsed.rows.map((row) => row.dispatchDate).filter((date): date is string => Boolean(date));
-ok("dispatch dates span the book's April–July range",
-  dates.every((date) => date >= "2026-04-01" && date <= "2026-08-01"),
+ok("dispatch dates land in the book's year, not a shifted column",
+  dates.every((date) => date >= "2026-01-01" && date <= "2026-12-31"),
   `${dates[0]} -> ${dates[dates.length - 1]}`);
 
-// ---------- Re-prints carry BOTH sale numbers ----------
+// ---------- The book's "Reprint" flag is NOT imported ----------
+//
+// A re-print is a relationship between two sales that the later sale's
+// acknowledgement evidences. The book declares it; this import does not carry
+// that declaration, so every row it produces is an ordinary dispatched lot and
+// a row the book never dispatched is skipped like any other dateless row.
 
-const reprints = parsed.rows.filter((row) => row.isReprint);
-ok("the book's re-prints are recognised", reprints.length > 0, `${reprints.length} rows`);
+ok("every importable row is a dispatched lot",
+  parsed.rows.every((row) => Boolean(row.dispatchDate)));
 
-const twoSales = reprints.find((row) => row.saleNo && row.nextSaleNo);
-ok("a re-print states the sale it was first offered in AND the sale it moved to",
-  Boolean(twoSales), twoSales ? `inv ${twoSales.invoiceNo}: first ${twoSales.saleNo} -> ${twoSales.nextSaleNo}` : "none found");
+// Invoice 909 is flagged "Reprint" in the book and carries no dispatch date —
+// it was never dispatched from here, so it is not part of this book's history.
+ok("invoice 909 is skipped, not carried in as a re-print",
+  !parsed.rows.some((row) => row.invoiceNo === "909") &&
+    parsed.skipped.some((row) => row.invoiceNo === "909" && row.reason.includes("dispatch date")),
+  parsed.skipped.find((row) => row.invoiceNo === "909")?.reason ?? "not skipped");
 
-// Invoice 909 sits at the end of the book with no dispatch date — it was never
-// dispatched from here. It must still come through, as a cutover re-print.
-const legacy = parsed.rows.find((row) => row.invoiceNo === "909");
-ok("invoice 909 is kept even though the book gives it no dispatch date",
-  Boolean(legacy) && legacy!.isReprint && legacy!.dispatchDate === null,
-  legacy ? `first sale ${legacy.saleNo}, broker ${legacy.brokerName}, grade ${legacy.grade}` : "missing");
-
-// Only a re-print the book never dispatched is a CUTOVER re-print. The book
-// marks both kinds "Reprint"; the dispatch date is what separates them.
-const cutover = reprints.filter((row) => row.dispatchDate === null);
-const ordinaryReprints = reprints.filter((row) => row.dispatchDate !== null);
-ok("exactly one re-print in the book was never dispatched from it",
-  cutover.length === 1 && cutover[0].invoiceNo === "909",
-  cutover.map((r) => r.invoiceNo).join(", "));
-ok("the other re-prints were dispatched and so are ordinary lifecycles",
-  ordinaryReprints.length > 0 && ordinaryReprints.every((row) => Boolean(row.dispatchDate)),
-  ordinaryReprints.map((r) => `${r.invoiceNo}@${r.dispatchDate}`).join(", "));
-
-ok("an ORDINARY row with no dispatch date is still skipped",
-  parsed.skipped.some((row) => row.reason.includes("dispatch date")) || parsed.rows.every((r) => r.dispatchDate || r.isReprint));
+// Rows 42/43 (invoices 14 and 15) are flagged "Reprint" AND dispatched. They
+// must come through as ordinary lots in the sale the book dispatched them to.
+const dispatchedFlags = parsed.rows.filter((row) => ["14", "15"].includes(row.invoiceNo));
+ok("a dispatched row flagged \"Reprint\" is still an ordinary lot",
+  dispatchedFlags.length === 2 && dispatchedFlags.every((row) => row.saleNo === "20"),
+  dispatchedFlags.map((r) => `${r.invoiceNo}@${r.dispatchDate} sale ${r.saleNo}`).join(", "));
 
 // ---------- Skips are categorised, not silent ----------
 
 const buyerReturns = parsed.skipped.filter((row) => /buyer return/i.test(row.reason));
 ok("buyer-return notes are skipped as such", buyerReturns.length > 0, `${buyerReturns.length} rows`);
 
-console.log(`\n  importable ${parsed.rows.length}   skipped ${parsed.skipped.length}   re-prints ${reprints.length}`);
+console.log(`\n  importable ${parsed.rows.length}   skipped ${parsed.skipped.length}`);
 console.log(`  grade spellings (${parsed.gradeSpellings.length}): ${parsed.gradeSpellings.join(", ")}`);
 
 console.log(failures === 0 ? "\nDISPATCH SHEET: ALL CHECKS PASSED" : `\n${failures} check(s) failed.`);

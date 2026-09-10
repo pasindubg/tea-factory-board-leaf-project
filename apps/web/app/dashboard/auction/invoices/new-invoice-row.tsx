@@ -4,6 +4,7 @@ import { useState } from "react";
 import { LovCombobox } from "@/components/lov-combobox";
 import { BAG_TYPES } from "../bag-types";
 import { formatFourDigitNo, formatSaleNo } from "../sale-number";
+import { LOT_TEXT_LIMITS, lotNumberProps } from "../lot-fields";
 
 /**
  * Broker and mark are no longer passed in as fixed option lists — those
@@ -117,11 +118,27 @@ export function NewInvoiceRow({
           className={cellInput}
         />
       </td>
+      {/* Mark follows Broker because that is where the COLUMNS list puts its
+          header. This row builds its own cells in a fixed order, so the two
+          have to be changed together — when they drifted apart, every input
+          from here rightwards sat under the wrong heading. */}
+      <td className="px-4 py-3">
+        <LovCombobox
+          source="auction.marks"
+          name="selling_mark_id"
+          formId={formId}
+          required
+          placeholder="Mark…"
+          ariaLabel="Mark"
+          className={cellInput}
+        />
+      </td>
       <td className="px-4 py-3">
         <input
           form={formId}
           name="invoice_no"
           required
+          maxLength={LOT_TEXT_LIMITS.invoiceNo}
           placeholder="e.g. 0021"
           aria-label="Invoice number"
           onBlur={(event) => { event.currentTarget.value = formatFourDigitNo(event.currentTarget.value); }}
@@ -132,8 +149,7 @@ export function NewInvoiceRow({
         <input
           form={formId}
           name="bags"
-          type="number"
-          min="1"
+          {...lotNumberProps("bags")}
           required
           aria-label="Bags"
           value={bags}
@@ -157,9 +173,7 @@ export function NewInvoiceRow({
         <input
           form={formId}
           name="kg_per_bag"
-          type="number"
-          step="0.01"
-          min="0"
+          {...lotNumberProps("kgPerBag")}
           required
           aria-label="Weight per bag"
           value={kgPerBag}
@@ -171,9 +185,7 @@ export function NewInvoiceRow({
         <input
           form={formId}
           name="sample_allowance"
-          type="number"
-          step="0.01"
-          min="0"
+          {...lotNumberProps("sampleKg")}
           aria-label="Sample weight"
           value={sampleKg}
           onChange={(event) => setSampleKg(event.target.value)}
@@ -191,31 +203,18 @@ export function NewInvoiceRow({
         </select>
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="chest_type" placeholder="RIGID SAC" aria-label="Type of chests" className={cellInput} />
+        <input form={formId} name="chest_type" maxLength={LOT_TEXT_LIMITS.typeOfChests} placeholder="RIGID SAC" aria-label="Type of chests" className={cellInput} />
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="chest_numbers" placeholder="1 - 20" aria-label="Chest numbers" className={cellInput} />
+        <input form={formId} name="chest_numbers" maxLength={LOT_TEXT_LIMITS.chestNumbers} placeholder="1 - 20" aria-label="Chest numbers" className={cellInput} />
       </td>
       <td className="px-4 py-3">
         <input
           form={formId}
           name="moisture_level"
-          type="number"
-          step="0.1"
-          min="0"
+          {...lotNumberProps("moisture")}
           aria-label="Moisture level"
           className={`${cellInput} text-right`}
-        />
-      </td>
-      <td className="px-4 py-3">
-        <LovCombobox
-          source="auction.marks"
-          name="selling_mark_id"
-          formId={formId}
-          required
-          placeholder="Mark…"
-          ariaLabel="Mark"
-          className={cellInput}
         />
       </td>
       <td className="px-4 py-3 text-right tabular-nums">{gross.toFixed(2)}</td>
@@ -235,7 +234,7 @@ export function NewInvoiceRow({
       <td className={`px-4 py-3 ${muted}`}>—</td>
       <td className={`px-4 py-3 ${muted}`}>—</td>
       <td className="px-4 py-3">
-        <input form={formId} name="lot_no" aria-label="Lot number" className={cellInput} />
+        <input form={formId} name="lot_no" maxLength={LOT_TEXT_LIMITS.lotNo} aria-label="Lot number" className={cellInput} />
       </td>
       {/* Dispatch invoice, lot state and BI state are all server-assigned. */}
       <td className={`px-4 py-3 ${muted}`}>Auto</td>

@@ -1205,8 +1205,12 @@ function EntityListPanel<Row>({
             })}
             {visibleRows.length === 0 && !inlineCreating && (
               <tr>
-                <td colSpan={tableColumns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-center text-stone-400">
-                  {rows.length ? filteredEmptyMessage : emptyMessage}
+                {/* Left-aligned, not centred: the cell spans every column, so
+                    on a wide table centring puts the message in the middle of
+                    the SCROLL width — a couple of thousand pixels off-screen,
+                    which reads as no empty state at all. */}
+                <td colSpan={tableColumns.length + (selectionMode === "multi" ? 1 : 0)} className="px-4 py-8 text-left text-stone-400">
+                  <span className="sticky left-4">{rows.length ? filteredEmptyMessage : emptyMessage}</span>
                 </td>
               </tr>
             )}

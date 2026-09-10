@@ -123,6 +123,15 @@ export function friendlyError(err: unknown): string {
       if (invalid) return `“${invalid}” is not an existing record. Choose a value from the list.`;
       return "A selected value is invalid. Refresh and try again.";
     }
+    case "22003": { // numeric_field_overflow
+      // Postgres names the precision but never the column, so this cannot say
+      // WHICH number is too big — the callers' own range checks do that, and
+      // this is what is left when one is missing. "Please try again" was the
+      // worst possible advice: retrying the same number always fails.
+      const digits = `${msg} ${(err as { details?: string } | null)?.details ?? ""}`.match(/less than 10\^(\d+)/i)?.[1];
+      const ceiling = digits ? ` It must be under ${(10 ** Number(digits)).toLocaleString()}.` : "";
+      return `One of the numbers on this row is too large for the field it goes in.${ceiling} Check the weights, then save again.`;
+    }
     case "42501": // insufficient_privilege (RLS denial)
       return "You don't have permission to do that.";
     default:

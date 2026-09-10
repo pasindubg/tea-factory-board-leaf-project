@@ -26,6 +26,7 @@ type AssignmentLot = {
   id: string;
   provisional_sale_no: string | null;
   final_sale_no: string | null;
+  net_wt: number | string | null;
   auction_sales: LineRow["auction_sales"];
 };
 
@@ -38,7 +39,11 @@ type SaleSummary = {
   brokers: Set<string>;
   dispatches: Map<string, string>;
   lotsSold: number;
+  /** Kg on the SOLD lines only — nil until the auction has happened. */
   netKg: number;
+  /** Kg the factory has dispatched into this sale, sold or not. Without it the
+   * overview reported a fully-loaded upcoming sale as "0.00". */
+  dispatchedKg: number;
   proceeds: number;
   vat: number;
   guaranteeLots: number;
@@ -51,8 +56,11 @@ function saleKey(sale: LineRow["auction_sales"], assignment?: AssignmentLot | nu
 }
 
 function saleHref(saleNo: string) {
+  // The four-digit form, the way the sale is written everywhere else. The
+  // route compares prefix-blind (saleNoMatches), so "0019" and "19" both
+  // resolve — but only one of them matches what the operator is looking at.
   const key = saleNoKey(saleNo);
-  return `/dashboard/auction/sales/${encodeURIComponent(key || saleNo)}`;
+  return `/dashboard/auction/sales/${encodeURIComponent(formatSaleNo(key || saleNo) || key || saleNo)}`;
 }
 
 export default async function SalesPage() {
@@ -67,7 +75,7 @@ export default async function SalesPage() {
       .order("dispatch_date", { ascending: false }),
     supabase
       .from("auction_lots")
-      .select("id, provisional_sale_no, final_sale_no, auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name))"),
+      .select("id, provisional_sale_no, final_sale_no, net_wt, auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, brokers(name))"),
     supabase
       .from("sale_lines")
       .select(
@@ -96,6 +104,7 @@ export default async function SalesPage() {
       dispatches: new Map<string, string>(),
       lotsSold: 0,
       netKg: 0,
+      dispatchedKg: 0,
       proceeds: 0,
       vat: 0,
       guaranteeLots: 0,
@@ -120,6 +129,7 @@ export default async function SalesPage() {
       dispatches: new Map<string, string>(),
       lotsSold: 0,
       netKg: 0,
+      dispatchedKg: 0,
       proceeds: 0,
       vat: 0,
       guaranteeLots: 0,
@@ -129,6 +139,7 @@ export default async function SalesPage() {
     if (dispatch.brokers?.name) current.brokers.add(dispatch.brokers.name);
     current.saleDate ??= dispatch.sale_date;
     current.promptDate ??= dispatch.prompt_date;
+    current.dispatchedKg += Number(assignment.net_wt ?? 0);
     summaries.set(key, current);
   }
 
@@ -144,6 +155,7 @@ export default async function SalesPage() {
       dispatches: new Map<string, string>(),
       lotsSold: 0,
       netKg: 0,
+      dispatchedKg: 0,
       proceeds: 0,
       vat: 0,
       guaranteeLots: 0,
@@ -174,6 +186,7 @@ export default async function SalesPage() {
     brokers: [...s.brokers].sort((a, b) => a.localeCompare(b)),
     lotsSold: s.lotsSold,
     netKg: s.netKg,
+    dispatchedKg: s.dispatchedKg,
     proceeds: s.proceeds,
     vat: s.vat,
     guaranteeLots: s.guaranteeLots,

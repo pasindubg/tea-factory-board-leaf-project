@@ -16,7 +16,18 @@ export type DispatchCreationOptions = {
   invoiceDate: string;
   nextDispatchNo: string;
   prefixes: InvoicePrefixOption[];
-  dispatchHistory: { saleNo: string; targetSaleNo: string; dispatchDate: string | null; saleDate: string | null }[];
+  /** Most recent first — the head of this list is what a new invoice starts
+   * from, because a day's dispatches repeat the same broker, mark and sale. */
+  dispatchHistory: {
+    saleNo: string;
+    targetSaleNo: string;
+    dispatchDate: string | null;
+    saleDate: string | null;
+    brokerId?: string | null;
+    brokerName?: string | null;
+    sellingMarkId?: string | null;
+    sellingMark?: string | null;
+  }[];
 };
 
 export function NewDispatchForm({
@@ -63,10 +74,15 @@ export function NewDispatchFields({
   prefixes,
   dispatchHistory,
 }: DispatchCreationOptions) {
-  const [dispatchDate, setDispatchDate] = useState(invoiceDate);
-  const [targetSaleNo, setTargetSaleNo] = useState("");
+  // A factory dispatches many invoices for one broker, mark and sale on one
+  // day, and every field below used to reset to blank-or-today between them —
+  // so the same four values were retyped for every invoice. The last one
+  // entered is the best guess for the next, and all of it stays editable.
+  const previous = dispatchHistory[0];
+  const [dispatchDate, setDispatchDate] = useState(previous?.dispatchDate ?? invoiceDate);
+  const [targetSaleNo, setTargetSaleNo] = useState(previous?.targetSaleNo ?? "");
   const [useDifferentPrefix, setUseDifferentPrefix] = useState(false);
-  const [saleDate, setSaleDate] = useState(addDays(invoiceDate, 14));
+  const [saleDate, setSaleDate] = useState(previous?.saleDate ?? addDays(invoiceDate, 14));
 
   useEffect(() => {
     const formattedSaleNo = formatSaleNo(targetSaleNo);
@@ -95,8 +111,22 @@ export function NewDispatchFields({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <DetailLovField label="Broker" source="auction.brokers" name="broker_id" placeholder="Leave blank to decide later" />
-        <DetailLovField label="Selling mark" source="auction.marks" name="selling_mark_id" required />
+        <DetailLovField
+          label="Broker"
+          source="auction.brokers"
+          name="broker_id"
+          placeholder="Leave blank to decide later"
+          defaultValue={previous?.brokerId ?? ""}
+          defaultLabel={previous?.brokerName ?? ""}
+        />
+        <DetailLovField
+          label="Selling mark"
+          source="auction.marks"
+          name="selling_mark_id"
+          required
+          defaultValue={previous?.sellingMarkId ?? ""}
+          defaultLabel={previous?.sellingMark ?? ""}
+        />
         <div>
           <label className={label}>Broker lorry no.</label>
           <input name="broker_lorry_no" placeholder="e.g. NP CAB-1234" className={input} />
@@ -150,7 +180,7 @@ export function NewDispatchFields({
             value={targetSaleNo}
             onChange={(event) => setTargetSaleNo(event.target.value)}
             onBlur={(event) => setTargetSaleNo(formatSaleNo(event.target.value))}
-            placeholder="023"
+            placeholder="0023"
             className={input}
           />
         </div>
@@ -171,6 +201,9 @@ export function NewDispatchFields({
             type="date"
             name="sale_date"
             required
+            // Tea is dispatched to the broker BEFORE the sale it is offered
+            // in; a sale date earlier than the dispatch date is always a typo.
+            min={dispatchDate || undefined}
             value={saleDate}
             onChange={(event) => setSaleDate(event.target.value)}
             className={input}

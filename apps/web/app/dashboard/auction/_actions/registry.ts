@@ -7,6 +7,7 @@ import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import { AUC, str, gradeAliasKey, colomboToday, type Supa } from "./_shared";
 import { CATEGORY_LETTER, type InvoiceCategory } from "../invoice-number";
+import { gradeMatchKey } from "../grade-match";
 
 // ---------- Registry: brokers & marks ----------
 export async function createBroker(formData: FormData): Promise<ListMutationResult> {
@@ -215,6 +216,17 @@ export async function createAuctionGrade(formData: FormData): Promise<ListMutati
   const defaultKgPerBag = parseDefaultKgPerBag(formData);
   const aliases = parseGradeAliases(formData, code, name);
   if (!code) return { ok: false, error: "Grade code is required." };
+  // The database's unique index only catches an EXACT repeat. A grade that
+  // differs from one already registered by nothing but spacing, punctuation
+  // or an I-for-1 slip is the same grade to everyone except the picker, where
+  // the two sit next to each other and nobody can tell which to choose.
+  const twin = await confusableGrade(supabase, profile.factory_id, code);
+  if (twin) {
+    return {
+      ok: false,
+      error: `${code} is too close to the existing grade ${twin} to tell apart. Add ${code} as an alias of ${twin} instead, or pick a code that reads differently.`,
+    };
+  }
   const aliasConflict = await ambiguousGradeAlias(supabase, profile.factory_id, aliases);
   if (aliasConflict) return { ok: false, error: aliasConflict };
   const { data: grade, error } = await supabase.from("auction_grades").insert({
@@ -381,6 +393,24 @@ function parseGradeAliases(formData: FormData, code: string, name: string): stri
         .filter((alias) => alias && !canonical.has(alias)),
     ),
   ];
+}
+
+/**
+ * An existing grade this code cannot be told apart from, or null.
+ *
+ * Same folding the import uses, so the two ways a grade can be created agree
+ * about what counts as a duplicate.
+ */
+async function confusableGrade(
+  supabase: Supa,
+  factoryId: string,
+  code: string,
+  excludeId?: string,
+): Promise<string | null> {
+  const { data } = await supabase.from("auction_grades").select("id, code").eq("factory_id", factoryId);
+  const key = gradeMatchKey(code);
+  const twin = (data ?? []).find((row) => row.id !== excludeId && gradeMatchKey(row.code as string) === key);
+  return (twin?.code as string | undefined) ?? null;
 }
 
 async function ambiguousGradeAlias(

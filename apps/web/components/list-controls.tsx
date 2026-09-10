@@ -560,11 +560,18 @@ export function ListCommandToolbar({
         </button>
       )}
       {showSelectionSummary ? <ListSelectionSummary count={count} /> : null}
+      {/* The group is right-aligned, so anything added to it pushes everything
+          BEFORE it leftwards. `children` is where the transient controls live
+          (Cancel and Save appear only while a row is being entered), and with
+          the fixed buttons ahead of them the whole toolbar shifted the moment
+          a draft row opened — a click aimed at Delete landed on Search. The
+          transient block goes first so Search, Edit and Delete keep the same
+          position whatever else is on screen. */}
       <div className="ml-auto flex flex-wrap justify-end gap-2">
+        {children}
         {hasSearch && <button type="button" onClick={openSearch} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold text-stone-700 transition hover:bg-green-50 hover:text-green-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-green-950 dark:hover:text-green-300"><SearchGlyph />Search</button>}
         {enableEdit && onEdit && <ListHeaderButton kind="edit" action={onEdit} />}
         {enableDelete && onDelete && <ListHeaderButton kind="delete" action={onDelete} />}
-        {children}
       </div>
     </div>
   );

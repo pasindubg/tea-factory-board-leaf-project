@@ -8,29 +8,37 @@
 // what decides whether a row is acceptable.
 import { excelSerialToISODate, type SheetGrid } from "./read-xlsx";
 
-/** Columns of the Dispatch Schedule sheet, by position. */
-const COLUMN = {
-  dispatchDate: 0,
-  saleDate: 1,
-  broker: 2,
-  invoiceNo: 3,
-  bags: 4,
-  kgPerBag: 5,
-  sampleWeight: 6,
-  netWeight: 7,
-  grade: 8,
-  mark: 9,
-  saleNo: 11,
-  nextSaleNo: 12,
-  check: 13,
-  lotNo: 14,
-  additionalSampleWeight: 15,
+/**
+ * The headings each column is found by — never its position. The book is a
+ * working spreadsheet: a revision inserted a numbering column in front of
+ * everything and a "Reprint" column in the middle, which silently shifts every
+ * fixed index. Where a heading has been renamed between revisions, the
+ * spellings are listed newest first.
+ */
+const COLUMN_LABELS = {
+  dispatchDate: ["Dispatch Date"],
+  saleDate: ["Sale Date (Planned)", "Sale Date"],
+  broker: ["Broker"],
+  invoiceNo: ["Invoice No."],
+  bags: ["Bags"],
+  kgPerBag: ["Weight / Bag"],
+  sampleWeight: ["Sample Weight"],
+  grade: ["Grade"],
+  mark: ["Mark"],
+  saleNo: ["Sale No."],
+  nextSaleNo: ["Next Sale No."],
+  check: ["Check"],
+  lotNo: ["Lot No."],
 } as const;
+
+type ColumnField = keyof typeof COLUMN_LABELS;
+type ColumnMap = Partial<Record<ColumnField, number>>;
 
 export const DISPATCH_SHEET_NAME = "Dispatch Schedule";
 
-/** Header labels expected in row 1, used to refuse the wrong workbook. */
-const REQUIRED_HEADERS = ["Dispatch Date", "Broker", "Invoice No.", "Bags", "Grade", "Mark"];
+/** No row can become an invoice without these, so a sheet missing any of them
+ * is refused as the wrong workbook. */
+const REQUIRED_COLUMNS: ColumnField[] = ["dispatchDate", "broker", "invoiceNo", "bags", "kgPerBag", "grade", "mark"];
 
 /** The factory writes brokers as initials. */
 const BROKER_ALIASES: Record<string, string> = {
@@ -49,13 +57,7 @@ const MARK_ALIASES: Record<string, string> = {
 export type DispatchSheetRow = {
   /** 1-based spreadsheet row, so a report points at what the user can see. */
   sheetRow: number;
-  /**
-   * Null only for a re-print carried over from before the system: those sit at
-   * the end of the book as a running list and were never dispatched from here,
-   * so the book records no dispatch date for them. The importer supplies a
-   * cutover date when it registers them.
-   */
-  dispatchDate: string | null;
+  dispatchDate: string;
   saleDate: string | null;
   brokerName: string;
   markCode: string;
@@ -67,11 +69,10 @@ export type DispatchSheetRow = {
   lotNo: string | null;
   /** The sale this lot was first offered in. */
   saleNo: string | null;
-  /** The sale it moved to, or sold in — a re-print's second sale number. */
+  /** The sale it moved to — read only as a fallback when the book leaves the
+   * first sale blank. The move itself is not imported: a re-print is evidenced
+   * by the later sale's acknowledgement, never declared from this book. */
   nextSaleNo: string | null;
-  /** The sheet's "Check" column marks a re-print. */
-  isReprint: boolean;
-  additionalSampleKg: number;
 };
 
 export type SkippedSheetRow = {
@@ -124,11 +125,33 @@ export function normalizeMarkCode(value: string): string {
   return MARK_ALIASES[raw] ?? value.trim();
 }
 
-/** Header row present and recognisable, so the wrong workbook is refused up
- * front rather than producing 300 confusing row errors. */
-export function looksLikeDispatchSheet(grid: SheetGrid): boolean {
-  const header = (grid[0] ?? []).map((cell) => text(cell).toLowerCase());
-  return REQUIRED_HEADERS.every((label) => header.includes(label.toLowerCase()));
+/** Headings are compared on letters and digits alone, so "Invoice No." and
+ * "Invoice No" are the same column. */
+const headerKey = (value: string | null | undefined) => text(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * The heading row — the first row that names every required column — and where
+ * each column sits in it.
+ *
+ * Null when no row does, which refuses the wrong workbook up front rather than
+ * producing 300 confusing row errors.
+ */
+function findColumns(grid: SheetGrid): { row: number; columns: ColumnMap } | null {
+  for (let index = 0; index < grid.length; index += 1) {
+    const keys = (grid[index] ?? []).map(headerKey);
+    const columns: ColumnMap = {};
+    for (const field of Object.keys(COLUMN_LABELS) as ColumnField[]) {
+      for (const label of COLUMN_LABELS[field]) {
+        const at = keys.indexOf(headerKey(label));
+        if (at >= 0) {
+          columns[field] = at;
+          break;
+        }
+      }
+    }
+    if (REQUIRED_COLUMNS.every((field) => columns[field] !== undefined)) return { row: index, columns };
+  }
+  return null;
 }
 
 /**
@@ -146,20 +169,25 @@ export function parseDispatchSheet(grid: SheetGrid): ParsedDispatchSheet {
   const issues: string[] = [];
   const gradeSpellings = new Set<string>();
 
-  if (!looksLikeDispatchSheet(grid)) {
-    issues.push(`This does not look like a "${DISPATCH_SHEET_NAME}" sheet — its header row is missing columns such as ${REQUIRED_HEADERS.join(", ")}.`);
+  const header = findColumns(grid);
+  if (!header) {
+    issues.push(`This does not look like a "${DISPATCH_SHEET_NAME}" sheet — its header row is missing columns such as ${REQUIRED_COLUMNS.map((field) => COLUMN_LABELS[field][0]).join(", ")}.`);
     return { rows, skipped, gradeSpellings: [], issues };
   }
 
-  for (let index = 1; index < grid.length; index += 1) {
+  for (let index = header.row + 1; index < grid.length; index += 1) {
     const cells = grid[index] ?? [];
     const sheetRow = index + 1;
-    const at = (column: number) => text(cells[column]);
+    const cell = (field: ColumnField) => {
+      const column = header.columns[field];
+      return column === undefined ? null : cells[column] ?? null;
+    };
+    const at = (field: ColumnField) => text(cell(field));
 
-    const invoiceNo = sheetNumberText(cells[COLUMN.invoiceNo]);
+    const invoiceNo = sheetNumberText(cell("invoiceNo"));
     if (!invoiceNo) continue; // genuinely blank spreadsheet row
 
-    const check = at(COLUMN.check);
+    const check = at("check");
     const skip = (reason: string) => skipped.push({ sheetRow, invoiceNo, reason });
 
     if (/buyer\s*return/i.test(check)) {
@@ -167,9 +195,9 @@ export function parseDispatchSheet(grid: SheetGrid): ParsedDispatchSheet {
       continue;
     }
 
-    const brokerRaw = at(COLUMN.broker);
-    const markRaw = at(COLUMN.mark);
-    const gradeRaw = at(COLUMN.grade);
+    const brokerRaw = at("broker");
+    const markRaw = at("mark");
+    const gradeRaw = at("grade");
     const missing: string[] = [];
     if (!brokerRaw) missing.push("broker");
     if (!markRaw) missing.push("mark");
@@ -179,19 +207,15 @@ export function parseDispatchSheet(grid: SheetGrid): ParsedDispatchSheet {
       continue;
     }
 
-    const bags = sheetNumber(cells[COLUMN.bags]);
-    const kgPerBag = sheetNumber(cells[COLUMN.kgPerBag]);
+    const bags = sheetNumber(cell("bags"));
+    const kgPerBag = sheetNumber(cell("kgPerBag"));
     if (!bags || bags <= 0 || !kgPerBag || kgPerBag <= 0) {
       skip("Row has no bags or weight per bag");
       continue;
     }
 
-    const isReprint = /^re-?print$/i.test(check);
-    const dispatchDate = excelSerialToISODate(cells[COLUMN.dispatchDate]);
-    // An ordinary invoice must state when it was dispatched. An outstanding
-    // re-print never was — it is already sitting at the broker — so it is
-    // allowed through without one and registered at cutover instead.
-    if (!dispatchDate && !isReprint) {
+    const dispatchDate = excelSerialToISODate(cell("dispatchDate"));
+    if (!dispatchDate) {
       skip("Row has no readable dispatch date");
       continue;
     }
@@ -200,19 +224,17 @@ export function parseDispatchSheet(grid: SheetGrid): ParsedDispatchSheet {
     rows.push({
       sheetRow,
       dispatchDate,
-      saleDate: excelSerialToISODate(cells[COLUMN.saleDate]),
+      saleDate: excelSerialToISODate(cell("saleDate")),
       brokerName: normalizeBrokerName(brokerRaw),
       markCode: normalizeMarkCode(markRaw),
       invoiceNo,
       bags,
       kgPerBag,
-      sampleWeightKg: sheetNumber(cells[COLUMN.sampleWeight]) ?? 0,
+      sampleWeightKg: sheetNumber(cell("sampleWeight")) ?? 0,
       grade: gradeRaw,
-      lotNo: sheetNumberText(cells[COLUMN.lotNo]) || null,
-      saleNo: saleNumber(cells[COLUMN.saleNo]),
-      nextSaleNo: saleNumber(cells[COLUMN.nextSaleNo]),
-      isReprint,
-      additionalSampleKg: sheetNumber(cells[COLUMN.additionalSampleWeight]) ?? 0,
+      lotNo: sheetNumberText(cell("lotNo")) || null,
+      saleNo: saleNumber(cell("saleNo")),
+      nextSaleNo: saleNumber(cell("nextSaleNo")),
     });
   }
 

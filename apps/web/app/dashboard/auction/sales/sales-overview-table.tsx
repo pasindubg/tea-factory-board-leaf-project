@@ -13,6 +13,7 @@ export type SaleOverviewRow = {
   brokers: string[];
   lotsSold: number;
   netKg: number;
+  dispatchedKg: number;
   proceeds: number;
   vat: number;
   guaranteeLots: number;
@@ -24,7 +25,11 @@ const COLUMNS: EntityListColumn<SaleOverviewRow>[] = [
   { key: "brokers", label: "Brokers", accessor: (row) => row.brokers.join(", ") || null, sortable: true, filter: "text", render: (row) => row.brokers.join(", ") || "—" },
   { key: "saleDate", label: "Sale date", accessor: (row) => row.saleDate ?? null, sortable: true, searchInput: "date", cellClassName: "text-stone-600 dark:text-stone-400", render: (row) => row.saleDate ?? "—" },
   { key: "lotsSold", label: "Lots sold", accessor: (row) => row.lotsSold, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },
-  { key: "netKg", label: "Net kg", accessor: (row) => row.netKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.netKg) },
+  // Two different quantities that both used to be called "Net kg": what went
+  // INTO the sale, and what came out of it sold. Before the auction the second
+  // is nil, which read as an empty sale.
+  { key: "dispatchedKg", label: "Kg to sale", accessor: (row) => row.dispatchedKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.dispatchedKg) },
+  { key: "netKg", label: "Net kg sold", accessor: (row) => row.netKg, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.netKg) },
   { key: "proceeds", label: "Proceeds", accessor: (row) => row.proceeds, sortable: true, headerClassName: "text-right", cellClassName: "text-right font-medium tabular-nums", render: (row) => money(row.proceeds) },
   { key: "vat", label: "VAT", accessor: (row) => row.vat, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums", render: (row) => money(row.vat) },
   { key: "guaranteeLots", label: "Guarantee", accessor: (row) => row.guaranteeLots, sortable: true, headerClassName: "text-right", cellClassName: "text-right tabular-nums" },

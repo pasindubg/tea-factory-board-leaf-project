@@ -142,6 +142,8 @@ export type AuctionDispatchListRow = {
   sale_date: string | null;
   prompt_date: string | null;
   selling_mark: string | null;
+  broker_id: string | null;
+  selling_mark_id: string | null;
   broker_lorry_no: string | null;
   driver_name: string | null;
   transporter: string | null;

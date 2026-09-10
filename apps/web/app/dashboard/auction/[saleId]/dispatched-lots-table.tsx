@@ -15,6 +15,7 @@ import { formatFourDigitNo, formatSaleNo } from "../sale-number";
 import { stateBucket } from "../state-buckets";
 import type { LotRow } from "./lot-row";
 import type { InvoicePrefixOption } from "../invoice-number";
+import { LOT_TEXT_LIMITS, lotNumberProps } from "../lot-fields";
 
 const REPRINTABLE_STATES = new Set(["acknowledged", "valued", "sold"]);
 const inputClass = "w-20 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
@@ -159,7 +160,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       headerClassName: "text-right",
       cellClassName: "text-right tabular-nums",
       edit: (row, { formId }) => (
-        <input form={formId} name="bags" type="number" min="0" step="1" defaultValue={row.bags ?? ""} className={numberInputClass} />
+        <input form={formId} name="bags" {...lotNumberProps("bags")} defaultValue={row.bags ?? ""} className={numberInputClass} />
       ),
     },
     {
@@ -171,7 +172,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       cellClassName: "text-right tabular-nums",
       render: (row) => row.kg_per_bag == null ? "—" : Number(row.kg_per_bag).toFixed(2),
       edit: (row, { formId }) => (
-        <input form={formId} name="kg_per_bag" type="number" min="0" step="0.01" defaultValue={row.kg_per_bag == null ? "" : Number(row.kg_per_bag)} className={numberInputClass} />
+        <input form={formId} name="kg_per_bag" {...lotNumberProps("kgPerBag")} defaultValue={row.kg_per_bag == null ? "" : Number(row.kg_per_bag)} className={numberInputClass} />
       ),
     },
     {
@@ -183,7 +184,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       cellClassName: "text-right tabular-nums",
       render: (row) => Number(row.sample_allowance ?? 0).toFixed(2),
       edit: (row, { formId }) => (
-        <input form={formId} name="sample_allowance" type="number" min="0" step="0.01" defaultValue={row.sample_allowance == null ? "" : Number(row.sample_allowance)} className={numberInputClass} />
+        <input form={formId} name="sample_allowance" {...lotNumberProps("sampleKg")} defaultValue={row.sample_allowance == null ? "" : Number(row.sample_allowance)} className={numberInputClass} />
       ),
     },
     {
@@ -230,7 +231,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       lov: false,
       render: (row) => row.chest_type ?? "—",
       edit: (row, { formId }) => (
-        <input form={formId} name="chest_type" defaultValue={row.chest_type ?? ""} placeholder="RIGID SAC" className={inputClass} />
+        <input form={formId} name="chest_type" maxLength={LOT_TEXT_LIMITS.typeOfChests} defaultValue={row.chest_type ?? ""} placeholder="RIGID SAC" className={inputClass} />
       ),
     },
     {
@@ -242,7 +243,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       lov: false,
       render: (row) => row.chest_numbers ?? "—",
       edit: (row, { formId }) => (
-        <input form={formId} name="chest_numbers" defaultValue={row.chest_numbers ?? ""} placeholder="1 - 20" className={inputClass} />
+        <input form={formId} name="chest_numbers" maxLength={LOT_TEXT_LIMITS.chestNumbers} defaultValue={row.chest_numbers ?? ""} placeholder="1 - 20" className={inputClass} />
       ),
     },
     {
@@ -254,7 +255,7 @@ function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<Lo
       cellClassName: "text-right tabular-nums",
       render: (row) => row.moisture_level == null ? "—" : Number(row.moisture_level).toFixed(1),
       edit: (row, { formId }) => (
-        <input form={formId} name="moisture_level" type="number" min="0" step="0.1" defaultValue={row.moisture_level == null ? "" : Number(row.moisture_level)} className={numberInputClass} />
+        <input form={formId} name="moisture_level" {...lotNumberProps("moisture")} defaultValue={row.moisture_level == null ? "" : Number(row.moisture_level)} className={numberInputClass} />
       ),
     },
     {
@@ -342,6 +343,7 @@ function InlineCreateCells({
           form={formId}
           name="invoice_no"
           required
+          maxLength={LOT_TEXT_LIMITS.invoiceNo}
           placeholder="e.g. 0058"
           aria-label="Invoice number"
           onBlur={(event) => {
@@ -374,6 +376,7 @@ function InlineCreateCells({
         <input
           form={formId}
           name="lot_no"
+          maxLength={LOT_TEXT_LIMITS.lotNo}
           placeholder="Optional"
           aria-label="Lot number"
           onBlur={(event) => {
@@ -400,15 +403,13 @@ function InlineCreateCells({
         />
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="bags" type="number" min="1" step="1" required defaultValue={10} aria-label="Bags" className={`${createInputClass} text-right`} />
+        <input form={formId} name="bags" {...lotNumberProps("bags")} required placeholder="10" aria-label="Bags" className={`${createInputClass} text-right`} />
       </td>
       <td className="px-4 py-3">
         <input
           form={formId}
           name="kg_per_bag"
-          type="number"
-          min="0.01"
-          step="0.01"
+          {...lotNumberProps("kgPerBag")}
           required
           placeholder="0.00"
           aria-label="Kilograms per bag"
@@ -420,9 +421,7 @@ function InlineCreateCells({
           ref={sampleInputRef}
           form={formId}
           name="sample_allowance"
-          type="number"
-          min="0"
-          step="0.01"
+          {...lotNumberProps("sampleKg")}
           defaultValue="0"
           aria-label="Sample kilograms"
           className={`${createInputClass} text-right`}
@@ -439,18 +438,16 @@ function InlineCreateCells({
         </select>
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="chest_type" placeholder="RIGID SAC" aria-label="Type of chests" className={createInputClass} />
+        <input form={formId} name="chest_type" maxLength={LOT_TEXT_LIMITS.typeOfChests} placeholder="RIGID SAC" aria-label="Type of chests" className={createInputClass} />
       </td>
       <td className="px-4 py-3">
-        <input form={formId} name="chest_numbers" placeholder="1 - 20" aria-label="Chest numbers" className={createInputClass} />
+        <input form={formId} name="chest_numbers" maxLength={LOT_TEXT_LIMITS.chestNumbers} placeholder="1 - 20" aria-label="Chest numbers" className={createInputClass} />
       </td>
       <td className="px-4 py-3">
         <input
           form={formId}
           name="moisture_level"
-          type="number"
-          min="0"
-          step="0.1"
+          {...lotNumberProps("moisture")}
           placeholder="0.0"
           aria-label="Moisture level"
           className={`${createInputClass} text-right`}
