@@ -109,6 +109,18 @@ export function NewInvoiceRow({
         />
       </td>
       <td className="px-4 py-3">
+        <input
+          form={formId}
+          name="target_sale_no"
+          required
+          defaultValue={defaults.saleNo ?? ""}
+          placeholder="e.g. 0019"
+          aria-label="Sale number"
+          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
+          className={cellInput}
+        />
+      </td>
+      <td className="px-4 py-3">
         <LovCombobox
           source="auction.brokers"
           name="broker_id"
@@ -218,18 +230,6 @@ export function NewInvoiceRow({
         />
       </td>
       <td className="px-4 py-3 text-right tabular-nums">{gross.toFixed(2)}</td>
-      <td className="px-4 py-3">
-        <input
-          form={formId}
-          name="target_sale_no"
-          required
-          defaultValue={defaults.saleNo ?? ""}
-          placeholder="e.g. 0019"
-          aria-label="Sale number"
-          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
-          className={cellInput}
-        />
-      </td>
       {/* Next sale no. and Check are both derived once the lot has a state. */}
       <td className={`px-4 py-3 ${muted}`}>—</td>
       <td className={`px-4 py-3 ${muted}`}>—</td>

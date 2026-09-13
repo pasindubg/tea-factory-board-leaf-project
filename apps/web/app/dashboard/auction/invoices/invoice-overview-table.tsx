@@ -100,6 +100,28 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "tabular-nums whitespace-nowrap min-w-36",
       render: (row) => row.saleDate ?? "—",
     },
+    {
+      key: "saleNo",
+      label: "Sale No.",
+      accessor: (row) => row.saleNo,
+      sortable: true,
+      filter: "text",
+      render: (row) => row.saleNo ?? "—",
+      // This is the dispatch invoice's own target_sale_no, shared by every lot
+      // under it (see auction.invoice-overview in list-resource-registry.ts) —
+      // saving here renames the sale number for the whole dispatch invoice, not
+      // just this one lot row.
+      edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
+        <input
+          form={formId}
+          name="target_sale_no"
+          defaultValue={row.saleNo ?? ""}
+          title="Changes the sale number for the whole dispatch invoice this lot belongs to."
+          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
+          className={inputClass}
+        />
+      )),
+    },
     { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select", lovSource: "auction.brokers" },
     {
       // Beside the broker, not at column 15. The mark names the estate the tea
@@ -284,28 +306,6 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       headerClassName: "text-right",
       cellClassName: "text-right tabular-nums",
       render: (row) => num(row.allWeight),
-    },
-    {
-      key: "saleNo",
-      label: "Sale No.",
-      accessor: (row) => row.saleNo,
-      sortable: true,
-      filter: "text",
-      render: (row) => row.saleNo ?? "—",
-      // This is the dispatch invoice's own target_sale_no, shared by every lot
-      // under it (see auction.invoice-overview in list-resource-registry.ts) —
-      // saving here renames the sale number for the whole dispatch invoice, not
-      // just this one lot row.
-      edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
-        <input
-          form={formId}
-          name="target_sale_no"
-          defaultValue={row.saleNo ?? ""}
-          title="Changes the sale number for the whole dispatch invoice this lot belongs to."
-          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
-          className={inputClass}
-        />
-      )),
     },
     {
       key: "nextSaleNo",
