@@ -1,9 +1,10 @@
 import "server-only";
 
-import { createInvoiceFromOverview, registerOutstandingReprint } from "@/app/dashboard/auction/actions";
+import { createInvoiceFromOverview } from "@/app/dashboard/auction/actions";
 import {
   applyImportRow,
   buildRowLookups,
+  registryGap,
   type DispatchImportPayload,
 } from "@/app/dashboard/blm-cloud/auction-data/_actions/import-row";
 import type { JobHandler } from "@/lib/jobs/registry";
@@ -52,6 +53,13 @@ export const runDispatchImportChunk: JobHandler = async ({
   // because the run started before it existed.
   const lookups = await buildRowLookups(supabase, run.factoryId);
 
+  // Configuration can still go missing between chunks — a broker deleted, a
+  // prefix deactivated, or a registry this run's actor cannot read. Throwing
+  // FAILS the run with one sentence the operator can act on; carrying on would
+  // instead fail every remaining row alike and call the import complete.
+  const gap = registryGap(rows.slice(index), lookups);
+  if (gap) throw new Error(gap);
+
   while (index < rows.length) {
     // Checked before the row, not after: a row half-applied at the deadline is
     // the one thing the cursor cannot describe.
@@ -61,11 +69,9 @@ export const runDispatchImportChunk: JobHandler = async ({
     const outcome = await applyImportRow({
       row: rows[index],
       lookups,
-      cutoverDate: payload.cutoverDate,
       supabase,
       factoryId: run.factoryId,
       createInvoice: createInvoiceFromOverview,
-      registerReprint: registerOutstandingReprint,
     });
 
     items.push(outcome);

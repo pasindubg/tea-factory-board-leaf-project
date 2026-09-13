@@ -225,6 +225,10 @@ export function DispatchDetailEditor({
       targetSaleNo: row.target_sale_no,
       dispatchDate: row.dispatch_date,
       saleDate: row.sale_date,
+      brokerId: row.broker_id,
+      brokerName: row.brokers?.name ?? null,
+      sellingMarkId: row.selling_mark_id,
+      sellingMark: row.selling_mark,
     })),
   };
   const visibleStats = creatingInvoice

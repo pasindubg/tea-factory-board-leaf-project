@@ -216,7 +216,13 @@ function ImportStage({ initialRun }: { initialRun: JobRunState | null }) {
         <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">{startError}</p>
       )}
 
-      <BackgroundJobProgress jobKey={JOB_KEY} run={run} emptyMessage="No import has been run yet." />
+      {/* Hidden while an upload is being refused. A refusal starts no run, so
+          the tallies still in state belong to the PREVIOUS one — and printed
+          directly under the refusal they read as its result, which is how a
+          stale "Failed: 264" gets mistaken for what just happened. */}
+      {!startError && (
+        <BackgroundJobProgress jobKey={JOB_KEY} run={run} emptyMessage="No import has been run yet." />
+      )}
     </section>
   );
 }

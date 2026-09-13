@@ -97,7 +97,7 @@ async function ensureDailyBundledDispatch(
   throw new Error(error?.message ?? "Could not create the bundled dispatch.");
 }
 
-type OpenDraftInvoice = { id: string; sale_no: string; dispatch_date: string | null };
+type OpenDraftInvoice = { id: string; sale_no: string; target_sale_no: string | null; dispatch_date: string | null };
 
 /**
  * Which screen a Dispatch Invoice is being opened from. Ordinary dispatch entry
@@ -136,7 +136,7 @@ async function findOpenDraftInvoice(
   if (!dispatchDate) return null;
   let query = supabase
     .from("auction_sales")
-    .select("id, sale_no, dispatch_date")
+    .select("id, sale_no, target_sale_no, dispatch_date")
     .eq("factory_id", factoryId)
     .eq("broker_id", brokerId)
     .eq("selling_mark_id", sellingMarkId)
@@ -223,6 +223,11 @@ async function insertDispatch(
   if (!targetSaleNo) return { ok: false, error: "Sale number is required." };
   if (!saleDate) return { ok: false, error: "Sale date is required." };
   if (!dispatchDate) return { ok: false, error: "Dispatch date is required." };
+  // Tea reaches the broker before the sale it is offered in. The input's `min`
+  // says so too, but that is a browser convenience, not the rule.
+  if (saleDate < dispatchDate) {
+    return { ok: false, error: `The sale date (${saleDate}) is before the dispatch date (${dispatchDate}). Tea is dispatched before its sale — check which of the two is wrong.` };
+  }
   if (!sellingMarkId) return { ok: false, error: "Pick a selling mark." };
   // Typed-but-not-picked text must be rejected BEFORE it reaches a uuid
   // column, or Postgres fails it as unreadable 22P02 syntax instead.
@@ -376,6 +381,21 @@ export async function resolveBrokerInvoiceForLot(
   if (!isRecordId(brokerId)) return { ok: false, error: notAnExisting(brokerId, "broker") };
   if (!isRecordId(sellingMarkId)) return { ok: false, error: notAnExisting(sellingMarkId, "selling mark") };
 
+  // One sale number names one sale date, whether this lot OPENS a dispatch
+  // invoice or joins one that is already open.
+  //
+  // The check used to live only in insertDispatch, so a row whose sale date
+  // contradicted the rest of its sale was refused when it happened to be the
+  // first of its broker/mark/date group and silently accepted — adopting the
+  // existing invoice's date — when it was not. The same bad row therefore
+  // passed or failed on nothing but its position in the book.
+  const submittedSaleNo = formatSaleNo(str(formData.get("target_sale_no")));
+  const submittedSaleDate = str(formData.get("sale_date"));
+  if (submittedSaleNo && submittedSaleDate) {
+    const clash = await conflictingSaleDateError(supabase, profile.factory_id, submittedSaleNo, submittedSaleDate);
+    if (clash) return { ok: false, error: clash };
+  }
+
   try {
     // Entered from a dispatch's own page: only that dispatch's own invoices may
     // answer, or the lot lands in an invoice belonging to a different dispatch.
@@ -383,7 +403,17 @@ export async function resolveBrokerInvoiceForLot(
       supabase, profile.factory_id, brokerId, sellingMarkId, dispatchDate, entrySource,
       undefined, str(formData.get("bundled_dispatch_id")) || undefined,
     );
-    if (existing) return { ok: true, saleId: existing.id, created: false };
+    if (existing) {
+      // Joining also silently discarded a disagreeing sale NUMBER, filing the
+      // lot in a sale it does not belong to.
+      if (submittedSaleNo && existing.target_sale_no && !saleNoMatches(existing.target_sale_no, submittedSaleNo)) {
+        return {
+          ok: false,
+          error: `This lot says sale ${submittedSaleNo}, but ${existing.sale_no} — the open dispatch invoice for this broker, mark and dispatch date — is for sale ${formatSaleNo(existing.target_sale_no)}. Correct the sale number, or dispatch this lot on its own date.`,
+        };
+      }
+      return { ok: true, saleId: existing.id, created: false };
+    }
   } catch (error) {
     // Never surface the driver's own text: it leaks column and type names.
     return { ok: false, error: friendlyError(error) };

@@ -66,12 +66,14 @@ function PrintoutDocument({
       {/* The estate form is a twelve-column landscape sheet; the payment
           statement elsewhere in the app stays portrait, so the page box is set
           here rather than in the shared print stylesheet. */}
-      <style>{`@media print { @page { size: A4 landscape; margin: 10mm; } }`}</style>
+      <style>{`@media print { @page { size: A4 landscape; margin: 0 10mm; } [data-print-document] { padding: 6mm 0 4mm; } }`}</style>
       <div
         data-print-document
         className="hidden text-[9pt] leading-tight text-black"
         style={{ printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }}
       >
+        <p className="text-[9pt] text-stone-500">BLM Cloud</p>
+
         <header className="mb-3 flex items-center gap-4">
           {/* Fixed box, eager: the sheet is laid out only when the print dialog
               opens, and a logo that is still loading then prints as a gap. */}

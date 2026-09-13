@@ -13,6 +13,7 @@ import { BAG_TYPES } from "../bag-types";
 import { BROKER_INVOICE_STATUSES, isOpenDraft, stateBucket, stateBucketOptions } from "../state-buckets";
 import { LOT_STATES } from "../lot-states";
 import { formatSaleNo } from "../sale-number";
+import { LOT_TEXT_LIMITS, lotNumberProps } from "../lot-fields";
 import { NewInvoiceRow, type GradeOption, type NewInvoiceDefaults } from "./new-invoice-row";
 
 export type InvoiceOverviewRow = AuctionInvoiceOverviewListRow;
@@ -99,7 +100,43 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "tabular-nums whitespace-nowrap min-w-36",
       render: (row) => row.saleDate ?? "—",
     },
+    {
+      key: "saleNo",
+      label: "Sale No.",
+      accessor: (row) => row.saleNo,
+      sortable: true,
+      filter: "text",
+      render: (row) => row.saleNo ?? "—",
+      // This is the dispatch invoice's own target_sale_no, shared by every lot
+      // under it (see auction.invoice-overview in list-resource-registry.ts) —
+      // saving here renames the sale number for the whole dispatch invoice, not
+      // just this one lot row.
+      edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
+        <input
+          form={formId}
+          name="target_sale_no"
+          defaultValue={row.saleNo ?? ""}
+          title="Changes the sale number for the whole dispatch invoice this lot belongs to."
+          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
+          className={inputClass}
+        />
+      )),
+    },
     { key: "broker", label: "Broker", accessor: (row) => row.broker, sortable: true, filter: "select", lovSource: "auction.brokers" },
+    {
+      // Beside the broker, not at column 15. The mark names the estate the tea
+      // belongs to — with two marks in play it identifies the row as much as
+      // the broker does, and it used to sit off the right edge of the screen.
+      key: "sellingMark",
+      label: "Mark",
+      accessor: (row) => row.sellingMark,
+      sortable: true,
+      filter: "select",
+      lovSource: "auction.marks",
+      headerClassName: "whitespace-nowrap",
+      cellClassName: "min-w-44 max-w-56",
+      render: (row) => <OneLine value={row.sellingMark} />,
+    },
     {
       key: "invoiceNo",
       label: "Invoice No.",
@@ -111,7 +148,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "font-medium min-w-32 max-w-40",
       render: (row) => <InvoiceNo value={row.invoiceNo} />,
       edit: (row, { formId }) => cell(row, <OneLine value={row.invoiceNo} />, () => (
-        <input form={formId} name="invoice_no" defaultValue={row.invoiceNo} className={inputClass} />
+        <input form={formId} name="invoice_no" maxLength={LOT_TEXT_LIMITS.invoiceNo} defaultValue={row.invoiceNo} className={inputClass} />
       )),
     },
     {
@@ -125,7 +162,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "text-right tabular-nums",
       render: (row) => row.bags ?? "—",
       edit: (row, { formId }) => cell(row, row.bags ?? "—", () => (
-        <input form={formId} name="bags" type="number" min="1" defaultValue={row.bags ?? ""} className={`${inputClass} text-right`} />
+        <input form={formId} name="bags" {...lotNumberProps("bags")} defaultValue={row.bags ?? ""} className={`${inputClass} text-right`} />
       )),
     },
     {
@@ -162,7 +199,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "text-right tabular-nums",
       render: (row) => num(row.kgPerBag),
       edit: (row, { formId }) => cell(row, num(row.kgPerBag), () => (
-        <input form={formId} name="kg_per_bag" type="number" step="0.01" min="0" defaultValue={row.kgPerBag ?? ""} className={`${inputClass} text-right`} />
+        <input form={formId} name="kg_per_bag" {...lotNumberProps("kgPerBag")} defaultValue={row.kgPerBag ?? ""} className={`${inputClass} text-right`} />
       )),
     },
     {
@@ -176,7 +213,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "text-right tabular-nums",
       render: (row) => num(row.sampleKg),
       edit: (row, { formId }) => cell(row, num(row.sampleKg), () => (
-        <input form={formId} name="sample_allowance" type="number" step="0.01" min="0" defaultValue={row.sampleKg ?? ""} className={`${inputClass} text-right`} />
+        <input form={formId} name="sample_allowance" {...lotNumberProps("sampleKg")} defaultValue={row.sampleKg ?? ""} className={`${inputClass} text-right`} />
       )),
     },
     {
@@ -229,7 +266,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "min-w-32 max-w-44",
       render: (row) => <OneLine value={row.chestType} />,
       edit: (row, { formId }) => cell(row, row.chestType ?? "—", () => (
-        <input form={formId} name="chest_type" defaultValue={row.chestType ?? ""} placeholder="RIGID SAC" className={inputClass} />
+        <input form={formId} name="chest_type" maxLength={LOT_TEXT_LIMITS.typeOfChests} defaultValue={row.chestType ?? ""} placeholder="RIGID SAC" className={inputClass} />
       )),
     },
     {
@@ -242,7 +279,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "min-w-28 max-w-40",
       render: (row) => <OneLine value={row.chestNumbers} />,
       edit: (row, { formId }) => cell(row, row.chestNumbers ?? "—", () => (
-        <input form={formId} name="chest_numbers" defaultValue={row.chestNumbers ?? ""} placeholder="1 - 20" className={inputClass} />
+        <input form={formId} name="chest_numbers" maxLength={LOT_TEXT_LIMITS.chestNumbers} defaultValue={row.chestNumbers ?? ""} placeholder="1 - 20" className={inputClass} />
       )),
     },
     {
@@ -256,19 +293,8 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       cellClassName: "text-right tabular-nums",
       render: (row) => row.moistureLevel == null ? "—" : row.moistureLevel.toFixed(1),
       edit: (row, { formId }) => cell(row, row.moistureLevel == null ? "—" : row.moistureLevel.toFixed(1), () => (
-        <input form={formId} name="moisture_level" type="number" step="0.1" min="0" defaultValue={row.moistureLevel ?? ""} className={`${inputClass} text-right`} />
+        <input form={formId} name="moisture_level" {...lotNumberProps("moisture")} defaultValue={row.moistureLevel ?? ""} className={`${inputClass} text-right`} />
       )),
-    },
-    {
-      key: "sellingMark",
-      label: "Mark",
-      accessor: (row) => row.sellingMark,
-      sortable: true,
-      filter: "select",
-      lovSource: "auction.marks",
-      headerClassName: "whitespace-nowrap",
-      cellClassName: "min-w-44 max-w-56",
-      render: (row) => <OneLine value={row.sellingMark} />,
     },
     {
       key: "allWeight",
@@ -280,28 +306,6 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       headerClassName: "text-right",
       cellClassName: "text-right tabular-nums",
       render: (row) => num(row.allWeight),
-    },
-    {
-      key: "saleNo",
-      label: "Sale No.",
-      accessor: (row) => row.saleNo,
-      sortable: true,
-      filter: "text",
-      render: (row) => row.saleNo ?? "—",
-      // This is the dispatch invoice's own target_sale_no, shared by every lot
-      // under it (see auction.invoice-overview in list-resource-registry.ts) —
-      // saving here renames the sale number for the whole dispatch invoice, not
-      // just this one lot row.
-      edit: (row, { formId }) => cell(row, row.saleNo ?? "—", () => (
-        <input
-          form={formId}
-          name="target_sale_no"
-          defaultValue={row.saleNo ?? ""}
-          title="Changes the sale number for the whole dispatch invoice this lot belongs to."
-          onBlur={(event) => { event.currentTarget.value = formatSaleNo(event.currentTarget.value); }}
-          className={inputClass}
-        />
-      )),
     },
     {
       key: "nextSaleNo",
@@ -335,7 +339,7 @@ function columns(canEdit: boolean, isOwner: boolean, scopedToDispatch: boolean):
       filter: "text",
       render: (row) => row.lotNo ?? "—",
       edit: (row, { formId }) => cell(row, row.lotNo ?? "—", () => (
-        <input form={formId} name="lot_no" defaultValue={row.lotNo ?? ""} className={inputClass} />
+        <input form={formId} name="lot_no" maxLength={LOT_TEXT_LIMITS.lotNo} defaultValue={row.lotNo ?? ""} className={inputClass} />
       )),
     },
     // ---- Not on the paper sheet, kept after it ----

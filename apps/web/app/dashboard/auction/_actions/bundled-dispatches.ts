@@ -415,6 +415,11 @@ export async function updateBundledDispatch(id: string, formData: FormData): Pro
       dispatch_date_from: dispatchDateFrom,
       dispatch_date_to: dispatchDateTo,
       warehouse: warehouseRecord.name,
+      // The lorry that carried the load. Every Dispatch Invoice in this
+      // dispatch prints these unless it records its own.
+      broker_lorry_no: str(formData.get("broker_lorry_no")) || null,
+      driver_name: str(formData.get("driver_name")) || null,
+      transporter: str(formData.get("transporter")) || null,
     })
     .eq("id", id)
     .eq("factory_id", profile.factory_id);

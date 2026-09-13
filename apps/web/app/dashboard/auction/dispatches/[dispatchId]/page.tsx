@@ -35,7 +35,7 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
   ] = await Promise.all([
     supabase
       .from("auction_bundled_dispatches")
-      .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, created_at")
+      .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, created_at, broker_lorry_no, driver_name, transporter")
       .eq("id", dispatchId)
       .maybeSingle(),
     loadListResource({ key: "auction.physical-dispatches" }),
@@ -124,6 +124,9 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
         ? (dispatch.status as DispatchStatus)
         : "draft",
       createdAt: (dispatch.created_at as string | null) ?? null,
+      brokerLorryNo: (dispatch.broker_lorry_no as string | null) ?? null,
+      driverName: (dispatch.driver_name as string | null) ?? null,
+      transporter: (dispatch.transporter as string | null) ?? null,
     }}
     dispatches={dispatchRows}
     summary={summary}

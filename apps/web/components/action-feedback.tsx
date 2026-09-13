@@ -24,6 +24,27 @@ export function showAppToast(
  */
 const TOAST_DURATION_MS = 4000;
 
+/**
+ * An error stays far longer than a confirmation.
+ *
+ * A success is a glance — the row is already on screen showing what happened.
+ * An error has to be read, matched back to the row that caused it, and acted
+ * on, and during bulk entry the operator is looking at the keyboard when it
+ * appears. Four seconds was short enough to miss entirely.
+ */
+const ERROR_TOAST_DURATION_MS = 15000;
+
+/** What to call a field in an error, from whatever the markup gives us. */
+function fieldLabel(field: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement): string {
+  const aria = field.getAttribute("aria-label");
+  if (aria) return aria;
+  const labelled = field.labels?.[0]?.textContent?.trim();
+  if (labelled) return labelled.replace(/\s*\*$/, "");
+  const placeholder = (field as HTMLInputElement).placeholder;
+  if (placeholder) return placeholder;
+  return field.name ? field.name.replace(/_/g, " ") : "This field";
+}
+
 export function ActionFeedback() {
   const clearTimer = useRef<number | null>(null);
   const remainingMs = useRef(TOAST_DURATION_MS);
@@ -53,14 +74,43 @@ export function ActionFeedback() {
     const onToast = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string; tone?: "success" | "error"; action?: ToastAction }>).detail;
       if (!detail?.message) return;
-      setFeedback({ message: detail.message, tone: detail.tone ?? "success", action: detail.action });
+      const tone = detail.tone ?? "success";
+      setFeedback({ message: detail.message, tone, action: detail.action });
       // A toast offering a follow-up gets longer to read and reach for.
-      startClearTimer(detail.action ? TOAST_DURATION_MS * 3 : TOAST_DURATION_MS);
+      startClearTimer(tone === "error" ? ERROR_TOAST_DURATION_MS : detail.action ? TOAST_DURATION_MS * 3 : TOAST_DURATION_MS);
     };
 
     window.addEventListener("dashboard:toast", onToast);
     return () => window.removeEventListener("dashboard:toast", onToast);
   }, [startClearTimer]);
+
+  // Browser validation, said in the app's own voice and in the app's own place.
+  //
+  // A failed `required` or `min` raised a native bubble beside the field while
+  // every server-side refusal appeared as a toast in the corner — two error
+  // languages in one form, and in a wide scrolling table the bubble could sit
+  // off-screen entirely. The bubble is suppressed, the first offending field is
+  // focused and scrolled to, and its complaint is toasted with the field's own
+  // name in front of it.
+  useEffect(() => {
+    let reportedThisAttempt = false;
+    const onInvalid = (event: Event) => {
+      const field = event.target as (HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement) & { validationMessage?: string };
+      if (!field?.validationMessage) return;
+      event.preventDefault();
+      // `invalid` fires once per bad control; only the first is worth saying,
+      // and the flag clears as soon as the current submit attempt unwinds.
+      if (reportedThisAttempt) return;
+      reportedThisAttempt = true;
+      queueMicrotask(() => { reportedThisAttempt = false; });
+      showAppToast(`${fieldLabel(field)}: ${field.validationMessage}`, "error");
+      field.focus({ preventScroll: true });
+      field.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+    };
+    // `invalid` does not bubble, so it is caught on the way down.
+    document.addEventListener("invalid", onInvalid, true);
+    return () => document.removeEventListener("invalid", onInvalid, true);
+  }, []);
 
   if (!feedback) return null;
 

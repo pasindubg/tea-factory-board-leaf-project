@@ -18,6 +18,15 @@ export const auctionBundledDispatches = pgTable(
     dispatchDateFrom: date("dispatch_date_from").notNull(),
     dispatchDateTo: date("dispatch_date_to").notNull(),
     warehouse: text("warehouse").notNull(),
+    // The lorry that carried this dispatch. One vehicle and one driver take
+    // the whole load, so they belong to the physical movement — the same three
+    // columns on auction_sales made the operator retype them once per broker
+    // invoice on the load. A Dispatch Invoice that leaves its own blank prints
+    // these instead; the columns on auction_sales stay, for the invoice that
+    // genuinely differs.
+    brokerLorryNo: text("broker_lorry_no"),
+    driverName: text("driver_name"),
+    transporter: text("transporter"),
     // Daily bundles are created automatically when a Broker Invoice is made.
     // Manual date-range bundles remain supported for legacy records.
     autoCreated: boolean("auto_created").default(false).notNull(),

@@ -1119,7 +1119,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         search.apply(
           supabase
             .from("auction_sales")
-            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, entry_source, created_date, brokers(name)", embeds))
+            .select(embedSelect("id, sale_no, target_sale_no, dispatch_date, sale_date, prompt_date, status, broker_id, selling_mark_id, broker_lorry_no, driver_name, transporter, bundled_dispatch_id, entry_source, created_date, brokers(name)", embeds))
             .eq("sale_kind", "dispatch"),
         ).order("created_at", { ascending: false }),
         supabase.from("marks").select("id, code, name").order("code"),
@@ -1142,6 +1142,10 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           prompt_date: (sale.prompt_date as string | null | undefined) ?? null,
           status: sale.status as string,
           selling_mark: markById.get((sale as { selling_mark_id?: string | null }).selling_mark_id ?? "") ?? null,
+          // Ids as well as labels: the "new dispatch invoice" form seeds itself
+          // from the last one entered, and a picker needs the id, not the name.
+          broker_id: (sale as { broker_id?: string | null }).broker_id ?? null,
+          selling_mark_id: (sale as { selling_mark_id?: string | null }).selling_mark_id ?? null,
           broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
           driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
           transporter: (sale as { transporter?: string | null }).transporter ?? null,

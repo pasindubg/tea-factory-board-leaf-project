@@ -72,6 +72,20 @@ export default async function SaleDetailPage({
     ? await nextDispatchNo(supabase, profile.factory_id, activeDispatchPrefixResult.prefix.prefix)
     : "";
 
+  // The lorry belongs to the physical dispatch — one vehicle takes the whole
+  // load — so an invoice that records none of its own shows and prints the
+  // dispatch's. An invoice that DOES carry its own still wins, for the load
+  // that genuinely split across vehicles.
+  const bundledDispatchId = (sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id ?? null;
+  const { data: carrier } = bundledDispatchId
+    ? await supabase
+        .from("auction_bundled_dispatches")
+        .select("broker_lorry_no, driver_name, transporter")
+        .eq("id", bundledDispatchId)
+        .eq("factory_id", profile.factory_id)
+        .maybeSingle()
+    : { data: null };
+
   return (
     <div className="space-y-8">
       {error && <p className="rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-sm text-red-700 dark:text-red-400">{error}</p>}
@@ -90,9 +104,9 @@ export default async function SaleDetailPage({
           selling_mark: sellingMark ? `${sellingMark.code as string}${sellingMark.name ? ` — ${sellingMark.name as string}` : ""}` : null,
           selling_mark_code: (sellingMark?.code as string | undefined) ?? null,
           selling_mark_name: (sellingMark?.name as string | undefined) ?? null,
-          broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no ?? null,
-          driver_name: (sale as { driver_name?: string | null }).driver_name ?? null,
-          transporter: (sale as { transporter?: string | null }).transporter ?? null,
+          broker_lorry_no: (sale as { broker_lorry_no?: string | null }).broker_lorry_no || (carrier?.broker_lorry_no as string | null) || null,
+          driver_name: (sale as { driver_name?: string | null }).driver_name || (carrier?.driver_name as string | null) || null,
+          transporter: (sale as { transporter?: string | null }).transporter || (carrier?.transporter as string | null) || null,
           bundle_dispatch_no: currentDispatch?.bundle_dispatch_no ?? null,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
         }}
@@ -128,6 +142,10 @@ export default async function SaleDetailPage({
               targetSaleNo: dispatch.target_sale_no,
               dispatchDate: dispatch.dispatch_date,
               saleDate: dispatch.sale_date,
+              brokerId: dispatch.broker_id,
+              brokerName: dispatch.brokers?.name ?? null,
+              sellingMarkId: dispatch.selling_mark_id,
+              sellingMark: dispatch.selling_mark,
           })),
         }}
       />

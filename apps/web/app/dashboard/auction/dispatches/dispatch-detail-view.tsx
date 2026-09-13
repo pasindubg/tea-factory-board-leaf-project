@@ -34,6 +34,11 @@ type DispatchDetailHeader = {
   warehouse: string;
   status: DispatchStatus;
   createdAt: string | null;
+  /** The lorry that took the load. Inherited by every Dispatch Invoice in this
+   * dispatch that does not carry its own. */
+  brokerLorryNo: string | null;
+  driverName: string | null;
+  transporter: string | null;
 };
 
 /**
@@ -321,6 +326,21 @@ export function DispatchDetailView({
                     // active ones, so it would otherwise look unset.
                     defaultLabel={dispatch.warehouse === "—" ? "" : dispatch.warehouse}
                   />
+                  {/* One lorry and one driver carry the whole load, so they
+                      belong here. A Dispatch Invoice that leaves its own blank
+                      prints these. */}
+                  <label className="grid min-w-0 gap-1.5 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                    Lorry no.
+                    <input name="broker_lorry_no" defaultValue={dispatch.brokerLorryNo ?? ""} placeholder="e.g. NP CAB-1234" maxLength={40} className={editInputClass} />
+                  </label>
+                  <label className="grid min-w-0 gap-1.5 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                    Driver
+                    <input name="driver_name" defaultValue={dispatch.driverName ?? ""} placeholder="Driver name" maxLength={80} className={editInputClass} />
+                  </label>
+                  <label className="grid min-w-0 gap-1.5 text-xs font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                    Transporter
+                    <input name="transporter" defaultValue={dispatch.transporter ?? ""} placeholder="Transporter name" maxLength={80} className={editInputClass} />
+                  </label>
                   {/* System-assigned, so it stays read-only while editing. */}
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                 </>
@@ -329,6 +349,9 @@ export function DispatchDetailView({
                   <DetailField label="Dispatch date(s)" value={dateRange(dispatch.dateFrom, dispatch.dateTo)} />
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                   <DetailField label="Warehouse" value={dispatch.warehouse} />
+                  <DetailField label="Lorry no." value={dispatch.brokerLorryNo || "—"} />
+                  <DetailField label="Driver" value={dispatch.driverName || "—"} />
+                  <DetailField label="Transporter" value={dispatch.transporter || "—"} />
                   <DetailField label="Invoices" value={summary.invoices} />
                   <DetailField label="Dispatch invoices" value={summary.brokerInvoices} />
                   <DetailField label="Total bags" value={summary.totalBags} />
