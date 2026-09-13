@@ -9,14 +9,55 @@ const SUPPLIERS_PATH = "/dashboard/suppliers";
 
 function supplierFields(formData: FormData) {
   const landSize = String(formData.get("land_size_acres") ?? "").trim();
+  const cultivated = String(formData.get("cultivated_area_acres") ?? "").trim();
   return {
+    customer_no: String(formData.get("customer_no") ?? "").trim(),
     name: String(formData.get("name") ?? "").trim(),
-    phone: String(formData.get("phone") ?? "").trim() || null,
+    phone: String(formData.get("phone") ?? "").trim(),
     nic_number: String(formData.get("nic_number") ?? "").trim() || null,
     area: String(formData.get("area") ?? "").trim() || null,
+    address: String(formData.get("address") ?? "").trim() || null,
     land_size_acres: landSize ? landSize : null,
+    cultivated_area_acres: cultivated ? cultivated : null,
+    bank_account_no: String(formData.get("bank_account_no") ?? "").trim() || null,
     collector_id: String(formData.get("collector_id") ?? "").trim() || null,
+    line_id: String(formData.get("line_id") ?? "").trim() || null,
+    latitude: String(formData.get("latitude") ?? "").trim(),
+    longitude: String(formData.get("longitude") ?? "").trim(),
   };
+}
+
+function coordinateError(value: string, label: string, limit: number): string | null {
+  if (!value) return `${label} is required.`;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < -limit || parsed > limit) {
+    return `${label} must be between -${limit} and ${limit}.`;
+  }
+  return null;
+}
+
+/** The starred registration fields, enforced here as well as by the database. */
+function mandatoryFieldError(fields: ReturnType<typeof supplierFields>): string | null {
+  if (!fields.customer_no) return "Customer number is required.";
+  if (!/^[0-9]+$/.test(fields.customer_no)) return "Customer number must be digits only.";
+  if (!fields.name) return "Customer name is required.";
+  if (!fields.phone) return "Mobile number is required.";
+  return (
+    coordinateError(fields.latitude, "Latitude", 90) ??
+    coordinateError(fields.longitude, "Longitude", 180)
+  );
+}
+
+function acreageError(fields: ReturnType<typeof supplierFields>): string | null {
+  for (const [value, label] of [
+    [fields.land_size_acres, "Land size"],
+    [fields.cultivated_area_acres, "Cultivated area"],
+  ] as const) {
+    if (value != null && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+      return `${label} must be zero or greater.`;
+    }
+  }
+  return null;
 }
 
 async function collectorBelongsToFactory(
@@ -38,10 +79,10 @@ async function collectorBelongsToFactory(
 export async function createSupplier(formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requirePagePermission("suppliers", "create");
   const fields = supplierFields(formData);
-  if (!fields.name) return { ok: false, error: "Supplier name is required." };
-  if (fields.land_size_acres != null && (!Number.isFinite(Number(fields.land_size_acres)) || Number(fields.land_size_acres) < 0)) {
-    return { ok: false, error: "Land size must be zero or greater." };
-  }
+  const missing = mandatoryFieldError(fields);
+  if (missing) return { ok: false, error: missing };
+  const invalidAcreage = acreageError(fields);
+  if (invalidAcreage) return { ok: false, error: invalidAcreage };
   const collectorError = await collectorBelongsToFactory(
     supabase,
     profile.factory_id,
@@ -53,17 +94,17 @@ export async function createSupplier(formData: FormData): Promise<ListMutationRe
   if (error) return { ok: false, error: friendlyError(error) };
 
   revalidatePath(SUPPLIERS_PATH);
-  return { ok: true, notice: "Supplier added." };
+  return { ok: true, notice: "Customer added." };
 }
 
 export async function updateSupplier(id: string, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requirePagePermission("suppliers", "update");
   const fields = supplierFields(formData);
-  if (!id) return { ok: false, error: "Supplier id is required." };
-  if (!fields.name) return { ok: false, error: "Supplier name is required." };
-  if (fields.land_size_acres != null && (!Number.isFinite(Number(fields.land_size_acres)) || Number(fields.land_size_acres) < 0)) {
-    return { ok: false, error: "Land size must be zero or greater." };
-  }
+  if (!id) return { ok: false, error: "Customer id is required." };
+  const missing = mandatoryFieldError(fields);
+  if (missing) return { ok: false, error: missing };
+  const invalidAcreage = acreageError(fields);
+  if (invalidAcreage) return { ok: false, error: invalidAcreage };
   const collectorError = await collectorBelongsToFactory(
     supabase,
     profile.factory_id,
@@ -79,10 +120,10 @@ export async function updateSupplier(id: string, formData: FormData): Promise<Li
     .select("id")
     .maybeSingle();
   if (error) return { ok: false, error: friendlyError(error) };
-  if (!data) return { ok: false, error: "Supplier not found." };
+  if (!data) return { ok: false, error: "Customer not found." };
 
   revalidatePath(SUPPLIERS_PATH);
-  return { ok: true, notice: "Supplier updated." };
+  return { ok: true, notice: "Customer updated." };
 }
 
 function selectedIds(formData: FormData) {
@@ -92,7 +133,7 @@ function selectedIds(formData: FormData) {
 export async function setSelectedSuppliersActive(active: boolean, formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requirePagePermission("suppliers", "update");
   const ids = selectedIds(formData);
-  if (ids.length === 0) return { ok: false, error: "Select at least one supplier." };
+  if (ids.length === 0) return { ok: false, error: "Select at least one customer." };
 
   const { data: existing, error: readError } = await supabase
     .from("suppliers")
@@ -101,7 +142,7 @@ export async function setSelectedSuppliersActive(active: boolean, formData: Form
     .eq("factory_id", profile.factory_id);
   if (readError) return { ok: false, error: friendlyError(readError) };
   if ((existing ?? []).length !== ids.length) {
-    return { ok: false, error: "One or more selected suppliers are no longer available." };
+    return { ok: false, error: "One or more selected customers are no longer available." };
   }
 
   const { error } = await supabase
@@ -113,6 +154,6 @@ export async function setSelectedSuppliersActive(active: boolean, formData: Form
   revalidatePath(SUPPLIERS_PATH);
   return {
     ok: true,
-    notice: `${ids.length} supplier${ids.length === 1 ? "" : "s"} ${active ? "reactivated" : "deactivated"}.`,
+    notice: `${ids.length} customer${ids.length === 1 ? "" : "s"} ${active ? "reactivated" : "deactivated"}.`,
   };
 }

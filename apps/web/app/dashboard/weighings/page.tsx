@@ -56,7 +56,7 @@ export default async function WeighingsPage({
     : waterPercent > 0 ? `${waterPercent}%` : null;
   const canCreate = supplierRows.length > 0 && (isCollector ? Boolean(ownCollector) : collectorRows.length > 0);
   const disabledReason = supplierRows.length === 0
-    ? "Add an active supplier before recording a weighing."
+    ? "Add an active customer before recording a weighing."
     : isCollector && !ownCollector
       ? "Your login needs a linked collector record."
       : collectorRows.length === 0

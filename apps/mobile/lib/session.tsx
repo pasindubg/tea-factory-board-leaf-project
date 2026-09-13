@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { AppState } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { CollectorRow, LinkedSupplier, Profile } from "./types";
+import { bindThisDevice } from "./bind-device";
+import type { CollectorRow, DeviceRegistration, LinkedSupplier, Profile } from "./types";
 
 type SessionState = {
   loading: boolean;
@@ -10,6 +11,7 @@ type SessionState = {
   profile: Profile | null;
   supplier: LinkedSupplier | null;
   collector: CollectorRow | null;
+  binding: DeviceRegistration | null;
   signOut: () => Promise<void>;
   reloadProfile: () => Promise<void>;
 };
@@ -22,6 +24,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [supplier, setSupplier] = useState<LinkedSupplier | null>(null);
   const [collector, setCollector] = useState<CollectorRow | null>(null);
+  // null until the phone has been checked against the login's binding. The
+  // login screen reads the verdict from here, so a rejection outlives the
+  // screen being unmounted by a redirect.
+  const [binding, setBinding] = useState<DeviceRegistration | null>(null);
 
   async function loadProfile(userId: string) {
     // Bootstrap exception: the authenticated auth user ID is the authority for
@@ -33,10 +39,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .single();
     const profileRow = (prof as Profile) ?? null;
     setProfile(profileRow);
+    if (!profileRow) {
+      setSupplier(null);
+      setCollector(null);
+      return;
+    }
+
+    // A field officer's login is tied to one handset. Check it here rather than
+    // on the login screen: the redirect fires as soon as the profile lands, so
+    // a verdict raised on that screen would be lost with it.
+    setBinding(profileRow.role === "field_officer" ? await bindThisDevice() : "bound");
 
     // The supplier this login represents (supplier-role users), for their
     // requests/acknowledgements.
-    if (profileRow?.supplier_id) {
+    if (profileRow.supplier_id) {
       const { data: sup } = await supabase
         .from("suppliers")
         .select("id, name, area")
@@ -68,6 +84,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
       setSession(next);
       if (next) {
+        setBinding(null);
         await loadProfile(next.user.id);
       } else {
         setProfile(null);
@@ -97,7 +114,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SessionContext.Provider value={{ loading, session, profile, supplier, collector, signOut, reloadProfile }}>
+    <SessionContext.Provider value={{ loading, session, profile, supplier, collector, binding, signOut, reloadProfile }}>
       {children}
     </SessionContext.Provider>
   );

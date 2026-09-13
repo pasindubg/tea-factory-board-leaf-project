@@ -6,7 +6,7 @@ import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "Tea Factory Ops",
-  description: "Green leaf intake, suppliers and payments for bought-leaf tea factories",
+  description: "Green leaf intake, customers and payments for bought-leaf tea factories",
 };
 
 const progressiveEnhancementScript = `(function(){

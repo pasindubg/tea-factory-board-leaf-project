@@ -108,6 +108,11 @@ export type AuctionSaleLineListRow = {
   kgPerBag: number | null;
   sampleKg: number | null;
   netWt: number;
+  mfDate: string | null;
+  bagType: string | null;
+  chestType: string | null;
+  chestNumbers: string | null;
+  moistureLevel: number | null;
   pricePerKg: number | null;
   proceeds: number | null;
   vatAmount: number | null;
@@ -246,6 +251,11 @@ export type AuctionInvoiceOverviewListRow = {
   kgPerBag: number | null;
   sampleKg: number | null;
   netWt: number | null;
+  mfDate: string | null;
+  bagType: string | null;
+  chestType: string | null;
+  chestNumbers: string | null;
+  moistureLevel: number | null;
   state: string | null;
   shutout: boolean;
   shutoutReason: string | null;
@@ -329,13 +339,25 @@ export type BackgroundJobListRow = {
 
 export type SupplierListRow = {
   id: string;
+  customerNo: string;
   name: string;
   area: string | null;
-  phone: string | null;
+  address: string | null;
+  phone: string;
   nicNumber: string | null;
   collectorId: string | null;
   collectorName: string;
+  lineId: string | null;
+  lineNo: string;
   landSizeAcres: number | string | null;
+  cultivatedAreaAcres: number | string | null;
+  latitude: number | string;
+  longitude: number | string;
+  bankAccountNo: string | null;
+  bankName: string | null;
+  bankParseStatus: string | null;
+  photoUrl: string | null;
+  bankBookUrl: string | null;
   active: boolean;
 };
 
@@ -346,6 +368,55 @@ export type CollectorListRow = {
   phone: string | null;
   nicNumber: string | null;
   active: boolean;
+};
+
+export type UserDeviceListRow = {
+  id: string;
+  userId: string;
+  userName: string;
+  role: string;
+  deviceId: string;
+  platform: string | null;
+  model: string | null;
+  appVersion: string | null;
+  lastSeenAt: string | null;
+  createdAt: string;
+};
+
+export type VehicleListRow = {
+  id: string;
+  vehicleNo: string;
+  makeModel: string | null;
+  capacityKg: number | string | null;
+  active: boolean;
+};
+
+export type DriverListRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  nicNumber: string | null;
+  licenceNo: string | null;
+  active: boolean;
+};
+
+export type LineListRow = {
+  id: string;
+  lineNo: string;
+  name: string | null;
+  vehicleId: string | null;
+  vehicleNo: string;
+  driverNames: string;
+  customerCount: number;
+  active: boolean;
+};
+
+export type LineDriverListRow = {
+  id: string;
+  driverId: string;
+  driverName: string;
+  phone: string | null;
+  licenceNo: string | null;
 };
 
 export type SentMessageListRow = {
@@ -502,6 +573,10 @@ export type ListResourceContracts = {
   "framework.background-jobs": { params: undefined; row: BackgroundJobListRow };
   "leaf.suppliers": { params: undefined; row: SupplierListRow };
   "leaf.collectors": { params: undefined; row: CollectorListRow };
+  "leaf.vehicles": { params: undefined; row: VehicleListRow };
+  "leaf.drivers": { params: undefined; row: DriverListRow };
+  "leaf.lines": { params: undefined; row: LineListRow };
+  "leaf.line-drivers": { params: { lineId: string }; row: LineDriverListRow };
   "communications.sent-messages": { params: undefined; row: SentMessageListRow };
   "communications.supplier-requests": { params: undefined; row: SupplierRequestListRow };
   "payments.adjustments": { params: undefined; row: PaymentAdjustmentListRow };
@@ -513,6 +588,7 @@ export type ListResourceContracts = {
   "users.roles": { params: undefined; row: AccessRoleListRow };
   "users.role-page-permissions": { params: { roleId: string }; row: RolePagePermissionListRow };
   "users.staff-directory": { params: undefined; row: StaffDirectoryListRow };
+  "users.devices": { params: undefined; row: UserDeviceListRow };
   "leaf.weighings": {
     params: { from?: string; to?: string; supplierId?: string; collectorId?: string };
     row: WeighingListRow;
@@ -540,6 +616,10 @@ export const LIST_RESOURCE_KEYS = [
   "auction.eligible-broker-invoices",
   "leaf.suppliers",
   "leaf.collectors",
+  "leaf.vehicles",
+  "leaf.drivers",
+  "leaf.lines",
+  "leaf.line-drivers",
   "communications.sent-messages",
   "communications.supplier-requests",
   "payments.adjustments",
@@ -551,6 +631,7 @@ export const LIST_RESOURCE_KEYS = [
   "users.roles",
   "users.role-page-permissions",
   "users.staff-directory",
+  "users.devices",
   "leaf.weighings",
   "framework.search-state",
   "framework.background-jobs",

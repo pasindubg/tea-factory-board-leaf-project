@@ -1,11 +1,22 @@
 // The application's database RLS policies deliberately use these stable base
 // roles. Factory-defined roles sit on top of one of them and can only narrow
 // access through page permissions; they never bypass the RLS baseline.
-export type Role = "owner" | "manager" | "supervisor" | "accountant" | "collector" | "supplier" | "driver";
+export type Role =
+  | "owner"
+  | "manager"
+  | "supervisor"
+  | "accountant"
+  | "collector"
+  | "supplier"
+  | "driver"
+  | "field_officer";
 
 export const ALL_WEB_ROLES: readonly Role[] = ["owner", "manager", "supervisor", "accountant", "collector"];
 export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
-export const CUSTOMIZABLE_BASE_ROLES: readonly Role[] = ["manager", "supervisor", "accountant", "collector"];
+// `field_officer` is mobile-only: it has no PAGE_DEFINITIONS entry, so a role
+// built on it reaches no web page. It is listed here so owners can create the
+// login at all.
+export const CUSTOMIZABLE_BASE_ROLES: readonly Role[] = ["manager", "supervisor", "accountant", "collector", "field_officer"];
 
 export const ROLE_LABELS: Record<Role, string> = {
   owner: "Owner",
@@ -15,6 +26,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   collector: "Collector",
   supplier: "Supplier",
   driver: "Driver",
+  field_officer: "Field officer",
 };
 
 export type Entitlement = "leaf-handling" | "auction" | "production" | "accounts";
@@ -40,8 +52,11 @@ export type ModuleDef = {
 export const MODULES: readonly ModuleDef[] = [
   { key: "overview", href: "/dashboard", label: "Overview", roles: ["owner", "manager", "supervisor", "accountant"], entitlement: "leaf-handling" },
   { key: "weighings", href: "/dashboard/weighings", label: "Weighings", roles: ALL_WEB_ROLES, entitlement: "leaf-handling", group: "Leaf Handling" },
-  { key: "suppliers", href: "/dashboard/suppliers", label: "Suppliers", roles: ["owner", "manager", "supervisor", "accountant"], entitlement: "leaf-handling", group: "Leaf Handling" },
+  { key: "suppliers", href: "/dashboard/suppliers", label: "Customers", roles: ["owner", "manager", "supervisor", "accountant"], entitlement: "leaf-handling", group: "Leaf Handling" },
   { key: "collectors", href: "/dashboard/collectors", label: "Collectors", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
+  { key: "lines", href: "/dashboard/lines", label: "Lines", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
+  { key: "vehicles", href: "/dashboard/vehicles", label: "Vehicles", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
+  { key: "drivers", href: "/dashboard/drivers", label: "Drivers", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
   { key: "requests", href: "/dashboard/requests", label: "Requests", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
   { key: "messages", href: "/dashboard/messages", label: "Messages", roles: ["owner", "manager", "supervisor"], entitlement: "leaf-handling", group: "Leaf Handling" },
   { key: "payments", href: "/dashboard/payments", label: "Payments", roles: ["owner", "manager", "accountant"], entitlement: "leaf-handling", group: "Leaf Handling" },
@@ -63,9 +78,11 @@ export const MODULES: readonly ModuleDef[] = [
   { key: "auction-data", href: "/dashboard/blm-cloud/auction-data", label: "Auction data reset & import", roles: ["owner"], entitlement: "auction", group: "BLM Cloud" },
   { key: "users", href: "/dashboard/user-handling/users", label: "Users", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
   { key: "roles", href: "/dashboard/user-handling/roles", label: "Roles & permissions", roles: ["owner"], entitlement: "leaf-handling", group: "User Handling" },
+  { key: "user-devices", href: "/dashboard/user-handling/devices", label: "Bound devices", roles: ["owner", "manager"], entitlement: "leaf-handling", group: "User Handling" },
 ];
 
 export type RolePageAction = "view" | "create" | "update" | "delete";
+export const ROLE_PAGE_ACTIONS: readonly RolePageAction[] = ["view", "create", "update", "delete"];
 
 export type PageDef = {
   key: string;
@@ -91,12 +108,16 @@ export const PAGE_DEFINITIONS: readonly PageDef[] = [
   // historic dispatch book. Owner only — it is destructive and one-off.
   page("weighings", "Weighings", "/dashboard/weighings", "Leaf Handling", "weighings", ALL_WEB_ROLES),
   page("weighings-new", "New weighing", "/dashboard/weighings/new", "Leaf Handling", "weighings", ALL_WEB_ROLES),
-  page("suppliers", "Suppliers", "/dashboard/suppliers", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor", "accountant"]),
-  page("supplier-new", "New supplier", "/dashboard/suppliers/new", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor"]),
-  page("supplier-edit", "Edit supplier", "/dashboard/suppliers/[id]/edit", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor"]),
+  page("suppliers", "Customers", "/dashboard/suppliers", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor", "accountant"]),
+  page("supplier-new", "New customer", "/dashboard/suppliers/new", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor"]),
+  page("supplier-edit", "Edit customer", "/dashboard/suppliers/[id]/edit", "Leaf Handling", "suppliers", ["owner", "manager", "supervisor"]),
   page("collectors", "Collectors", "/dashboard/collectors", "Leaf Handling", "collectors", ["owner", "manager", "supervisor"]),
   page("collector-new", "New collector", "/dashboard/collectors/new", "Leaf Handling", "collectors", ["owner", "manager", "supervisor"]),
   page("collector-edit", "Edit collector", "/dashboard/collectors/[id]/edit", "Leaf Handling", "collectors", ["owner", "manager", "supervisor"]),
+  page("lines", "Lines", "/dashboard/lines", "Leaf Handling", "lines", ["owner", "manager", "supervisor"]),
+  page("line-detail", "Line detail", "/dashboard/lines/[id]", "Leaf Handling", "lines", ["owner", "manager", "supervisor"]),
+  page("vehicles", "Vehicles", "/dashboard/vehicles", "Leaf Handling", "vehicles", ["owner", "manager", "supervisor"]),
+  page("drivers", "Drivers", "/dashboard/drivers", "Leaf Handling", "drivers", ["owner", "manager", "supervisor"]),
   page("requests", "Requests", "/dashboard/requests", "Leaf Handling", "requests", ["owner", "manager", "supervisor"]),
   page("messages", "Messages", "/dashboard/messages", "Leaf Handling", "messages", ["owner", "manager", "supervisor"]),
   page("payments", "Payments", "/dashboard/payments", "Leaf Handling", "payments", ["owner", "manager", "accountant"]),
@@ -121,6 +142,7 @@ export const PAGE_DEFINITIONS: readonly PageDef[] = [
   page("auction-warehouses", "Warehouse basic data", "/dashboard/auction/warehouses", "Dispatch Handling", "auction-warehouses", ["owner", "manager", "accountant"]),
   page("user-handling-users", "Users", "/dashboard/user-handling/users", "User Handling", "users", ["owner"]),
   page("user-handling-roles", "Roles & permissions", "/dashboard/user-handling/roles", "User Handling", "roles", ["owner"]),
+  page("user-devices", "Bound devices", "/dashboard/user-handling/devices", "User Handling", "user-devices", ["owner", "manager"]),
 ];
 
 export function getDefaultRoles(moduleKey: string): readonly Role[] {
@@ -135,18 +157,23 @@ export function pagesForModule(moduleKey: string): readonly PageDef[] {
   return PAGE_DEFINITIONS.filter((item) => item.moduleKey === moduleKey);
 }
 
-/** The upper action boundary enforced for a base RLS role. */
+/**
+ * Whether a base role may be GRANTED a page action at all.
+ *
+ * Every registered page and action is grantable to every factory role: the
+ * owner decides, through an explicit `role_page_permissions` row, and the
+ * matrix would otherwise show dead cells for roles the old hardcoded ceiling
+ * never anticipated (a `field_officer`'s whole matrix was disabled).
+ *
+ * This is a grant ceiling for the WEB UI only. `PAGE_DEFINITIONS.roles` still
+ * drives the default access a role gets with no explicit row, and the database
+ * remains the real authority — RLS factory isolation, `current_factory_id()`,
+ * and the restrictive policies (device binding, supplier scoping) are unmoved
+ * by anything ticked here.
+ */
 export function roleMayPerformPageAction(role: Role, pageDef: PageDef, action: RolePageAction): boolean {
   if (role === "owner") return true;
-  if (!pageDef.roles.includes(role)) return false;
-  if (action === "view") return true;
-  if (role === "manager") return true;
-
-  const operational = new Set(["weighings", "suppliers", "collectors", "requests", "messages", "auction-invoice-prefixes", "auction-prefix-approvals"]);
-  if (role === "supervisor") return action !== "delete" && operational.has(pageDef.moduleKey);
-  if (role === "accountant") return action !== "delete" && (pageDef.moduleKey === "payments" || pageDef.moduleKey.startsWith("auction"));
-  if (role === "collector") return action !== "delete" && pageDef.moduleKey === "weighings";
-  return false;
+  return PAGE_DEFINITIONS.includes(pageDef) && ROLE_PAGE_ACTIONS.includes(action);
 }
 
 export function modulesForRole(role: Role): readonly ModuleDef[] {

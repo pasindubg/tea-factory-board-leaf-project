@@ -26,7 +26,7 @@ function formatDate(value: string | null) {
 }
 
 const COLUMNS: EntityListColumn<SupplierRequestListRow>[] = [
-  { key: "supplierName", label: "Supplier", accessor: (row) => row.supplierName, sortable: true, filter: "select", cellClassName: "font-medium text-stone-900 dark:text-stone-100" },
+  { key: "supplierName", label: "Customer", accessor: (row) => row.supplierName, sortable: true, filter: "select", cellClassName: "font-medium text-stone-900 dark:text-stone-100" },
   { key: "typeLabel", label: "Request", accessor: (row) => row.typeLabel, sortable: true, filter: "select" },
   { key: "amount", label: "Amount", accessor: (row) => row.amount == null ? null : Number(row.amount), sortable: true, lov: false, searchInput: "number", cellClassName: "whitespace-nowrap font-medium", render: (row) => formatAmount(row.amount) },
   { key: "requestedAt", label: "Requested", accessor: (row) => row.requestedAt, sortable: true, searchInput: "date", cellClassName: "whitespace-nowrap text-xs text-stone-500 dark:text-stone-400", render: (row) => formatDate(row.requestedAt) },
@@ -55,9 +55,9 @@ const LANE_COPY: Record<Lane, { title: string; description: string; empty: strin
     empty: "Nothing approved is awaiting handover.",
   },
   handed: {
-    title: "⚠ Handed to driver — awaiting supplier acknowledgement",
-    description: "The driver was given these items, but the supplier has not confirmed receipt in the field app. Treat this as an unresolved delivery signal.",
-    empty: "No handed requests are awaiting supplier acknowledgement.",
+    title: "⚠ Handed to driver — awaiting customer acknowledgement",
+    description: "The driver was given these items, but the customer has not confirmed receipt in the field app. Treat this as an unresolved delivery signal.",
+    empty: "No handed requests are awaiting customer acknowledgement.",
   },
   history: {
     title: "Recent request history",
@@ -85,7 +85,7 @@ function requestCommand(
     },
     confirm: destructive
       ? {
-          title: "Decline supplier request?",
+          title: "Decline customer request?",
           description: "The selected request will move to declined history and cannot continue through the approval and handover workflow.",
           confirmLabel: "Decline request",
         }
@@ -158,10 +158,10 @@ export function SupplierRequestLists({ initialRows }: { initialRows: SupplierReq
       definition={LIST_DEFINITION}
       getId={(row) => row.id}
       rowLabel={(row) => `${row.supplierName} request`}
-      emptyMessage="No supplier requests."
+      emptyMessage="No customer requests."
       tabs={{
         defaultTab: "pending",
-        label: "Supplier request workflow",
+        label: "Customer request workflow",
         items: REQUEST_TABS,
       }}
     />

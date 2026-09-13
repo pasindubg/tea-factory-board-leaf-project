@@ -20,7 +20,7 @@ export async function sendMessage(formData: FormData): Promise<ListMutationResul
 
   if (!title || !body) return { ok: false, error: "A title and a message are both required." };
   if (title.length > 120) return { ok: false, error: "The message title must be 120 characters or fewer." };
-  if (!target) return { ok: false, error: "Choose a supplier or select the broadcast option." };
+  if (!target) return { ok: false, error: "Choose a customer or select the broadcast option." };
 
   const supplierId = target !== "all" ? target : null;
   if (supplierId) {
@@ -34,7 +34,7 @@ export async function sendMessage(formData: FormData): Promise<ListMutationResul
       .eq("active", true)
       .maybeSingle();
     if (supplierError) return { ok: false, error: friendlyError(supplierError) };
-    if (!supplier) return { ok: false, error: "Choose an active supplier from this factory." };
+    if (!supplier) return { ok: false, error: "Choose an active customer from this factory." };
   }
 
   const { error } = await supabase.from("supplier_messages").insert({
@@ -49,6 +49,6 @@ export async function sendMessage(formData: FormData): Promise<ListMutationResul
   revalidatePath(MSG);
   return {
     ok: true,
-    notice: supplierId ? "Message sent to the supplier." : "Broadcast sent to all suppliers.",
+    notice: supplierId ? "Message sent to the customer." : "Broadcast sent to all customers.",
   };
 }

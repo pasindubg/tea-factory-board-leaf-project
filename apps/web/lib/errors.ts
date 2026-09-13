@@ -21,11 +21,29 @@ const REFERENCED_ENTITY_LABELS: Record<string, string> = {
   brokers: "broker",
   buyers: "buyer",
   collectors: "collector",
+  drivers: "driver",
   factories: "factory",
+  lines: "line",
   marks: "selling mark",
   quality_tiers: "quality tier",
-  suppliers: "supplier",
+  suppliers: "customer",
   users: "user",
+  vehicles: "vehicle",
+};
+
+const MANDATORY_FIELD_LABELS: Record<string, string> = {
+  customer_no: "Customer number",
+  latitude: "Latitude",
+  longitude: "Longitude",
+  name: "Name",
+  phone: "Mobile number",
+};
+
+const CHECK_CONSTRAINT_MESSAGES: Record<string, string> = {
+  suppliers_customer_no_check: "Customer number must be digits only.",
+  suppliers_phone_check: "Mobile number is required.",
+  suppliers_latitude_check: "Latitude must be between -90 and 90.",
+  suppliers_longitude_check: "Longitude must be between -180 and 180.",
 };
 
 /**
@@ -73,7 +91,12 @@ export function friendlyError(err: unknown): string {
     case "23505": // unique_violation
       if (msg.includes("users_username_key")) return "That username is already taken.";
       if (msg.includes("uq_payments_supplier_period"))
-        return "A statement already exists for this supplier and month.";
+        return "A statement already exists for this customer and month.";
+      if (msg.includes("uq_suppliers_factory_customer_no"))
+        return "That customer number is already registered.";
+      if (msg.includes("uq_vehicles_factory_no")) return "That vehicle number already exists.";
+      if (msg.includes("uq_lines_factory_no")) return "That line number already exists.";
+      if (msg.includes("uq_line_drivers_line_driver")) return "That driver is already assigned to this line.";
       return "This record already exists (duplicate).";
     case "23503": { // foreign_key_violation
       // A LOV field pointing at a value its owning table doesn't have. The
@@ -84,8 +107,15 @@ export function friendlyError(err: unknown): string {
       if (missing) return `That ${missing.label} does not exist. Choose one from the list.`;
       return "A referenced record was not found. Refresh and try again.";
     }
-    case "23502": // not_null_violation
-      return "A required field is missing.";
+    case "23502": { // not_null_violation
+      const column = msg.match(/null value in column "([^"]+)"/i)?.[1];
+      const label = column ? MANDATORY_FIELD_LABELS[column] ?? column.replace(/_/g, " ") : null;
+      return label ? `${label} is required.` : "A required field is missing.";
+    }
+    case "23514": { // check_violation
+      const constraint = (err as { constraint?: string } | null)?.constraint ?? msg.match(/constraint "([^"]+)"/i)?.[1];
+      return CHECK_CONSTRAINT_MESSAGES[constraint ?? ""] ?? "A value is outside the range this field allows.";
+    }
     case "22P02": { // invalid_text_representation (e.g. bad UUID)
       // The id-typed counterpart of the case above: free text typed into a LOV
       // backed by ids never reaches the foreign key, it fails to cast first.

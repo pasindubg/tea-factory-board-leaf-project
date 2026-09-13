@@ -12,7 +12,7 @@ export type PaymentTableRow = PaymentStatementListRow;
 const COLUMNS: EntityListColumn<PaymentTableRow>[] = [
   {
     key: "supplierName",
-    label: "Supplier",
+    label: "Customer",
     accessor: (row) => row.supplierName,
     sortable: true,
     filter: "text",

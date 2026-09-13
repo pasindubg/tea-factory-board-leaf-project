@@ -330,6 +330,10 @@ once in `apps/web/lib/roles.ts`.**
   exactly one selected row; compatible state actions may accept many. When framework
   config explicitly sets `selectionMode: "single"`, omit checkboxes/bulk controls
   and show edit only for the current row.
+- Multi-step work on a selected record opens as a framework side drawer, via
+  `assistant` on an `EntityListCommand` — never a hand-built `AppDrawer`, and
+  never reachable only through a link in a table cell. Every such assistant
+  gets a toolbar command on its own list. See the `list-framework` skill.
 - Related list work surfaces use `EntityList.tabs` for one partitioned resource
   and `EntityListTabs` for independent lists rather than stacking dense tables.
   Each tab preserves its own list controls; top tabs are keyboard navigable with

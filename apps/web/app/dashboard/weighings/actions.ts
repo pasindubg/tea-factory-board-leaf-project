@@ -31,7 +31,7 @@ export async function createWeighing(formData: FormData): Promise<ListMutationRe
     supabase.from("suppliers").select("id").eq("id", supplierId).eq("factory_id", profile.factory_id).eq("active", true).maybeSingle(),
     supabase.from("collectors").select("id").eq("id", collectorId).eq("factory_id", profile.factory_id).neq("active", false).maybeSingle(),
   ]);
-  if (!supplier || !collector) return { ok: false, error: "The selected supplier or collector is unavailable." };
+  if (!supplier || !collector) return { ok: false, error: "The selected customer or collector is unavailable." };
 
   let tierChanged = false;
   if (tierId && MANAGEMENT_ROLES.includes(profile.role)) {

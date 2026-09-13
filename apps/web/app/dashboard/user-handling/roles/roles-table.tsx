@@ -6,6 +6,7 @@ import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import type { AccessRoleListRow } from "@/lib/list-resources";
 import { CUSTOMIZABLE_BASE_ROLES, ROLE_LABELS } from "@/lib/roles";
+import { RolePermissionsMatrix } from "./role-permissions-matrix";
 import { createAccessRole, removeAccessRole, renameAccessRole } from "./actions";
 
 const input = "w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-green-600 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
@@ -36,14 +37,6 @@ const columns: EntityListColumn<AccessRoleListRow>[] = [
     filter: "select",
     filterOptions: Object.entries(ROLE_LABELS).map(([value, label]) => ({ value: label, label })),
     render: (row) => <span className="capitalize text-stone-600 dark:text-stone-400">{ROLE_LABELS[row.baseRole as keyof typeof ROLE_LABELS] ?? row.baseRole}</span>,
-  },
-  {
-    key: "access",
-    label: "Access",
-    accessor: () => "Configure",
-    sortable: false,
-    lov: false,
-    render: (row) => <Link href={`/dashboard/user-handling/roles/${row.id}`} className="font-medium text-green-700 hover:underline dark:text-green-400">Configure pages →</Link>,
   },
 ];
 
@@ -80,6 +73,29 @@ export function RolesTable({ initialRows }: { initialRows: AccessRoleListRow[] }
           </form>
         ),
       }}
+      commands={[
+        {
+          id: "configure-pages",
+          label: "Configure pages",
+          disabled: ({ selectedRows }) => selectedRows.length !== 1,
+          disabledReason: ({ selectedRows }) =>
+            selectedRows.length === 1 ? undefined : "Select one role to configure its pages.",
+          assistant: {
+            title: ({ selectedRows }) => selectedRows[0]?.name ?? "Role",
+            description: ({ selectedRows }) => {
+              const role = selectedRows[0];
+              if (!role) return "";
+              const base = ROLE_LABELS[role.baseRole as keyof typeof ROLE_LABELS] ?? role.baseRole;
+              return `Base security level: ${base}${role.systemRole ? " · Built-in role" : ""}`;
+            },
+            widthClass: "w-[min(64rem,calc(100vw-2rem))]",
+            render: ({ command }) => {
+              const role = command.selectedRows[0];
+              return role ? <RolePermissionsMatrix roleId={role.id} initialRows={[]} /> : null;
+            },
+          },
+        },
+      ]}
       edit={{
         action: (row, formData) => renameAccessRole(row.id, formData),
         canEdit: true,

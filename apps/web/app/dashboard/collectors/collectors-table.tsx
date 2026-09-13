@@ -2,13 +2,13 @@
 
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
-import { SubmitButton } from "@/components/submit-button";
 import type { CollectorListRow } from "@/lib/list-resources";
 import { createCollector, setSelectedCollectorsActive, updateCollector } from "./actions";
 
 export type CollectorRow = CollectorListRow;
 
 const input = "w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 focus:border-green-600 focus:outline-none dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100";
+const cellInput = "w-full min-w-24 rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-600 dark:bg-stone-900";
 
 const COLUMNS: EntityListColumn<CollectorRow>[] = [
   {
@@ -83,21 +83,18 @@ export function CollectorsTable({ rows }: { rows: CollectorRow[] }) {
       create={{
         action: createCollector,
         label: "New collector",
-        panelTitle: "Add collector",
         disabledReason: "Finish the current collector change first.",
-        render: ({ action, close }) => (
-          <form action={action} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Field label="Name *"><input name="name" required className={input} /></Field>
-            <Field label="Phone"><input name="phone" className={input} /></Field>
-            <Field label="NIC number"><input name="nic_number" className={input} /></Field>
-            <Field label="Area"><input name="area" className={input} /></Field>
-            <div className="flex items-center justify-end gap-2 sm:col-span-2 xl:col-span-4">
-              <button type="button" onClick={close} className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium dark:border-stone-600">Cancel</button>
-              <SubmitButton pendingText="Adding…" className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 dark:bg-green-600">Add collector</SubmitButton>
-            </div>
-          </form>
+        renderRow: ({ formId }) => (
+          <>
+            <td className="px-4 py-3"><input form={formId} name="name" required aria-label="Collector name" className={cellInput} /></td>
+            <td className="px-4 py-3"><input form={formId} name="area" aria-label="Area" className={cellInput} /></td>
+            <td className="px-4 py-3"><input form={formId} name="phone" aria-label="Phone" className={cellInput} /></td>
+            <td className="px-4 py-3"><input form={formId} name="nic_number" aria-label="NIC number" className={cellInput} /></td>
+            <td className="px-4 py-3" />
+          </>
         ),
       }}
+      createPlacement="toolbar"
       edit={{
         action: (row, formData) => updateCollector(row.id, formData),
       }}
@@ -131,8 +128,4 @@ function StatusBadge({ active }: { active: boolean }) {
       {active ? "active" : "inactive"}
     </span>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="text-sm font-medium text-stone-700 dark:text-stone-300"><span className="mb-1 block">{label}</span>{children}</label>;
 }

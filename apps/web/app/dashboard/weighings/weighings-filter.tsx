@@ -45,7 +45,7 @@ export function WeighingsFilter({
       <label className="text-sm">
         Supplier
         <select name="supplier" defaultValue={supplierId ?? ""} className={`${inputClass} mt-1 block`}>
-          <option value="">All suppliers</option>
+          <option value="">All customers</option>
           {suppliers.map((s) => (
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}

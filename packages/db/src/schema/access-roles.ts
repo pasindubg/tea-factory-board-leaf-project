@@ -16,7 +16,7 @@ export const accessRoles = pgTable(
     key: text("key").notNull(),
     name: text("name").notNull(),
     baseRole: text("base_role", {
-      enum: ["owner", "manager", "supervisor", "accountant", "collector", "supplier", "driver"],
+      enum: ["owner", "manager", "supervisor", "accountant", "collector", "supplier", "driver", "field_officer"],
     }).notNull(),
     systemRole: boolean("system_role").default(false).notNull(),
     active: boolean("active").default(true).notNull(),

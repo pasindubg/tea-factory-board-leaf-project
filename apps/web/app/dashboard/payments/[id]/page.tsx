@@ -96,7 +96,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
 
         <div className="flex justify-between py-4 text-sm">
           <div>
-            <p className="text-stone-500 dark:text-stone-400">Supplier</p>
+            <p className="text-stone-500 dark:text-stone-400">Customer</p>
             <p className="font-medium">{p.suppliers?.name ?? "—"}</p>
             {p.suppliers?.area && <p className="text-stone-500 dark:text-stone-400">{p.suppliers.area}</p>}
           </div>

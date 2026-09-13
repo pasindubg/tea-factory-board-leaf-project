@@ -179,7 +179,7 @@ export async function assignTier(formData: FormData): Promise<ListMutationResult
     supabase.from("suppliers").select("id").eq("id", supplierId).eq("factory_id", profile.factory_id).eq("active", true).maybeSingle(),
     supabase.from("quality_tiers").select("id").eq("id", tierId).eq("factory_id", profile.factory_id).eq("active", true).maybeSingle(),
   ]);
-  if (!supplier || !tier) return { ok: false, error: "The selected supplier or tier is unavailable." };
+  if (!supplier || !tier) return { ok: false, error: "The selected customer or tier is unavailable." };
 
   // Close the supplier's current open assignment the day before the new one.
   const dayBefore = new Date(`${from}T00:00:00`);
@@ -225,7 +225,7 @@ export async function addAdjustment(formData: FormData): Promise<ListMutationRes
     return { ok: false, error: "Supplier, kind, date, and a positive value are required." };
   }
   const { data: supplier } = await supabase.from("suppliers").select("id").eq("id", supplierId).eq("factory_id", profile.factory_id).maybeSingle();
-  if (!supplier) return { ok: false, error: "The selected supplier is unavailable." };
+  if (!supplier) return { ok: false, error: "The selected customer is unavailable." };
   const isPercent = mode === "percent";
   const d = new Date(`${occurredOn}T00:00:00`);
   const { error } = await supabase.from("supplier_adjustments").insert({

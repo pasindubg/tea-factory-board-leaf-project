@@ -67,6 +67,22 @@ function estateInvoiceFields(formData: FormData) {
   };
 }
 
+/**
+ * The same columns carried onto a row backfilled for an earlier sale. It is the
+ * same physical tea in a sale the system never saw, so it was manufactured and
+ * packed the same way — leaving the fields blank would make the earlier sheet
+ * disagree with the later one about a fact that cannot have changed.
+ */
+function copiedEstateInvoiceFields(lot: Partial<Record<string, unknown>> | undefined) {
+  return {
+    mf_date: (lot?.mf_date as string | null) ?? null,
+    bag_type: (lot?.bag_type as string | null) ?? null,
+    chest_type: (lot?.chest_type as string | null) ?? null,
+    chest_numbers: (lot?.chest_numbers as string | null) ?? null,
+    moisture_level: (lot?.moisture_level as string | number | null) ?? null,
+  };
+}
+
 function netWeight(bags: number, kgPerBag: number, sampleKg = 0) {
   return Number(Math.max(0, bags * kgPerBag - sampleKg).toFixed(2));
 }
@@ -521,7 +537,7 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
   const matchKey = invoiceMatchKey(invoiceNo);
   const { data: brokerLots, error: brokerLotsError } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, reprint, auction_sales!inner(broker_id)")
+    .select(`id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, reprint, auction_sales!inner(broker_id)`)
     .eq("factory_id", profile.factory_id)
     .eq("auction_sales.broker_id", invoice.broker_id as string);
   if (brokerLotsError) return { ok: false, error: friendlyError(brokerLotsError) };
@@ -588,6 +604,7 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
         gross_wt: currentLot?.gross_wt ?? null,
         sample_allowance: currentLot?.sample_allowance ?? null,
         net_wt: netWt,
+        ...copiedEstateInvoiceFields(currentLot),
         state: "invoiced",
         reprint: true,
         reprint_registered: true,
@@ -674,7 +691,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
   const matchKey = invoiceMatchKey(invoiceNo);
   const { data: brokerLots, error: brokerLotsError } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, skipped_sale, auction_sales!inner(broker_id)")
+    .select(`id, sale_id, invoice_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, skipped_sale, auction_sales!inner(broker_id)`)
     .eq("factory_id", profile.factory_id)
     .eq("auction_sales.broker_id", invoice.broker_id as string);
   if (brokerLotsError) return { ok: false, error: friendlyError(brokerLotsError) };
@@ -739,6 +756,7 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
         gross_wt: currentLot?.gross_wt ?? null,
         sample_allowance: currentLot?.sample_allowance ?? null,
         net_wt: netWt,
+        ...copiedEstateInvoiceFields(currentLot),
         // Already acknowledged: this document is the acknowledgement.
         state: "acknowledged",
         skipped_sale: true,

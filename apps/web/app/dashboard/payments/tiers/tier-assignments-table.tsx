@@ -11,7 +11,7 @@ export type TierSupplierOption = { id: string; name: string; area: string | null
 export type TierOption = { id: string; name: string };
 
 const COLUMNS: EntityListColumn<TierAssignmentRow>[] = [
-  { key: "supplierName", label: "Supplier", accessor: (row) => row.supplierName, sortable: true, filter: "text", render: (row) => <span className="font-medium">{row.supplierName}</span> },
+  { key: "supplierName", label: "Customer", accessor: (row) => row.supplierName, sortable: true, filter: "text", render: (row) => <span className="font-medium">{row.supplierName}</span> },
   { key: "area", label: "Area", accessor: (row) => row.area ?? null, sortable: true, filter: "select", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => row.area ?? "—" },
   { key: "tierName", label: "Current tier", accessor: (row) => row.tierName ?? "Standard (none)", sortable: true, filter: "select", render: (row) => row.tierName ?? <span className="text-stone-400 dark:text-stone-500">Standard (none)</span> },
   { key: "effectiveFrom", label: "Since", accessor: (row) => row.effectiveFrom ?? null, sortable: true, searchInput: "date", cellClassName: "text-stone-500 dark:text-stone-400", render: (row) => row.effectiveFrom ?? "—" },
@@ -44,7 +44,7 @@ export function TierAssignmentsTable({
   const createReason = !canManage
     ? "Only owners and managers can assign quality tiers."
     : suppliers.length === 0
-      ? "There are no active suppliers to assign."
+      ? "There are no active customers to assign."
       : tiers.length === 0
         ? "Add an active quality tier in Payment settings first."
       : "Finish the current tier assignment first.";
@@ -56,14 +56,14 @@ export function TierAssignmentsTable({
       definition={LIST}
       getId={(row) => row.id}
       rowLabel={(row) => row.supplierName}
-      title="Supplier quality tiers"
-      description="Current effective-dated tier for every active supplier. A new assignment closes the previous assignment automatically."
-      emptyMessage="No active suppliers."
+      title="Customer quality tiers"
+      description="Current effective-dated tier for every active customer. A new assignment closes the previous assignment automatically."
+      emptyMessage="No active customers."
       canCreate={canAssign}
       create={{
         action: assignTier,
         label: "Assign tier",
-        panelTitle: "Assign a supplier to a quality tier",
+        panelTitle: "Assign a customer to a quality tier",
         disabledReason: createReason,
         render: ({ action, close }) => <form
           action={action}
@@ -72,7 +72,7 @@ export function TierAssignmentsTable({
           <label className="text-sm">
             Supplier
             <select name="supplier_id" required defaultValue="" className={`${input} w-56`}>
-              <option value="" disabled>Select supplier</option>
+              <option value="" disabled>Select customer</option>
               {suppliers.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>
                   {supplier.name}{supplier.area ? ` (${supplier.area})` : ""}

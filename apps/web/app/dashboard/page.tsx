@@ -76,7 +76,7 @@ export default async function DashboardPage() {
           <p className="mt-2 text-2xl font-semibold">{(todayWeighings ?? []).length}</p>
         </div>
         <div className="rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
-          <p className="text-sm text-stone-500 dark:text-stone-400">Active suppliers</p>
+          <p className="text-sm text-stone-500 dark:text-stone-400">Active customers</p>
           <p className="mt-2 text-2xl font-semibold">{supplierCount ?? 0}</p>
         </div>
       </div>

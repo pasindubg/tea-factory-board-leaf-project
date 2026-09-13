@@ -98,6 +98,6 @@ export async function handToDriver(formData: FormData): Promise<ListMutationResu
   revalidatePath(REQ);
   return {
     ok: true,
-    notice: "Marked handed to driver — awaiting the supplier's acknowledgement on their app.",
+    notice: "Marked handed to driver — awaiting the customer's acknowledgement on their app.",
   };
 }

@@ -49,7 +49,7 @@ export function RolePermissionsMatrix({ roleId, initialRows }: { roleId: string;
           {rows.flatMap((row) => ACTIONS.filter((action) => draft[row.key]?.[action]).map((action) => <input key={`${row.key}-${action}`} type="hidden" name={`perm_${row.key}_${action}`} value="on" />))}
           <ListSurface
             title="Page and action access"
-            description="Choose the pages this role can open and the actions it can perform. Disabled cells exceed its database security level."
+            description="Choose the pages this role can open and the actions it can perform. Row access is what the web grants; the database enforces factory isolation regardless."
             refreshing={refreshing}
             actions={<SubmitButton pendingText="Saving…" className="min-h-10 rounded-full bg-green-700 px-5 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-500 dark:text-green-950">Save access</SubmitButton>}
           >

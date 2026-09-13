@@ -56,7 +56,7 @@ export function WeighingForm({
       <label className="block text-sm font-medium">
         Supplier *
         <select name="supplier_id" required defaultValue="" onChange={onSupplierChange} className={inputClass}>
-          <option value="" disabled>Select supplier</option>
+          <option value="" disabled>Select customer</option>
           {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}{s.area ? ` (${s.area})` : ""}

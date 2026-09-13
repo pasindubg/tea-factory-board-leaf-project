@@ -7,6 +7,7 @@ import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { LovCombobox } from "@/components/lov-combobox";
 import { InvoicePrefixMenu, displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import { DEFAULT_COLUMN_MIN_WIDTH, ListViewModeMenu, useListViewMode } from "@/components/list-view-mode";
+import { AppDrawer } from "@/components/ui/drawer";
 import {
   ListCommandToolbar,
   ListCreatePanel,
@@ -307,6 +308,33 @@ export type EntityListCommand<Row> = {
       command: EntityListCommandContext<Row>;
     }) => ReactNode;
   };
+  /**
+   * Opens the selection in a side drawer without leaving the list — the
+   * "assistant" shape the auction document reconciliation established. Use it
+   * for multi-step work ON a selected record (assigning children, walking a
+   * document workflow) rather than a single form, which `panel` already covers.
+   *
+   * The drawer is framework-owned: every list gets the same overlay, escape
+   * key, focus trap, close control and scroll behaviour, so an assistant is
+   * declared rather than hand-built. `close` dismisses it and `refresh`
+   * reloads the underlying list, so a change made inside the drawer shows in
+   * the row behind it.
+   */
+  assistant?: {
+    title: string | ((context: EntityListCommandContext<Row>) => string);
+    description?: string | ((context: EntityListCommandContext<Row>) => string);
+    /**
+     * The drawer's full width utility (not a max-width), e.g.
+     * `w-[min(88rem,calc(100vw-2rem))]` for a wide matrix. Omit for the
+     * standard AppDrawer width.
+     */
+    widthClass?: string;
+    render: (context: {
+      command: EntityListCommandContext<Row>;
+      close: () => void;
+      refresh: () => void;
+    }) => ReactNode;
+  };
 };
 
 export type EntityListTab = {
@@ -591,6 +619,7 @@ function EntityListPanel<Row>({
   const [busyCommand, setBusyCommand] = useState<string | null>(null);
   const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const [panelCommand, setPanelCommand] = useState<string | null>(null);
+  const [assistantCommand, setAssistantCommand] = useState<string | null>(null);
   const { mode: viewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth } = useListViewMode(scope);
   const tableViewportRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -810,6 +839,7 @@ function EntityListPanel<Row>({
   }
 
   const activePanelCommand = commands.find((command) => command.id === panelCommand && command.panel);
+  const activeAssistantCommand = commands.find((command) => command.id === assistantCommand && command.assistant);
   const sideSortColumn = sideList?.sortColumnKey
     ? definition.columns.find((column) => column.key === sideList.sortColumnKey)
     : undefined;
@@ -892,6 +922,7 @@ function EntityListPanel<Row>({
                 disabled={disabled}
                 onClick={() => {
                   if (command.onOpen) command.onOpen(commandContext);
+                  else if (command.assistant) setAssistantCommand(command.id);
                   else if (command.panel) setPanelCommand(command.id);
                   else if (command.confirm) setConfirmingCommand(command.id);
                   else void runCommand(command);
@@ -949,6 +980,26 @@ function EntityListPanel<Row>({
             command: commandContext,
           })}
         </ListCreatePanel>
+      )}
+
+      {activeAssistantCommand?.assistant && (
+        <AppDrawer
+          open
+          title={typeof activeAssistantCommand.assistant.title === "function"
+            ? activeAssistantCommand.assistant.title(commandContext)
+            : activeAssistantCommand.assistant.title}
+          description={typeof activeAssistantCommand.assistant.description === "function"
+            ? activeAssistantCommand.assistant.description(commandContext)
+            : activeAssistantCommand.assistant.description}
+          widthClass={activeAssistantCommand.assistant.widthClass}
+          onClose={() => setAssistantCommand(null)}
+        >
+          {activeAssistantCommand.assistant.render({
+            command: commandContext,
+            close: () => setAssistantCommand(null),
+            refresh: () => void reload?.(),
+          })}
+        </AppDrawer>
       )}
 
       {editingRow && edit?.renderPanel && (

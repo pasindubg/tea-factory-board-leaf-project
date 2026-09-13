@@ -25,6 +25,38 @@ the canonical milestones are noted.
 
 ---
 
+## FA8 — Field customer registration  ⬅ SHIPS FIRST, ahead of FA0
+The only field-app surface going to the factory right now. A `field_officer`
+logs in with a username and password, is bound to that one phone, picks the
+**line** they are working, and registers customers onto it — capturing the GPS
+fix that FA5 route optimisation will later order stops by.
+
+- Registry (web only): `vehicles`, `drivers`, `lines` (one vehicle per line),
+  `line_drivers` (a line takes 1..n drivers). Field officers read these; they
+  never create them.
+- `suppliers` gains `customer_no` (the identifier the customer already carries
+  in the factory's existing system — text, unique per factory), `line_id`
+  (composite FK, so a customer can never be put on another tenant's line),
+  `address`, `cultivated_area_acres`, photo/bank-book paths, bank account
+  fields, GPS accuracy/timestamp, and registration provenance.
+- Per-device auth: `user_devices` + `register_device()`; the phone's
+  secure-storage id rides on every request as `x-device-id`, and a RESTRICTIVE
+  RLS policy refuses a field officer's write from any other handset. Owners
+  and managers release a lost phone from *Bound devices*.
+- Private `supplier-documents` bucket, pathed `factory_id/supplier_id/`.
+- App flow: **line list → customers on that line → register customer**, so the
+  line is chosen once and never re-asked per customer.
+
+**Verify:** `db:verify-rls`, `db:verify-auth` and `db:verify-device-binding`
+pass; a field officer registers a customer from the bound phone and the same
+insert is refused from a second device; the customer, its line, and its map
+location appear on the web suppliers list.
+
+**Deferred from this milestone:** offline outbox (online-only for now, but
+`client_uuid` is already stored as the idempotency key), and OCR of the bank
+book into `bank_account_no` (`bank_parse_status` is written as `pending` and a
+person confirms before the number is trusted for money).
+
 ## FA0 — Field-app foundation & dynamic-update spine  ⬅ building now
 Repurpose the parked `apps/mobile` shell for two field roles and stand up the
 dynamic-update mechanism so later features can be DB-only.
