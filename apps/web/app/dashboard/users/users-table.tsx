@@ -118,10 +118,10 @@ export function UsersTable({
                   ))}
                 </select>
               </Field>
-              <Field label="Username (optional)"><input name="username" autoComplete="off" placeholder="e.g. john.silva" className={inputClass} /></Field>
-              <Field label="Password (optional)"><input name="password" type="password" autoComplete="new-password" className={inputClass} /></Field>
+              <Field label="Username"><input name="username" required autoComplete="off" placeholder="e.g. john.silva" className={inputClass} /></Field>
+              <Field label="Password"><input name="password" required type="password" autoComplete="new-password" className={inputClass} /></Field>
             </div>
-            <p className="text-xs text-stone-500 dark:text-stone-400">Username and password must be provided together. Leave both blank to use one-time email codes only.</p>
+            <p className="text-xs text-stone-500 dark:text-stone-400">Every account requires a username and password.</p>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={close} className={secondaryButton}>Cancel</button>
               <SubmitButton pendingText="Adding…" className="min-h-10 rounded-full bg-green-700 px-5 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-500 dark:text-green-950">Add user</SubmitButton>
@@ -156,7 +156,7 @@ export function UsersTable({
                   <button type="button" onClick={close} className={secondaryButton}>Cancel</button>
                   <SubmitButton pendingText="Saving…" className="min-h-10 rounded-full bg-green-700 px-5 text-sm font-semibold text-white hover:bg-green-800 dark:bg-green-500 dark:text-green-950">Save</SubmitButton>
                 </div>
-                <p className="text-xs text-stone-500 dark:text-stone-400 sm:col-span-3">Provide both fields to set password login, or leave both blank to remove the username.</p>
+                <p className="text-xs text-stone-500 dark:text-stone-400 sm:col-span-3">Provide both fields to update username and password login.</p>
               </form>
             ),
           },

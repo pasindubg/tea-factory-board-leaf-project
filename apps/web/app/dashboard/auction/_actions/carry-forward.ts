@@ -21,6 +21,7 @@ export type CarryForwardLot = {
   sale_id: string;
   invoice_no: string | null;
   lot_no: string | null;
+  provisional_sale_no: string | null;
   grade: string | null;
   bags: number | null;
   kg_per_bag: number | string | null;
@@ -77,7 +78,7 @@ export type CarryForwardOutcome =
 export async function resolveAckCarryForward(
   supabase: Supa,
   factoryId: string,
-  input: { groupIds: readonly string[]; brokerId: string | null; rows: readonly AckRowKey[] },
+  input: { groupIds: readonly string[]; brokerId: string | null; ackSaleNo: string | null; rows: readonly AckRowKey[] },
 ): Promise<Map<string, CarryForwardOutcome>> {
   const outcomes = new Map<string, CarryForwardOutcome>();
   if (input.rows.length === 0) return outcomes;
@@ -104,7 +105,7 @@ export async function resolveAckCarryForward(
 
   const { data: storedRows } = await supabase
     .from("auction_lots")
-    .select("id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
+    .select("id, sale_id, invoice_no, lot_no, provisional_sale_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, unsold, reprint, auction_sales(broker_id, sale_no, target_sale_no, dispatch_date, entry_source), lot_invoices(invoice_no)")
     .eq("factory_id", factoryId)
     .or(parts.join(","));
   const storedLots = (storedRows ?? []) as unknown as CarryForwardLot[];
@@ -127,18 +128,30 @@ export async function resolveAckCarryForward(
       state: lot.state,
       brokerId: lot.auction_sales?.broker_id ?? null,
       dispatchDate: lot.auction_sales?.dispatch_date ?? null,
+      // Never auction_sales.sale_no: that is the dispatch invoice number
+      // ("26B01-0001"), not a sale, and would order this lot against sale 1.
+      saleNo: lot.provisional_sale_no ?? lot.auction_sales?.target_sale_no ?? null,
       invoiceNos: (lot.lot_invoices ?? []).map((invoice) => invoice.invoice_no),
       hasSaleLine: soldLotIds.has(lot.id),
     }))
-    .filter((lot) => isCarryForwardCandidate(lot, { groupSaleIds: input.groupIds, brokerId: input.brokerId }));
+    .filter((lot) => isCarryForwardCandidate(lot, { groupSaleIds: input.groupIds, brokerId: input.brokerId, ackSaleNo: input.ackSaleNo }));
 
   const used = new Set<string>();
   for (const row of input.rows) {
     const match: CarryForwardMatch = matchCarryForwardLot(row, candidates, used);
     if (match.status === "matched") {
-      used.add(match.candidate.id);
       const lot = lotById.get(match.candidate.id)!;
-      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: wasOffered(lot) });
+      const offered = wasOffered(lot);
+      // Never offered AND no sale number on record: nothing says whether it
+      // faced buyers somewhere or was held back, and nothing says from where.
+      // Guessing here is what filed a re-print as a skipped sale. Leave it
+      // unmatched so confirmation stops and the operator declares it.
+      if (!offered && !(lot.provisional_sale_no ?? lot.auction_sales?.target_sale_no ?? null)) {
+        outcomes.set(row.invoiceNo, { status: "unmatched" });
+        continue;
+      }
+      used.add(match.candidate.id);
+      outcomes.set(row.invoiceNo, { status: "matched", lot, isReprint: offered });
     } else if (match.status === "blocked") {
       outcomes.set(row.invoiceNo, { status: "blocked", lot: lotById.get(match.candidate.id)! });
     } else {

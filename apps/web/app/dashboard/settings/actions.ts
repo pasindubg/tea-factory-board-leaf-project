@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { storageFor } from "@/lib/db/storage";
 import { friendlyError } from "@/lib/errors";
 import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES } from "@/lib/roles";
@@ -102,7 +103,7 @@ export async function changeOwnUsername(formData: FormData) {
 }
 
 export async function changeOwnPassword(formData: FormData) {
-  const { supabase } = await requireProfile(ALL_WEB_ROLES);
+  const { profile } = await requireProfile(ALL_WEB_ROLES);
   const password = String(formData.get("password") ?? "");
   const confirmation = String(formData.get("password_confirmation") ?? "");
 
@@ -113,10 +114,11 @@ export async function changeOwnPassword(formData: FormData) {
     goToSettings("error", "The password confirmation does not match.");
   }
 
-  const { error } = await supabase.auth.updateUser({ password });
+  const { setAuthPassword } = await import("@/lib/db/auth-admin");
+  const { error } = await setAuthPassword(profile.id, password);
   if (error) goToSettings("error", friendlyError(error));
 
-  goToSettings("notice", "Your password was changed.");
+  redirect("/auth/signout");
 }
 
 export async function saveFactoryBranding(formData: FormData) {
@@ -149,7 +151,7 @@ export async function saveFactoryBranding(formData: FormData) {
 
     uploadedPath = `${profile.factory_id}/${randomUUID()}.${extension}`;
     const bytes = new Uint8Array(await image.arrayBuffer());
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await storageFor(supabase, profile.factory_id)
       .from(FACTORY_BRANDING_BUCKET)
       .upload(uploadedPath, bytes, {
         contentType: image.type,
@@ -170,13 +172,13 @@ export async function saveFactoryBranding(formData: FormData) {
     .maybeSingle();
   if (updateError || !updated) {
     if (uploadedPath) {
-      await supabase.storage.from(FACTORY_BRANDING_BUCKET).remove([uploadedPath]);
+      await storageFor(supabase, profile.factory_id).from(FACTORY_BRANDING_BUCKET).remove([uploadedPath]);
     }
     goToSettings("error", updateError ? friendlyError(updateError) : "Factory record not found.");
   }
 
   if (currentFactory.logo_path && currentFactory.logo_path !== nextLogoPath) {
-    await supabase.storage.from(FACTORY_BRANDING_BUCKET).remove([currentFactory.logo_path]);
+    await storageFor(supabase, profile.factory_id).from(FACTORY_BRANDING_BUCKET).remove([currentFactory.logo_path]);
   }
 
   revalidatePath("/dashboard", "layout");

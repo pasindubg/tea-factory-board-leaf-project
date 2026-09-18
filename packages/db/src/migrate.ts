@@ -85,6 +85,23 @@ console.log(
 );
 for (const e of pending) console.log(`  pending: ${e.tag} (when=${e.when})`);
 
+const neon = url.includes(".neon.tech");
+
+async function applyNeonSql(files: string[]) {
+  try {
+    for (const file of files) {
+      await sql.file(`./neon/${file}`);
+      console.log(`Applied neon/${file}.`);
+    }
+  } catch (err) {
+    report("NEON SQL FAILED", err);
+    await sql.end();
+    process.exit(1);
+  }
+}
+
+if (neon) await applyNeonSql(["000_prelude.sql"]);
+
 try {
   await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
   console.log(`Migrations applied (${pending.length} new).`);
@@ -98,5 +115,7 @@ try {
   await sql.end();
   process.exit(1);
 }
+
+if (neon) await applyNeonSql(["002_grants.sql", "003_request_identity.sql"]);
 
 await sql.end();

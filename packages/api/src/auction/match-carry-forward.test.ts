@@ -68,13 +68,14 @@ function registerEntry(overrides: Partial<CarryForwardCandidate> = {}): CarryFor
     state: "acknowledged",
     brokerId: ASIA_SIYAKA,
     dispatchDate: "2026-04-02",
+    saleNo: "0015",
     invoiceNos: ["26I01-0909"],
     hasSaleLine: false,
     ...overrides,
   };
 }
 
-const context = { groupSaleIds: THIS_SALE, brokerId: ASIA_SIYAKA };
+const context = { groupSaleIds: THIS_SALE, brokerId: ASIA_SIYAKA, ackSaleNo: "0019" };
 const eligible = (lots: CarryForwardCandidate[]) => lots.filter((lot) => isCarryForwardCandidate(lot, context));
 
 // ---------- Step 2: with nothing registered, 0909 stays unexplained ----------
@@ -115,6 +116,20 @@ ok("a sold lot is reported `blocked`, never rolled forward silently", sold.statu
 
 const settledWithLine = matchCarryForwardLot(ackRow, eligible([registerEntry({ state: "valued", hasSaleLine: true })]));
 ok("a lot with a sale_line is `blocked` even in a movable state", settledWithLine.status === "blocked", settledWithLine.status);
+
+// Regression: ack for sale 0020 matched invoice 0901 against a lot catalogued
+// for sale 0024, then wrote 0024 back as that lot's previous sale.
+ok("a lot catalogued for a LATER sale is not an origin — stays unexplained",
+  matchCarryForwardLot(ackRow, eligible([registerEntry({ saleNo: "0024" })])).status === "unmatched");
+
+ok("a lot catalogued for the SAME sale is not an origin either",
+  matchCarryForwardLot(ackRow, eligible([registerEntry({ saleNo: "0019" })])).status === "unmatched");
+
+ok("a lot with no sale number recorded cannot be judged, so it still matches",
+  matchCarryForwardLot(ackRow, eligible([registerEntry({ saleNo: null })])).status === "matched");
+
+ok("the sale gate reads through a composite number",
+  matchCarryForwardLot(ackRow, eligible([registerEntry({ saleNo: "26S01-0024" })])).status === "unmatched");
 
 // ---------- Step 5: one stored lot cannot serve two document rows ----------
 

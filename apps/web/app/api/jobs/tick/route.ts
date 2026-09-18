@@ -25,10 +25,10 @@ export const dynamic = "force-dynamic";
 // Default Max Duration.
 
 function authorised(request: Request, secret: string) {
-  // Vercel signs its own cron invocations; anything else must present the
-  // secret. This route causes tenant writes, so it is never open.
-  if (request.headers.get("x-vercel-cron")) return true;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+  // Headers such as x-vercel-cron are caller-controlled, not authentication.
+  const bearer = request.headers.get("authorization");
+  return bearer === `Bearer ${secret}` ||
+    (!!process.env.CRON_SECRET && bearer === `Bearer ${process.env.CRON_SECRET}`);
 }
 
 export async function POST(request: Request) {
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
   return NextResponse.json({ claimed: 1, runId: run.id, jobKey: run.jobKey, status: "running" });
 }
 
-/** Rejects a browser that wanders onto the URL, rather than 405-ing obscurely. */
-export function GET() {
-  return NextResponse.json({ error: "POST only." }, { status: 405 });
+/** Vercel cron uses GET; it must pass the same authentication as POST. */
+export function GET(request: Request) {
+  return POST(request);
 }

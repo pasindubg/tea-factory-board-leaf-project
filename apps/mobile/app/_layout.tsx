@@ -4,7 +4,7 @@ import { Slot, useRouter, useSegments } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { SessionProvider, useSession } from "@/lib/session";
-import { supabase } from "@/lib/supabase";
+import { signOut } from "@/lib/auth";
 import { colors } from "@/lib/theme";
 
 // Field app: field officers, suppliers and drivers each get their own home
@@ -39,7 +39,7 @@ function AuthGate() {
     if (!binding) return; // and until this phone is cleared for the login
 
     if (binding !== "bound" && binding !== "claimed") {
-      supabase.auth.signOut();
+      signOut();
       return;
     }
     if (group !== roleGroup(profile.role)) router.replace(roleHome(profile.role));

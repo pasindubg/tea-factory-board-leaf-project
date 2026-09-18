@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthUser } from "@/lib/db/session";
 import { friendlyError } from "@/lib/errors";
 import { withTenantDataScope } from "@/lib/tenant-data";
 import { currentJobActor } from "@/lib/jobs/context";
@@ -50,14 +50,10 @@ async function resolveProfile() {
 
   let user = null;
   try {
-    const { data, error } = await supabase.auth.getUser();
-    // "Auth session missing" simply means logged out — fall through to the
-    // /login redirect below instead of surfacing a scary error page.
-    if (error && error.name !== "AuthSessionMissingError") throw error;
-    user = data.user;
+    user = await getAuthUser();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNREFUSED")) {
+    if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNREFUSED") || msg.includes("unreachable")) {
       redirect("/login?error=session_refresh_failed");
     }
     throw new Error("Could not verify your session right now — please retry.");
@@ -67,12 +63,10 @@ async function resolveProfile() {
   const loaded = await readProfile(supabase, user.id);
   if (!loaded.profile) {
     if (loaded.reason === "no_profile") {
-      await supabase.auth.signOut();
-      redirect("/login?error=no_profile");
+      redirect("/auth/signout?error=no_profile");
     }
     if (loaded.reason === "deactivated") {
-      await supabase.auth.signOut();
-      redirect("/login?error=deactivated");
+      redirect("/auth/signout?error=deactivated");
     }
     throw new Error(loaded.reason);
   }

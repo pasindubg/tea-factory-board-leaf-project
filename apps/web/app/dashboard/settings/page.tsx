@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { SubmitButton } from "@/components/submit-button";
+import { storageFor } from "@/lib/db/storage";
 import { friendlyError } from "@/lib/errors";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { requireProfile } from "@/lib/profile";
@@ -66,7 +67,7 @@ export default async function SettingsPage() {
   const roleLabel = ROLE_LABELS[profile.role] ?? profile.role;
   const age = ageFromDate(personal?.date_of_birth);
   const { data: factoryImage } = profile.role === "owner" && factory.logo_path
-    ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60)
+    ? await storageFor(supabase, profile.factory_id).from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60)
     : { data: null };
 
   return (

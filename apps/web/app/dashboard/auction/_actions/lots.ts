@@ -603,12 +603,26 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
   if (currentLot?.reprint) return { ok: false, error: "This invoice is already registered as a re-print." };
 
   const firstSaleNo = formatSaleNo(str(formData.get("first_sale_no")));
+  const firstSaleDate = str(formData.get("first_sale_date")) || null;
   const grade = currentLot?.grade ?? str(formData.get("grade"));
   const netWt = Number(currentLot?.net_wt ?? num(formData.get("net_wt")) ?? 0);
   if (!grade) return { ok: false, error: "The acknowledgement row has no grade to register." };
 
+  // Same ordering rule registerLotSkippedSale applies: a re-print was offered
+  // BEFORE the sale acknowledging it now.
+  if (firstSaleNo) {
+    const acknowledgedSaleNo = formatSaleNo((invoice.target_sale_no as string | null) || (invoice.sale_no as string | null));
+    const firstKey = Number(saleNoKey(firstSaleNo));
+    const acknowledgedKey = Number(saleNoKey(acknowledgedSaleNo));
+    if (Number.isFinite(firstKey) && Number.isFinite(acknowledgedKey) && firstKey >= acknowledgedKey) {
+      return { ok: false, error: `The first sale must be earlier than sale ${acknowledgedSaleNo}, which is acknowledging it.` };
+    }
+  }
+
   // An earlier lot for this invoice IS the re-print source — never create a second.
-  let sourceLotId = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string))?.id as string | undefined;
+  const existingSource = sameInvoice.find((row) => !groupIds.includes(row.sale_id as string));
+  let sourceLotId = existingSource?.id as string | undefined;
+  let realignedSaleNo: string | null = null;
 
   if (!sourceLotId) {
     const { data: brokerInvoices, error: brokerInvoiceError } = await supabase
@@ -634,6 +648,7 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
           broker_id: invoice.broker_id,
           sale_no: await nextDispatchNo(supabase, profile.factory_id, prefix),
           target_sale_no: firstSaleNo || null,
+          sale_date: firstSaleDate,
           sale_kind: "dispatch",
           status: "invoiced",
           entry_source: "reprint-register",
@@ -642,6 +657,12 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
         .single();
       if (createInvoiceError || !createdInvoice) return { ok: false, error: friendlyError(createInvoiceError ?? { message: "Could not open the earlier sale." }) };
       sourceSaleId = createdInvoice.id as string;
+    } else if (firstSaleDate) {
+      await supabase
+        .from("auction_sales")
+        .update({ sale_date: firstSaleDate })
+        .eq("id", sourceSaleId)
+        .eq("factory_id", profile.factory_id);
     }
 
     const { data: sourceLot, error: sourceLotError } = await supabase
@@ -669,6 +690,51 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
       .single();
     if (sourceLotError || !sourceLot) return { ok: false, error: friendlyError(sourceLotError ?? { message: "Could not create the earlier sale's lot." }) };
     sourceLotId = sourceLot.id as string;
+  } else {
+    // The invoice is already in the system; only its flags were missing. Without
+    // this the command wrote an audit line and nothing else, so the lot never
+    // became a re-print and the acknowledgement still could not place it.
+    const { error: sourceUpdateError } = await supabase
+      .from("auction_lots")
+      .update({
+        reprint: true,
+        reprint_registered: true,
+        // The operator has just stated which sale this was offered in. The book
+        // may have recorded something later (its "Next Sale No." is where the
+        // lot moved to, not where it went out), and that is what put a sale
+        // AFTER this one on a lot that came before it.
+        ...(firstSaleNo ? { provisional_sale_no: firstSaleNo } : {}),
+      })
+      .eq("id", sourceLotId)
+      .eq("factory_id", profile.factory_id);
+    if (sourceUpdateError) return { ok: false, error: friendlyError(sourceUpdateError) };
+
+    // The Invoice Overview reads its Sale No. off the dispatch invoice, so the
+    // correction is invisible there unless the invoice moves too. Only when it
+    // holds nothing else: its number is shared, and dragging siblings to a sale
+    // the operator never mentioned is not a correction.
+    const sourceSaleId = existingSource?.sale_id as string | undefined;
+    if ((firstSaleNo || firstSaleDate) && sourceSaleId) {
+      const { count } = await supabase
+        .from("auction_lots")
+        .select("id", { count: "exact", head: true })
+        .eq("factory_id", profile.factory_id)
+        .eq("sale_id", sourceSaleId);
+      if ((count ?? 0) <= 1) {
+        await supabase
+          .from("auction_sales")
+          .update({
+            ...(firstSaleNo ? { target_sale_no: firstSaleNo } : {}),
+            // The planned sale date belongs with the sale number: leaving the
+            // book's date against a corrected number describes a sale that
+            // never ran on that day.
+            ...(firstSaleDate ? { sale_date: firstSaleDate } : {}),
+          })
+          .eq("id", sourceSaleId)
+          .eq("factory_id", profile.factory_id);
+        realignedSaleNo = firstSaleNo || null;
+      }
+    }
   }
 
   if (currentLot) {
@@ -684,17 +750,18 @@ export async function registerLotReprint(saleId: string, invoiceNo: string, form
     saleId,
     lotId: (currentLot?.id as string) ?? sourceLotId,
     action: "Re-print registered",
-    detail: `Invoice ${formatFourDigitNo(invoiceNo)} was registered as a re-print${firstSaleNo ? `, first offered in sale ${firstSaleNo}` : " with no earlier sale recorded"}.`,
+    detail: `Invoice ${formatFourDigitNo(invoiceNo)} was registered as a re-print${firstSaleNo ? `, first offered in sale ${firstSaleNo}` : " with no earlier sale recorded"}${firstSaleDate ? ` on ${firstSaleDate}` : ""}.`,
     reason: str(formData.get("reason")) || "Catalogued by the broker but not present in this system.",
     actor: profile.name,
   });
 
   revalidatePath(`${AUC}/${saleId}`);
   revalidatePath(`${AUC}/reprints`);
+  revalidatePath(`${AUC}/invoices`);
   return {
     ok: true,
     notice: firstSaleNo
-      ? `Registered as a re-print first offered in sale ${firstSaleNo}.`
+      ? `Registered as a re-print first offered in sale ${firstSaleNo}${firstSaleDate ? ` on ${firstSaleDate}` : ""}.${realignedSaleNo ? ` The earlier invoice now reads sale ${realignedSaleNo}.` : ""}`
       : "Registered as a re-print.",
   };
 }

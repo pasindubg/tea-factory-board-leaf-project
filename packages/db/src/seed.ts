@@ -27,8 +27,15 @@ async function main() {
   if (!url) throw new Error("DATABASE_URL is not set");
   // This wipes the factory book. It has already cost a set of hand-configured
   // roles once; refuse anything that is not the local stack.
-  if (!/127\.0\.0\.1|localhost/.test(url)) {
-    throw new Error(`Refusing to seed ${url.replace(/:\/\/.*@/, "://***@")} — db:seed truncates tenant data and is for the local stack only.`);
+  const isLocal = /127\.0\.0\.1|localhost/.test(url);
+  const allowHost = process.env.SEED_ALLOW_HOST;
+  const hostMatches = !!allowHost && new URL(url).hostname === allowHost;
+  if (!isLocal && !hostMatches) {
+    throw new Error(
+      `Refusing to seed ${url.replace(/:\/\/.*@/, "://***@")} — db:seed truncates tenant data. ` +
+        `It is for the local stack, or a disposable branch named explicitly via ` +
+        `SEED_ALLOW_HOST=${new URL(url).hostname}.`,
+    );
   }
   const sql = postgres(url, { max: 1 });
   const db = drizzle(sql, { schema });

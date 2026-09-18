@@ -114,7 +114,7 @@ const COLUMNS: EntityListColumn<GradeTableRow>[] = [
 
 const LIST: ListDefinition<GradeTableRow> = {
   columns: COLUMNS,
-  selectionMode: "single",
+  selectionMode: "multi",
   add: true,
   edit: true,
   delete: true,
@@ -158,9 +158,17 @@ export function GradesTable({ rows, isOwner }: { rows: GradeTableRow[]; isOwner:
       }}
       canDelete={isOwner}
       deleteAction={{
-        action: async (ids) => deleteAuctionGrade(ids[0]),
-        title: () => "Delete grade?",
-        description: (selectedRows) => `Delete ${selectedRows[0]?.code ?? "this grade"}, its aliases, and its broker threshold settings? Historical lot grade text is retained.`,
+        action: async (ids) => {
+          for (const id of ids) {
+            const result = await deleteAuctionGrade(id);
+            if (!result.ok) return result;
+          }
+          return { ok: true, notice: `${ids.length} tea grade${ids.length === 1 ? "" : "s"} deleted.`, invalidate: [
+            { kind: "exact", resource: { key: "auction.broker-grade-thresholds" } },
+          ] };
+        },
+        title: (count) => `Delete ${count} grade${count === 1 ? "" : "s"}?`,
+        description: (selectedRows) => `Delete ${selectedRows.map((row) => row.code).join(", ")}, their aliases, and their broker threshold settings? Historical lot grade text is retained.`,
       }}
     />
   );

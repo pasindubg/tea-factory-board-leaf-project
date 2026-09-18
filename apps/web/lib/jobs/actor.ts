@@ -18,7 +18,12 @@ import type { JobActor } from "@/lib/jobs/context";
 export async function buildJobActor(
   userId: string,
 ): Promise<{ actor: JobActor; error: null } | { actor: null; error: string }> {
-  const supabase = createJobClient(userId);
+  let supabase: Awaited<ReturnType<typeof createJobClient>>;
+  try {
+    supabase = await createJobClient(userId);
+  } catch (err) {
+    return { actor: null, error: err instanceof Error ? err.message : String(err) };
+  }
   const loaded = await readProfile(supabase, userId);
 
   if (!loaded.profile) {

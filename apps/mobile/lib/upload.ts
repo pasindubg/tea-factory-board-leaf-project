@@ -1,6 +1,7 @@
-import { supabase } from "./supabase";
+import { accessToken } from "./auth";
+import { getDeviceId } from "./device";
+import { apiBaseUrl } from "./env";
 
-const BUCKET = "supplier-documents";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 // React Native has no Buffer and no reliable blob upload path, so images come
@@ -22,6 +23,26 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes.subarray(0, out);
 }
 
+async function documents(method: "POST" | "DELETE", body: unknown): Promise<{ url?: string; error?: string; headers?: Record<string, string> }> {
+  const token = await accessToken();
+  if (!token) return { error: "Not signed in." };
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/mobile/supplier-documents`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-device-id": await getDeviceId(),
+      },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    return res.ok ? json : { error: json.error ?? `Request failed (${res.status}).` };
+  } catch {
+    return { error: "Could not reach the server. Check your connection." };
+  }
+}
+
 export async function uploadSupplierImage(
   factoryId: string,
   supplierId: string,
@@ -29,13 +50,18 @@ export async function uploadSupplierImage(
   base64: string,
 ): Promise<{ path: string } | { error: string }> {
   const path = `${factoryId}/${supplierId}/${kind}.jpg`;
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, base64ToBytes(base64), { contentType: "image/jpeg", upsert: true });
-  if (error) return { error: error.message };
+  const bytes = base64ToBytes(base64).slice().buffer as ArrayBuffer;
+  const signed = await documents("POST", { path, contentType: "image/jpeg", size: bytes.byteLength });
+  if (!signed.url) return { error: signed.error ?? "Upload failed." };
+  try {
+    const res = await fetch(signed.url, { method: "PUT", headers: { "Content-Type": "image/jpeg", ...signed.headers }, body: bytes });
+    if (!res.ok) return { error: `Upload failed (${res.status}).` };
+  } catch {
+    return { error: "Could not reach the server. Check your connection." };
+  }
   return { path };
 }
 
 export async function removeSupplierImages(paths: string[]) {
-  if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
+  if (paths.length) await documents("DELETE", { paths });
 }
