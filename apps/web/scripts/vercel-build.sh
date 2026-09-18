@@ -11,16 +11,20 @@
 # root-level path resolves to nothing (exit 127). The pnpm commands below are
 # workspace-wide and work from here regardless.
 #
-# Migrations run here, inside the production build, on purpose: a failed
+# Migrations run here, inside Preview and Production builds: a failed
 # migration then fails the build and Vercel never activates the deploy. See
 # the header of .github/workflows/release.yml for why that beat running them
 # in a separate CI job.
 set -e
 
-if [ "$VERCEL_ENV" = "production" ]; then
-  # Host only — the parameter expansion strips everything through "@", so the
-  # password never reaches the log.
-  echo "Production build — applying pending Drizzle migrations against ${DATABASE_URL##*@}"
+node scripts/verify-deployment-env.mjs
+
+if [ "$VERCEL_ENV" = "production" ] || [ "$VERCEL_ENV" = "preview" ]; then
+  # Use only the validated environment-specific Neon connection. The legacy
+  # shared DATABASE_URL must never choose the migration destination.
+  DATABASE_URL=$(node scripts/verify-deployment-env.mjs --migration-url)
+  export DATABASE_URL
+  echo "$VERCEL_ENV build — applying pending Drizzle migrations."
 
   # Straight through to the build log, no capture and no filtering. Earlier
   # revisions of this file buffered the output to /tmp and stripped spinner
@@ -40,4 +44,5 @@ if [ "$VERCEL_ENV" = "production" ]; then
   echo "Migrations applied."
 fi
 
-pnpm exec turbo run build --filter=web
+# Branch-specific NEXT_PUBLIC values must never come from another branch's cache.
+pnpm exec turbo run build --filter=web --env-mode=loose --force

@@ -2,6 +2,7 @@ import "server-only";
 
 import { invoiceMatchKey } from "@tea/api";
 import { JOB_DEFINITIONS, JOB_STATE_CHIPS, isJobKey, type JobKey, type JobRunStatus } from "@/lib/background-jobs";
+import { storageFor } from "@/lib/db/storage";
 import { friendlyError } from "@/lib/errors";
 import type { ListRefreshResult } from "@/lib/list-mutations";
 import { isListResourceKey, type BackgroundJobListRow, type ListResourceKey, type ListResourceRequest, type ListResourceRow, type ListResourceSearch } from "@/lib/list-resources";
@@ -851,7 +852,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       active: { column: "active", mode: "equals" },
       lineNo: { column: "lines.line_no", mode: "contains", embed: "lines" },
     } },
-    async load({ supabase }, _params, search) {
+    async load({ supabase, profile }, _params, search) {
       const query = search.apply(
         supabase
           .from("suppliers")
@@ -870,7 +871,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       );
       const signed = new Map<string, string>();
       if (paths.length) {
-        const { data: urls } = await supabase.storage.from("supplier-documents").createSignedUrls(paths, 60 * 60);
+        const { data: urls } = await storageFor(supabase, profile.factory_id).from("supplier-documents").createSignedUrls(paths, 60 * 60);
         for (const entry of urls ?? []) {
           if (entry.path && entry.signedUrl) signed.set(entry.path, entry.signedUrl);
         }

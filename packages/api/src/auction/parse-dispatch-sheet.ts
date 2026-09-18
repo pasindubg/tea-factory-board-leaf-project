@@ -69,9 +69,10 @@ export type DispatchSheetRow = {
   lotNo: string | null;
   /** The sale this lot was first offered in. */
   saleNo: string | null;
-  /** The sale it moved to — read only as a fallback when the book leaves the
-   * first sale blank. The move itself is not imported: a re-print is evidenced
-   * by the later sale's acknowledgement, never declared from this book. */
+  /** The sale it moved to. Parsed but NOT imported, and never a stand-in for
+   * `saleNo`: a blank first sale means the book does not record where the lot
+   * went out, which is not the same as it going out to the sale it moved to.
+   * The move is evidenced by the later sale's acknowledgement. */
   nextSaleNo: string | null;
 };
 

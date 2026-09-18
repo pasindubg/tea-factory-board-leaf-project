@@ -105,6 +105,7 @@ export async function AckContent({
     : await resolveAckCarryForward(supabase, profile.factory_id, {
         groupIds,
         brokerId,
+        ackSaleNo: documentSaleNo ?? formatSaleNo(parsed.saleNo) ?? null,
         rows: ackOnlyRows.map((row) => ({ invoiceNo: row.invoiceNo, lotNo: row.ack?.lotNo ?? null })),
       });
   // The document's own printed outcome for an invoice, keyed the same way
@@ -280,7 +281,10 @@ export async function AckContent({
   const notAcknowledged = shown("not-acknowledged");
   // Acknowledged rows still waiting on a human: no invoice of ours, and the
   // register/carry-forward could not account for them either.
-  const notInvoiced = reviewRows.filter((row) => row.ack && !row.invoiced && !row.carryForwardNote).length;
+  const undeclaredInvoices = reviewRows
+    .filter((row) => row.ack && !row.invoiced && !row.carryForwardNote)
+    .map((row) => row.invoiceNo);
+  const notInvoiced = undeclaredInvoices.length;
   const chips: [string, number, string][] = [
     ["Acknowledged", s.catalogued, "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-400"],
     ["Shutout", s.shutout, "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-400"],
@@ -364,6 +368,21 @@ export async function AckContent({
 
       <ReconTable rows={visibleRows} saleId={saleId} warningInvoiceNos={warningInvoiceNos} canRegisterReprint={profile.role === "owner"} />
 
+      {!confirmed && undeclaredInvoices.length > 0 && (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+          <p className="font-medium">
+            Declare where {undeclaredInvoices.length === 1 ? "this invoice" : "these invoices"} came from before confirming
+          </p>
+          <p className="mt-1">
+            {undeclaredInvoices.join(", ")} {undeclaredInvoices.length === 1 ? "is" : "are"} acknowledged by the broker but
+            this system holds no invoice for {undeclaredInvoices.length === 1 ? "it" : "them"}, and no earlier sale of this
+            broker accounts for {undeclaredInvoices.length === 1 ? "it" : "them"}. Select the row above and use
+            <strong> Register re-print</strong> (offered in an earlier sale, did not sell) or
+            <strong> Register skipped sale</strong> (dispatched to an earlier sale, never catalogued there).
+          </p>
+        </div>
+      )}
+
       {!confirmed && (
         <div className="flex gap-3">
           <form action={confirmAcknowledgement.bind(null, importId, saleId)}>
@@ -371,6 +390,10 @@ export async function AckContent({
               pendingText="Acknowledging..."
               variant="primary"
               className="rounded-md px-4 py-2 text-sm"
+              disabled={undeclaredInvoices.length > 0}
+              title={undeclaredInvoices.length > 0
+                ? `Declare the earlier sale for ${undeclaredInvoices.join(", ")} first.`
+                : undefined}
             >
               Confirm — acknowledge {s.catalogued} lot(s)
             </SubmitButton>

@@ -62,22 +62,15 @@ export function getSupabaseEnv() {
  * it signs a short-lived token for the run's own user (see lib/jobs/auth.ts),
  * so every policy applies exactly as it would for that person signed in.
  *
- * The signing secret is the project's JWT secret — Supabase ▸ Settings ▸ API.
- * It can mint a token for ANY user, so it is as sensitive as the service key.
+ * Neon creates a scoped job-runner identity; no Supabase JWT secret is needed.
+ * This secret authenticates worker handovers, not database access.
  */
 export function getJobsEnv() {
-  const jwtSecret = process.env.SUPABASE_JWT_SECRET;
-  if (!jwtSecret) {
-    throw new Error(
-      "SUPABASE_JWT_SECRET must be set for the background job worker " +
-        "(Supabase > Settings > API > JWT Secret)",
-    );
-  }
   const tickSecret = process.env.JOBS_TICK_SECRET;
   if (!tickSecret) {
     throw new Error("JOBS_TICK_SECRET must be set for the background job worker");
   }
-  return { jwtSecret, tickSecret };
+  return { tickSecret };
 }
 
 export function getSupabaseAdminEnv() {

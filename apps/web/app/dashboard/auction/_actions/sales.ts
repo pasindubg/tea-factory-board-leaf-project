@@ -3,6 +3,7 @@
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { storageFor } from "@/lib/db/storage";
 import { requireModuleAccess, requireModuleRole, requireProfile } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyDeleteError, friendlyError } from "@/lib/errors";
@@ -676,7 +677,7 @@ export async function completeGrn(id: string, formData: FormData) {
     const safeName = entry.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
     const storagePath = `${profile.factory_id}/${id}/grn/${randomUUID()}-${safeName}`;
     const bytes = new Uint8Array(await entry.arrayBuffer());
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await storageFor(supabase, profile.factory_id)
       .from("auction-documents")
       .upload(storagePath, bytes, { contentType: entry.type || "application/octet-stream", upsert: false });
     if (uploadError) back(detail, `Could not upload GRN: ${uploadError.message}`);
@@ -690,7 +691,7 @@ export async function completeGrn(id: string, formData: FormData) {
       storagePath,
     );
     if (!staged.ok) {
-      await supabase.storage.from("auction-documents").remove([storagePath]);
+      await storageFor(supabase, profile.factory_id).from("auction-documents").remove([storagePath]);
       return back(detail, staged.error);
     }
     const { data: confirmedImport, error: confirmImportError } = await supabase
@@ -702,7 +703,7 @@ export async function completeGrn(id: string, formData: FormData) {
       .select("id")
       .maybeSingle();
     if (confirmImportError || !confirmedImport) {
-      await supabase.storage.from("auction-documents").remove([storagePath]);
+      await storageFor(supabase, profile.factory_id).from("auction-documents").remove([storagePath]);
       back(detail, confirmImportError ? friendlyError(confirmImportError) : "Could not confirm the uploaded GRN record.");
     }
     uploaded = true;

@@ -1,3 +1,4 @@
+import { storageFor } from "@/lib/db/storage";
 import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES, ROLE_LABELS } from "@/lib/roles";
 import { visibleModules } from "@/lib/visible-modules";
@@ -13,7 +14,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .single();
   const factoryName = factory?.name ?? "Unknown factory";
   const { data: signedLogo } = factory?.logo_path
-    ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
+    ? await storageFor(supabase, profile.factory_id).from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
     : { data: null };
 
   const nav = await visibleModules(supabase, profile);

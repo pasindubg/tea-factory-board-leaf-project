@@ -180,6 +180,14 @@ function RegisterReprintForm({
           className="mt-1 w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
         />
       </label>
+      <label className="block text-xs font-medium text-stone-600 dark:text-stone-300">
+        That sale&apos;s date (optional)
+        <input
+          name="first_sale_date"
+          type="date"
+          className="mt-1 w-full rounded border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        />
+      </label>
       <div className="flex gap-2">
         <SubmitButton pendingText="Registering…" variant="primary" className="rounded-md px-4 py-2 text-sm">
           Confirm re-print

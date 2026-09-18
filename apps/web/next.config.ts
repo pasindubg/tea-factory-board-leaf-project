@@ -1,23 +1,14 @@
 import type { NextConfig } from "next";
-import { getSupabasePublicEnv } from "./lib/env";
-
-function readSupabaseStorageUrl() {
-  try {
-    return getSupabasePublicEnv().url;
-  } catch {
-    return undefined;
-  }
-}
-
-const supabaseStorageUrl = readSupabaseStorageUrl();
+const neonStorageUrl = process.env.AWS_ENDPOINT_URL_S3;
 
 const nextConfig: NextConfig = {
   // @tea/api is an internal TS package consumed from source (the payment engine).
   transpilePackages: ["@tea/api"],
+  serverExternalPackages: ["postgres"],
   images: {
-    remotePatterns: supabaseStorageUrl
-      ? [new URL("/storage/v1/object/sign/**", supabaseStorageUrl)]
-      : [],
+    remotePatterns: [
+      ...(neonStorageUrl ? [new URL("/**", neonStorageUrl)] : []),
+    ],
   },
 };
 

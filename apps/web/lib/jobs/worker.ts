@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { claimNextRun, failRun, sweepDeadRuns as sweepDeadRunsOnBackend } from "@/lib/db/jobs-admin";
 import { buildJobActor } from "@/lib/jobs/actor";
 import { runAsJobActor } from "@/lib/jobs/context";
 import { triggerJobTick } from "@/lib/jobs/trigger";
@@ -42,41 +42,26 @@ const DEAD_AFTER_MS = 180_000;
  * run_after, and so every tick picks IT up while the fresh run waits. Execute
  * is how an abandoned run is resumed — deliberately, by a person.
  */
-async function sweepDeadRuns(admin: ReturnType<typeof createAdminClient>) {
+async function sweepDeadRuns() {
   const now = new Date().toISOString();
   const deadline = new Date(Date.now() - DEAD_AFTER_MS).toISOString();
-  const { error } = await admin
-    .from(TABLE)
-    .update({
-      status: "failed",
-      error: "Interrupted — the worker stopped and did not restart. Use Execute to resume from where it stopped.",
-      finished_at: now,
-      lease_until: null,
-      updated_at: now,
-    })
-    .eq("status", "running")
-    .lt("updated_at", deadline)
-    .or(`lease_until.is.null,lease_until.lt.${now}`);
-  if (error) console.error(`[jobs] sweep failed: ${error.message}`);
+  try {
+    await sweepDeadRunsOnBackend({
+      now,
+      deadline,
+      message: "Interrupted — the worker stopped and did not restart. Use Execute to resume from where it stopped.",
+    });
+  } catch (error) {
+    console.error(`[jobs] sweep failed: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 
 /** One slice, after the response. No HTTP status can reach anybody from here,
  * so every failure lands on the run row instead. */
 export async function runChunk(run: JobRun, selfBase: string | null) {
-  const admin = createAdminClient();
-
   const fail = async (message: string) => {
-    await admin
-      .from(TABLE)
-      .update({
-        status: "failed",
-        error: message,
-        finished_at: new Date().toISOString(),
-        lease_until: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", run.id);
+    await failRun(run.id, message);
     console.error(`[jobs] run ${run.id} (${run.jobKey}) failed: ${message}`);
   };
 
@@ -187,17 +172,10 @@ export async function runChunk(run: JobRun, selfBase: string | null) {
 /** Claims the next runnable run, sweeping dead ones out of its way first.
  * Returns null when the queue is empty. */
 export async function claimRun(): Promise<JobRun | null> {
-  const admin = createAdminClient();
-  await sweepDeadRuns(admin);
+  await sweepDeadRuns();
 
   const workerId = `${process.env.VERCEL_DEPLOYMENT_ID ?? "local"}:${crypto.randomUUID().slice(0, 8)}`;
-  const claim = await admin.rpc("claim_background_job", {
-    p_worker_id: workerId,
-    p_lease_seconds: LEASE_SECONDS,
-  });
-  if (claim.error) throw new Error(claim.error.message);
-
-  const claimed = (claim.data as Record<string, unknown>[] | null)?.[0];
+  const claimed = (await claimNextRun(workerId, LEASE_SECONDS))[0];
   if (!claimed) return null;
 
   return {

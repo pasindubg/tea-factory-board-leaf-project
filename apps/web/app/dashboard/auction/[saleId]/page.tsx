@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { storageFor } from "@/lib/db/storage";
 import { requirePageAccess } from "@/lib/profile";
 import { loadListResource } from "@/lib/list-resource-registry";
 import { DispatchDetailEditor } from "./dispatch-detail-editor";
@@ -58,7 +59,7 @@ export default async function SaleDetailPage({
     .eq("id", profile.factory_id)
     .single();
   const { data: signedLogo } = factory?.logo_path
-    ? await supabase.storage.from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
+    ? await storageFor(supabase, profile.factory_id).from("factory-branding").createSignedUrl(factory.logo_path, 60 * 60 * 24)
     : { data: null };
 
   const soldLotIds = (saleLines ?? []).map((line) => line.lot_id as string).filter(Boolean);

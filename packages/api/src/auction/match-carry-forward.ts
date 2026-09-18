@@ -55,6 +55,8 @@ export type CarryForwardCandidate = {
   brokerId: string | null;
   /** Broker-invoice dispatch date; the most recent match wins. */
   dispatchDate: string | null;
+  /** The sale this lot was catalogued for; null when none is recorded. */
+  saleNo: string | null;
   /** Every invoice number linked to the lot, not just its primary one. */
   invoiceNos: string[];
   /** True when a sale_line already exists for this lot. */
@@ -74,6 +76,29 @@ export type CarryForwardMatch =
   /** Nothing in the factory's records is this row — a genuine anomaly. */
   | { status: "unmatched" };
 
+/** Trailing run of digits, matching saleNoKey: "21", "021" and "2026-021" all
+ * name sale 21. */
+function saleOrder(saleNo: string | null): number | null {
+  const groups = String(saleNo ?? "").match(/\d+/g);
+  if (!groups?.length) return null;
+  const value = parseInt(groups[groups.length - 1]!, 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Is the candidate's sale EARLIER than the sale doing the acknowledging? A lot
+ * catalogued for a sale that has not run yet cannot be where this row came
+ * from. Compared on the sale number, not the dispatch date: an invoice can be
+ * dispatched months before the sale it is finally catalogued for. A lot with
+ * no sale number cannot be judged and stays eligible.
+ */
+function isEarlierSale(candidateSaleNo: string | null, ackSaleNo: string | null | undefined): boolean {
+  const candidate = saleOrder(candidateSaleNo);
+  const ack = saleOrder(ackSaleNo ?? null);
+  if (candidate === null || ack === null) return true;
+  return candidate < ack;
+}
+
 /**
  * Whether a stored lot is even eligible to be considered for an ACK row.
  *
@@ -83,13 +108,17 @@ export type CarryForwardMatch =
  * broker than the one that sent this document is not the same commercial
  * event, and silently matching across brokers would mask exactly the anomaly
  * this classification exists to surface.
+ *
+ * `ackSaleNo` is the sale being acknowledged; a candidate catalogued for that
+ * sale or a later one is not an origin (see isEarlierSale).
  */
 export function isCarryForwardCandidate(
   lot: CarryForwardCandidate,
-  context: { groupSaleIds: readonly string[]; brokerId: string | null },
+  context: { groupSaleIds: readonly string[]; brokerId: string | null; ackSaleNo?: string | null },
 ): boolean {
   if (context.groupSaleIds.includes(lot.saleId)) return false;
   if (context.brokerId && lot.brokerId !== context.brokerId) return false;
+  if (!isEarlierSale(lot.saleNo, context.ackSaleNo)) return false;
   return true;
 }
 

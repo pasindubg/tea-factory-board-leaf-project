@@ -6,11 +6,11 @@ import type { ListMutationResult } from "@/lib/list-mutations";
 import type { ListInvalidation } from "@/lib/list-resources";
 import { requireProfile } from "@/lib/profile";
 import { type Role } from "@/lib/roles";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAuthUser, deleteAuthUser, setAuthBanned, setAuthPassword } from "@/lib/db/auth-admin";
 import { deleteTenantRow } from "@/lib/tenant-data";
 
-// Tenant records always use the signed-in, factory-scoped client. The admin
-// client is deliberately limited to Supabase Auth operations.
+// Tenant records always use the signed-in, factory-scoped client. The auth
+// admin functions are deliberately limited to login-account operations.
 const COLLECTORS_INVALIDATION: ListInvalidation = {
   kind: "exact",
   resource: { key: "leaf.collectors" },
@@ -54,30 +54,25 @@ export async function createUser(formData: FormData): Promise<ListMutationResult
   if (!name || !email || !accessRoleId) {
     return { ok: false, error: "Name, email, and a valid role are required." };
   }
-  if ((username && !password) || (!username && password)) {
-    return { ok: false, error: "Provide both a username and a password, or neither." };
+  if (!username || !password) {
+    return { ok: false, error: "A username and password are required." };
   }
 
   const selectedRole = await selectedAccessRole(supabase, accessRoleId);
   if (!selectedRole.role) return { ok: false, error: selectedRole.error ?? "Choose a valid role." };
   const role = selectedRole.role.base_role;
 
-  const admin = createAdminClient();
-  const { data: created, error: authError } = await admin.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    ...(password ? { password } : {}),
-  });
-  if (authError || !created.user) {
+  const created = await createAuthUser({ email, name, password });
+  if (created.error || !created.id) {
     return {
       ok: false,
-      error: authError?.code === "email_exists"
+      error: created.code === "email_exists"
         ? "An account with this email already exists."
-        : friendlyError(authError),
+        : friendlyError(created.error),
     };
   }
 
-  const authId = created.user.id;
+  const authId = created.id;
   const { error: insertError } = await supabase.from("users").insert({
     id: authId,
     factory_id: profile.factory_id,
@@ -89,8 +84,8 @@ export async function createUser(formData: FormData): Promise<ListMutationResult
     username,
   });
   if (insertError) {
-    const { error: rollbackError } = await admin.auth.admin.deleteUser(authId);
-    if (rollbackError && rollbackError.code !== "user_not_found") {
+    const { error: rollbackError, code: rollbackCode } = await deleteAuthUser(authId);
+    if (rollbackError && rollbackCode !== "user_not_found") {
       return {
         ok: false,
         error: "Account setup failed, and its temporary login could not be cleaned up. Contact support before retrying.",
@@ -145,10 +140,7 @@ export async function setUserActive(formData: FormData): Promise<ListMutationRes
   if (error) return { ok: false, error: friendlyError(error) };
   if (!updated) return { ok: false, error: "User not found in this factory." };
 
-  const admin = createAdminClient();
-  const { error: banError } = await admin.auth.admin.updateUserById(userId, {
-    ban_duration: nextActive ? "none" : "87600h",
-  });
+  const { error: banError } = await setAuthBanned(userId, !nextActive);
 
   revalidatePath("/dashboard/users");
   revalidatePath("/dashboard/user-handling/users");
@@ -187,15 +179,14 @@ export async function removeUser(formData: FormData): Promise<ListMutationResult
   const { error: deleteError } = await deleteTenantRow(supabase, "users", userId);
   if (deleteError) return { ok: false, error: deleteError };
 
-  const admin = createAdminClient();
-  const { error: authError } = await admin.auth.admin.deleteUser(userId);
+  const { error: authError, code: authCode } = await deleteAuthUser(userId);
   const invalidateCollectors = target.role === "collector";
 
   revalidatePath("/dashboard/users");
   revalidatePath("/dashboard/user-handling/users");
   if (invalidateCollectors) revalidatePath("/dashboard/collectors");
 
-  if (authError && authError.code !== "user_not_found") {
+  if (authError && authCode !== "user_not_found") {
     return {
       ok: true,
       notice: `The user profile was removed, but the login could not be deleted: ${friendlyError(authError)}`,
@@ -219,8 +210,8 @@ export async function resetUserPassword(formData: FormData): Promise<ListMutatio
 
   if (!userId) return requiredUserError();
   if (userId === profile.id) return selfManagementError("change credentials for");
-  if ((username && !password) || (!username && password)) {
-    return { ok: false, error: "Provide both a username and a password, or neither." };
+  if (!username || !password) {
+    return { ok: false, error: "A username and password are required." };
   }
 
   const { data: updated, error: profileError } = await supabase
@@ -234,8 +225,7 @@ export async function resetUserPassword(formData: FormData): Promise<ListMutatio
   if (!updated) return { ok: false, error: "User not found in this factory." };
 
   if (password) {
-    const admin = createAdminClient();
-    const { error: passwordError } = await admin.auth.admin.updateUserById(userId, { password });
+    const { error: passwordError } = await setAuthPassword(userId, password);
     if (passwordError) {
       revalidatePath("/dashboard/users");
       revalidatePath("/dashboard/user-handling/users");

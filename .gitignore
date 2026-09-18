@@ -5,6 +5,7 @@ dist/
 .turbo/
 .env
 .env.local
+.env*.local
 .env.hosted
 .DS_Store
 *.log

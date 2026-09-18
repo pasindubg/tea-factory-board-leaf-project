@@ -156,7 +156,12 @@ export function invoiceFormData(row: DispatchSheetRow, brokerId: string, markId:
   form.set("selling_mark_id", markId);
   form.set("dispatch_date", row.dispatchDate);
   form.set("sale_date", row.saleDate ?? row.dispatchDate);
-  form.set("target_sale_no", formatSaleNo(row.saleNo ?? row.nextSaleNo ?? ""));
+  // Only the book's own "Sale No.". "Next Sale No." is where the lot MOVED to —
+  // reading it as the target stamped invoice 901, whose Sale No. is blank and
+  // whose Next Sale No. is 24, as a lot dispatched to sale 24, which is the
+  // sale it ended up sold in. A blank target is the honest answer: the book
+  // does not record which sale that lot first went out to.
+  form.set("target_sale_no", formatSaleNo(row.saleNo ?? ""));
   form.set("invoice_no", formatFourDigitNo(row.invoiceNo));
   form.set("grade", gradeForRow(row, lookups));
   form.set("bags", String(row.bags));

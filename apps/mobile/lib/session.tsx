@@ -1,13 +1,12 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { AppState } from "react-native";
-import type { Session } from "@supabase/supabase-js";
+import { getSession, onAuthStateChange, signOut as endSession, type AuthSession } from "./auth";
 import { supabase } from "./supabase";
 import { bindThisDevice } from "./bind-device";
 import type { CollectorRow, DeviceRegistration, LinkedSupplier, Profile } from "./types";
 
 type SessionState = {
   loading: boolean;
-  session: Session | null;
+  session: AuthSession | null;
   profile: Profile | null;
   supplier: LinkedSupplier | null;
   collector: CollectorRow | null;
@@ -20,7 +19,7 @@ const SessionContext = createContext<SessionState | undefined>(undefined);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [supplier, setSupplier] = useState<LinkedSupplier | null>(null);
   const [collector, setCollector] = useState<CollectorRow | null>(null);
@@ -75,13 +74,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data }) => {
-      setSession(data.session);
-      if (data.session) await loadProfile(data.session.user.id);
+    getSession().then(async (current) => {
+      setSession(current);
+      if (current) await loadProfile(current.user.id);
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
+    return onAuthStateChange(async (next) => {
       setSession(next);
       if (next) {
         setBinding(null);
@@ -92,21 +91,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setCollector(null);
       }
     });
-
-    // Supabase RN guidance: only auto-refresh tokens while the app is foreground.
-    const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active") supabase.auth.startAutoRefresh();
-      else supabase.auth.stopAutoRefresh();
-    });
-
-    return () => {
-      sub.subscription.unsubscribe();
-      appState.remove();
-    };
   }, []);
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await endSession();
   }
 
   async function reloadProfile() {

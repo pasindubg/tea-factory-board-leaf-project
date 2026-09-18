@@ -220,8 +220,22 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   const carryForward = await resolveAckCarryForward(supabase, profile.factory_id, {
     groupIds,
     brokerId: currentBrokerId ?? null,
+    ackSaleNo: formatSaleNo(targetSaleNoBySaleId.get(saleId) ?? parsed.saleNo) || null,
     rows: ackOnlyEntries.map((row) => ({ invoiceNo: row.invoice_no, lotNo: row.lot_no })),
   });
+  // No invoice of ours, and no earlier sale of this broker accounts for it
+  // either — where it came from is a fact only the operator holds. Back to the
+  // review screen, which is where both register commands live.
+  const undeclared = ackOnlyEntries
+    .filter((row) => (carryForward.get(row.invoice_no) ?? { status: "unmatched" }).status === "unmatched")
+    .map((row) => formatFourDigitNo(row.invoice_no));
+  if (undeclared.length > 0) {
+    return back(
+      `${AUC}/documents/${importId}`,
+      `${undeclared.length} acknowledged invoice${undeclared.length === 1 ? " has" : "s have"} no record in this system: ${undeclared.join(", ")}. Select each row and use "Register re-print" or "Register skipped sale" to name the earlier sale it came from, then confirm.`,
+    );
+  }
+
   const rowsToCreate = [];
   let carriedForwardCount = 0;
   // Origin sales of skipped-sale lots: their dispatch status has to be
