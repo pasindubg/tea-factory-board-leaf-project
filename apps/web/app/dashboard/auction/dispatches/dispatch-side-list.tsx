@@ -10,6 +10,7 @@ const COLUMNS: ColumnDef<PhysicalDispatchListRow>[] = [
   { key: "dispatchNo", label: "Dispatch no.", accessor: (row) => row.dispatchNo, sortable: true, filter: "text", lov: false },
   { key: "dispatchDateFrom", label: "Dispatch from", accessor: (row) => row.dispatchDateFrom, sortable: true, lov: false, searchInput: "date" },
   { key: "dispatchDateTo", label: "Dispatch to", accessor: (row) => row.dispatchDateTo, sortable: true, lov: false, searchInput: "date" },
+  { key: "targetSaleNo", label: "Sale no.", accessor: (row) => row.targetSaleNo, sortable: true, filter: "text" },
   { key: "warehouse", label: "Warehouse", accessor: (row) => row.warehouse, sortable: true, filter: "select" },
   { key: "status", label: "Status", accessor: (row) => row.status, sortable: true, filter: "select", filterOptions: enumFilterOptions(DISPATCH_STATUSES) },
   { key: "createdDate", label: "Created date", accessor: (row) => row.createdDate ?? null, sortable: true, lov: false, searchInput: "date" },

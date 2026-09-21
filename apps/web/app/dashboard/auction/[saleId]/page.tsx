@@ -109,6 +109,7 @@ export default async function SaleDetailPage({
           driver_name: (sale as { driver_name?: string | null }).driver_name || (carrier?.driver_name as string | null) || null,
           transporter: (sale as { transporter?: string | null }).transporter || (carrier?.transporter as string | null) || null,
           bundle_dispatch_no: currentDispatch?.bundle_dispatch_no ?? null,
+          bundled_dispatch_id: bundledDispatchId,
           created_date: (sale as { created_date?: string | null }).created_date ?? null,
         }}
         dispatches={dispatchResult.rows}

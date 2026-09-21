@@ -50,9 +50,7 @@ export function NewBrokerInvoiceBootstrap(props: Omit<DispatchCreationOptions, "
       <form action={create}>
         <DetailRecordPanel
           tone="draft"
-          eyebrow="Draft dispatch invoice"
-          title={`Dispatch Invoice Details · ${props.nextDispatchNo}`}
-          description="No dispatch invoices exist yet for this factory. Enter the first invoice's details here."
+          title={`New dispatch invoice ${props.nextDispatchNo}`}
           contentClassName="pt-5"
           actions={<SubmitButton variant="primary" pendingText="Saving…">Save</SubmitButton>}
         >

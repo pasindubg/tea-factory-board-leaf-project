@@ -2,10 +2,11 @@
  * The physical dispatch lifecycle.
  *
  * Only "dispatched" is a human decision — the dispatcher says the lorry left.
- * The two stages after it are consequences of what happened to the broker
+ * Every other stage is a consequence of what happened to the broker
  * invoices inside the dispatch, so they are derived rather than clicked:
  *
  *   draft      -> nothing has left yet
+ *   invoiced   -> every dispatch invoice in it has been confirmed
  *   dispatched -> the dispatcher marked it as gone (manual, the only one)
  *   received   -> every dispatch invoice in it reached GRN at the warehouse
  *   catalogued -> every dispatch invoice was acknowledged by its broker
@@ -15,7 +16,7 @@
  * which a one-way transition table would silently get wrong.
  */
 
-export const DISPATCH_STATUSES = ["draft", "dispatched", "received", "catalogued"] as const;
+export const DISPATCH_STATUSES = ["draft", "invoiced", "dispatched", "received", "catalogued"] as const;
 export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 
 /**
@@ -35,6 +36,7 @@ const BROKER_INVOICE_RANK: Record<string, number> = {
   broker_statement: 7,
 };
 
+const RANK_INVOICED = BROKER_INVOICE_RANK.invoiced;
 const RANK_GRN = BROKER_INVOICE_RANK.grn;
 const RANK_CATALOGUED = BROKER_INVOICE_RANK.catalogued;
 
@@ -57,20 +59,24 @@ export function deriveDispatchStatus(
   invoiceStatuses: readonly (string | null | undefined)[],
   dispatchedAt: string | Date | null | undefined,
 ): DispatchStatus {
-  const manual: DispatchStatus = dispatchedAt ? "dispatched" : "draft";
-  if (invoiceStatuses.length === 0) return manual;
-
   const ranks = invoiceStatuses.map(brokerInvoiceRank);
-  const allAtLeast = (threshold: number) => ranks.every((rank) => rank >= threshold);
+  const allAtLeast = (threshold: number) => ranks.length > 0 && ranks.every((rank) => rank >= threshold);
 
   if (allAtLeast(RANK_CATALOGUED)) return "catalogued";
   if (allAtLeast(RANK_GRN)) return "received";
-  return manual;
+  if (dispatchedAt) return "dispatched";
+  if (allAtLeast(RANK_INVOICED)) return "invoiced";
+  return "draft";
+}
+
+/** Whether the dispatcher may set "Invoiced" by hand. */
+export function canMarkInvoiced(status: string | null | undefined): boolean {
+  return status === "draft";
 }
 
 /** Whether the dispatcher may still press "Mark as dispatched". */
 export function canMarkDispatched(status: string | null | undefined): boolean {
-  return status === "draft";
+  return status === "invoiced";
 }
 
 /**
@@ -85,6 +91,7 @@ export function canRecordDispatchGrn(status: string | null | undefined): boolean
 
 export const DISPATCH_STATUS_LABELS: Record<DispatchStatus, string> = {
   draft: "Draft",
+  invoiced: "Invoiced",
   dispatched: "Dispatched",
   received: "Received",
   catalogued: "Catalogued",

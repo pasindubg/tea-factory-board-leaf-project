@@ -3,6 +3,7 @@ import { requireProfile } from "@/lib/profile";
 import { ALL_WEB_ROLES, ROLE_LABELS } from "@/lib/roles";
 import { visibleModules } from "@/lib/visible-modules";
 import { DashboardShell } from "./dashboard-shell";
+import { ListPreferencesProvider } from "@/components/list-view-mode";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { supabase, profile } = await requireProfile(ALL_WEB_ROLES);
@@ -40,6 +41,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   });
 
   return (
+    <ListPreferencesProvider userId={profile.id} factoryId={profile.factory_id}>
     <DashboardShell
       factoryName={factoryName}
       factoryLogoUrl={signedLogo?.signedUrl ?? null}
@@ -49,5 +51,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
     >
       {children}
     </DashboardShell>
+    </ListPreferencesProvider>
   );
 }

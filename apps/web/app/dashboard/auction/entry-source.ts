@@ -20,7 +20,7 @@ const DISPATCHED = "bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-ston
 const REGISTER = "bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-300";
 
 const CHIP: Record<EntrySource, EntrySourceChip> = {
-  invoice: { label: "Dispatched", style: DISPATCHED },
+  invoice: { label: "Invoice entry", style: DISPATCHED },
   "reprint-register": { label: "Re-print register", style: REGISTER },
 };
 

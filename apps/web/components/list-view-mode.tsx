@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { listViewStorageKey, parseListViewPreferences, resolveListFields, type ListViewPreferences } from "@/lib/list-view-preferences";
+import { showAppToast } from "@/components/action-feedback";
+import { AppDrawer } from "@/components/ui/drawer";
+import { AppButton } from "@/components/ui/button";
 
 /**
  * How a framework list lays its table out.
  *
  * `list`  — fits the viewport: no horizontal scrollbar, only the columns that
  *           fit are shown, and every cell is one truncated line.
- * `table` — the full grid: horizontal scrolling, every column present, and
+ * `table` — the chosen fields: horizontal scrolling and
  *           column widths the user can drag.
  *
  * `list` is the default because a list should be readable without sideways
@@ -21,77 +25,70 @@ export const DEFAULT_COLUMN_MIN_WIDTH = 150;
 
 export type ListColumnWidths = Record<string, number>;
 
-type StoredViewState = { mode: ListViewMode; widths: ListColumnWidths };
+const PreferenceOwner = createContext<{ userId: string; factoryId: string } | null>(null);
+export function ListPreferencesProvider({ userId, factoryId, children }: { userId: string; factoryId: string; children: ReactNode }) {
+  return <PreferenceOwner.Provider value={{ userId, factoryId }}>{children}</PreferenceOwner.Provider>;
+}
 
-const STORAGE_PREFIX = "list-view:";
-
-function readStored(scope: string): StoredViewState | null {
-  if (typeof window === "undefined") return null;
+function readStored(key: string | null): ListViewPreferences {
   try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${scope}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredViewState>;
-    const mode = parsed.mode === "table" ? "table" : "list";
-    const widths: ListColumnWidths = {};
-    for (const [key, value] of Object.entries(parsed.widths ?? {})) {
-      if (typeof value === "number" && Number.isFinite(value) && value > 0) widths[key] = value;
-    }
-    return { mode, widths };
+    return parseListViewPreferences(key ? window.localStorage.getItem(key) : null);
   } catch {
-    return null;
+    return parseListViewPreferences(null);
   }
 }
 
 /**
- * View mode and column widths for one list, remembered per list scope.
+ * Layout for one list, remembered per authenticated account and list scope.
  *
  * The stored value is read in an effect rather than in the initial state so
  * the server-rendered markup and the first client render agree — seeding from
  * localStorage during render is a hydration mismatch.
  */
 export function useListViewMode(scope: string) {
-  const [mode, setModeState] = useState<ListViewMode>(DEFAULT_LIST_VIEW_MODE);
-  const [widths, setWidthsState] = useState<ListColumnWidths>({});
-  const loaded = useRef(false);
+  const owner = useContext(PreferenceOwner);
+  const key = owner ? listViewStorageKey(owner.userId, owner.factoryId, scope) : null;
+  const [snapshot, setSnapshot] = useState(() => ({ key, value: parseListViewPreferences(null) }));
+  const value = snapshot.key === key ? snapshot.value : parseListViewPreferences(null);
+  const current = useRef(value);
+  current.current = value;
 
   useEffect(() => {
-    const stored = readStored(scope);
-    loaded.current = true;
-    if (!stored) {
-      setModeState(DEFAULT_LIST_VIEW_MODE);
-      setWidthsState({});
-      return;
-    }
-    setModeState(stored.mode);
-    setWidthsState(stored.widths);
-  }, [scope]);
+    const reload = () => {
+      current.current = readStored(key);
+      setSnapshot({ key, value: current.current });
+    };
+    const sync = (event: Event) => {
+      if (event instanceof StorageEvent ? event.key === key || event.key === null : (event as CustomEvent).detail === key) reload();
+    };
+    reload();
+    window.addEventListener("storage", sync);
+    window.addEventListener("list-view-updated", sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("list-view-updated", sync);
+    };
+  }, [key]);
 
-  const persist = useCallback((next: StoredViewState) => {
-    if (typeof window === "undefined") return;
+  function update(patch: Partial<ListViewPreferences>) {
+    const next = { ...current.current, ...patch };
+    current.current = next;
+    setSnapshot({ key, value: next });
     try {
-      window.localStorage.setItem(`${STORAGE_PREFIX}${scope}`, JSON.stringify(next));
+      if (!key) throw new Error("No preference owner");
+      window.localStorage.setItem(key, JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("list-view-updated", { detail: key }));
+      return true;
     } catch {
-      // A full or blocked storage quota must never break the list itself.
+      showAppToast("This layout is applied, but browser storage is unavailable. It cannot be remembered.", "error");
+      return false;
     }
-  }, [scope]);
-
-  const setMode = useCallback((next: ListViewMode) => {
-    setModeState(next);
-    setWidthsState((current) => {
-      persist({ mode: next, widths: current });
-      return current;
-    });
-  }, [persist]);
-
-  const setColumnWidth = useCallback((key: string, width: number) => {
-    setWidthsState((current) => {
-      const next = { ...current, [key]: Math.round(width) };
-      persist({ mode, widths: next });
-      return next;
-    });
-  }, [mode, persist]);
-
-  return { mode, setMode, widths, setColumnWidth };
+  }
+  return { ...value,
+    setMode: (mode: ListViewMode) => update({ mode }),
+    setColumnWidth: (column: string, width: number) => update({ widths: { ...current.current.widths, [column]: Math.round(width) } }),
+    setFields: (fields: Pick<ListViewPreferences, "order" | "hidden">) => update(fields),
+  };
 }
 
 /**
@@ -99,7 +96,13 @@ export function useListViewMode(scope: string) {
  * than two visible toggles: it is a per-user display preference, not a command
  * on the records, so it should not compete with the list's real actions.
  */
-export function ListViewModeMenu({ mode, onChange }: { mode: ListViewMode; onChange: (mode: ListViewMode) => void }) {
+export function ListViewModeMenu({ mode, onChange, fields, order, hidden, onFieldsChange, disabled }: {
+  mode: ListViewMode; onChange: (mode: ListViewMode) => void;
+  fields: { key: string; label: ReactNode }[]; order: string[]; hidden: string[];
+  onFieldsChange: (fields: Pick<ListViewPreferences, "order" | "hidden">) => boolean;
+  disabled?: boolean;
+}) {
+  const [arranging, setArranging] = useState(false);
   const popoverId = `list-view-${useId().replace(/:/g, "")}`;
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -124,6 +127,7 @@ export function ListViewModeMenu({ mode, onChange }: { mode: ListViewMode; onCha
       <button
         ref={buttonRef}
         type="button"
+        disabled={disabled}
         popoverTarget={popoverId}
         popoverTargetAction="toggle"
         onClick={() => requestAnimationFrame(position)}
@@ -151,13 +155,79 @@ export function ListViewModeMenu({ mode, onChange }: { mode: ListViewMode; onCha
         <ModeOption
           active={mode === "table"}
           label="Table"
-          hint="All columns, resizable"
+          hint="Visible fields, resizable"
           icon={<TableGlyph />}
           onSelect={() => choose("table")}
         />
+        <div role="separator" className="-mx-1 my-1 border-t border-stone-200 dark:border-stone-700" />
+        <button type="button" role="menuitem"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"
+          onClick={() => { popoverRef.current?.hidePopover(); setArranging(true); }}>
+          <span aria-hidden="true" className="shrink-0"><ColumnsGlyph /></span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Configure</span>
+            <span className="block text-xs text-stone-500 dark:text-stone-400">Reorder or hide columns</span>
+          </span>
+          <ChevronGlyph />
+        </button>
       </div>
+      {arranging && <FieldSettings fields={fields} order={order} hidden={hidden} onClose={() => { setArranging(false); buttonRef.current?.focus(); }} onSave={onFieldsChange} />}
     </>
   );
+}
+
+function FieldSettings({ fields, order, hidden, onClose, onSave }: {
+  fields: { key: string; label: ReactNode }[]; order: string[]; hidden: string[]; onClose: () => void;
+  onSave: (fields: Pick<ListViewPreferences, "order" | "hidden">) => boolean;
+}) {
+  const [draft, setDraft] = useState({ order, hidden });
+  const { ordered, visible } = resolveListFields(fields, draft);
+  const firstControl = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    firstControl.current?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = firstControl.current?.closest('[role="dialog"]');
+      const controls = dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)');
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => document.removeEventListener("keydown", trapFocus);
+  }, []);
+  function move(index: number, offset: number) {
+    const order = ordered.map((field) => field.key);
+    [order[index], order[index + offset]] = [order[index + offset], order[index]];
+    setDraft({ ...draft, order });
+  }
+  return <AppDrawer open title="Arrange / hide fields" description="Saved for your account and this list in this browser. List mode shows as many visible fields as fit." onClose={onClose}>
+    <AppButton ref={firstControl} type="button" onClick={() => setDraft({ order: [], hidden: [] })}>Reset to default</AppButton>
+    <p className="my-3 text-sm text-stone-500">Keep at least one field visible. All fields are shown while adding or editing.</p>
+    <ol className="space-y-2">
+      {ordered.map((field, index) => {
+        const shown = visible.some((column) => column.key === field.key);
+        const label = typeof field.label === "string" ? field.label : field.key;
+        return <li key={field.key} className="flex items-center gap-3 rounded-lg border border-stone-200 p-3 dark:border-stone-700">
+          <label className="flex min-w-0 flex-1 items-center gap-3">
+            <input type="checkbox" checked={shown} disabled={shown && visible.length === 1} onChange={(event) => setDraft({ ...draft, hidden: event.target.checked ? draft.hidden.filter((key) => key !== field.key) : [...draft.hidden, field.key] })} />
+            <span className="truncate">{field.label}</span>
+          </label>
+          <AppButton type="button" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => move(index, -1)}>↑</AppButton>
+          <AppButton type="button" aria-label={`Move ${label} down`} disabled={index === ordered.length - 1} onClick={() => move(index, 1)}>↓</AppButton>
+        </li>;
+      })}
+    </ol>
+    <div className="mt-4 flex gap-2">
+      <AppButton type="button" onClick={() => { if (onSave(draft)) showAppToast("List fields saved.", "success"); onClose(); }}>Save</AppButton>
+      <AppButton type="button" onClick={onClose}>Cancel</AppButton>
+    </div>
+  </AppDrawer>;
 }
 
 function ModeOption({
@@ -216,6 +286,25 @@ function TableGlyph() {
     <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5">
       <rect x="2.75" y="3.75" width="14.5" height="12.5" rx="1.5" />
       <path d="M2.75 8h14.5M8 3.75v12.5M13 3.75v12.5" />
+    </svg>
+  );
+}
+
+function ColumnsGlyph() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="h-5 w-5">
+      <path d="M4 3.5v13M10 3.5v13M16 3.5v13" />
+      <circle cx="4" cy="7" r="1.75" fill="currentColor" />
+      <circle cx="10" cy="12.5" r="1.75" fill="currentColor" />
+      <circle cx="16" cy="9" r="1.75" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ChevronGlyph() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="ml-auto h-4 w-4 shrink-0 text-stone-400">
+      <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
     </svg>
   );
 }

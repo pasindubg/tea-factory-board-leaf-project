@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { LovCombobox } from "@/components/lov-combobox";
 import { InvoicePrefixMenu, displayInvoiceNo, useInvoicePrefix } from "@/components/invoice-prefix";
 import { DEFAULT_COLUMN_MIN_WIDTH, ListViewModeMenu, useListViewMode } from "@/components/list-view-mode";
+import { resolveListFields } from "@/lib/list-view-preferences";
 import { AppDrawer } from "@/components/ui/drawer";
 import {
   ListCommandToolbar,
@@ -20,6 +22,7 @@ import {
   TabbedListSurface,
   accessorText,
   booleanLabel,
+  subscribeLocalListRefresh,
   useFrameworkListData,
   useListControls,
   useListSelection,
@@ -31,6 +34,7 @@ import { refreshListResource } from "@/lib/list-resource-action";
 import { saveListSearchState } from "@/lib/list-search-actions";
 import { ENTITY_LIST_METADATA } from "@/lib/entity-list-metadata";
 import type { ListMutationResult } from "@/lib/list-mutations";
+import { StateMenu } from "@/components/state-menu";
 import type { ListResourceKey, ListResourceRequest, ListResourceRow } from "@/lib/list-resources";
 
 /**
@@ -285,6 +289,8 @@ export type EntityListCommand<Row> = {
   pendingLabel?: string;
   visible?: boolean;
   destructive?: boolean;
+  /** Listed in the toolbar's Status menu instead of as its own button. */
+  status?: boolean;
   disabled?: (context: EntityListCommandContext<Row>) => boolean;
   disabledReason?: (context: EntityListCommandContext<Row>) => string | undefined;
   run?: (context: EntityListCommandContext<Row>) => Promise<ListMutationResult>;
@@ -426,6 +432,8 @@ type EntityListCommonProps<Row> = {
     rows: Row[];
     visibleRows: Row[];
     selectionColumn: boolean;
+    /** Render footer cells in this order, keyed by their field. */
+    columns: EntityListColumn<Row>[];
   }) => ReactNode;
   emptyMessage: string;
   filteredEmptyMessage?: string;
@@ -515,9 +523,26 @@ export function EntityListResource<Key extends ListResourceKey>({
   return <>{children(data)}</>;
 }
 
+let localRefreshQueued = false;
+
 function useLocalEntityListData<Row>(initialRows: Row[], scope: string): EntityListDataContext<Row> {
   const [rows, setRows] = useState(initialRows);
   useEffect(() => setRows(initialRows), [initialRows]);
+
+  const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
+  const reload = useCallback(() => {
+    startRefresh(() => {
+      if (localRefreshQueued) return;
+      localRefreshQueued = true;
+      queueMicrotask(() => { localRefreshQueued = false; });
+      router.refresh();
+    });
+  }, [router]);
+  useEffect(() => subscribeLocalListRefresh(scope, async () => {
+    reload();
+    return true;
+  }), [reload, scope]);
 
   // Local lists (detail-page side panels) get their rows as server-rendered
   // props, not through the resource registry — this one small fetch is the
@@ -564,7 +589,7 @@ function useLocalEntityListData<Row>(initialRows: Row[], scope: string): EntityL
     await mutate(() => action(formData), options);
   };
 
-  return { rows, refreshing: false, mutate, mutationAction, searchState, applySearch };
+  return { rows, refreshing, reload, mutate, mutationAction, searchState, applySearch };
 }
 
 type EntityListPanelProps<Row> = EntityListCommonProps<Row>
@@ -620,7 +645,7 @@ function EntityListPanel<Row>({
   const [confirmingCommand, setConfirmingCommand] = useState<string | null>(null);
   const [panelCommand, setPanelCommand] = useState<string | null>(null);
   const [assistantCommand, setAssistantCommand] = useState<string | null>(null);
-  const { mode: viewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth } = useListViewMode(scope);
+  const { mode: savedViewMode, setMode: setViewMode, widths: columnWidths, setColumnWidth, order, hidden, setFields } = useListViewMode(scope);
   const tableViewportRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const { visible: prefixVisible } = useInvoicePrefix();
@@ -637,6 +662,9 @@ function EntityListPanel<Row>({
   );
   const createFormId = `entity-create-${useId().replace(/:/g, "")}`;
   const inlineCreating = Boolean(adding && create?.renderRow);
+  // Custom create rows emit positional cells; never reorder or omit form inputs.
+  const formLayout = inlineCreating || Boolean(editingId);
+  const viewMode = formLayout ? "table" : savedViewMode;
 
   // `sideList` is an object prop with a fresh identity every render, so the
   // observer effect below may only depend on whether one is present.
@@ -674,7 +702,8 @@ function EntityListPanel<Row>({
   // What the TABLE draws. `searchOnly` columns stay in definition.columns — so
   // useListControls and the search panel still see them — but have no header,
   // no cell, and take up no width here.
-  const tableColumns = definition.columns.filter((column) => !column.searchOnly);
+  const defaultColumns = definition.columns.filter((column) => !column.searchOnly);
+  const tableColumns = resolveListFields(defaultColumns, { order, hidden }, formLayout).visible;
 
   // Table mode is as wide as its columns; the viewport scrolls to reach them.
   const tableWidth = (selectionMode === "multi" ? SELECTION_COLUMN_WIDTH : 0)
@@ -782,6 +811,15 @@ function EntityListPanel<Row>({
       setBusyCommand(null);
     }
   }
+
+  function openCommand(command: EntityListCommand<Row>) {
+    if (command.onOpen) command.onOpen(commandContext);
+    else if (command.assistant) setAssistantCommand(command.id);
+    else if (command.panel) setPanelCommand(command.id);
+    else if (command.confirm) setConfirmingCommand(command.id);
+    else return runCommand(command);
+  }
+  const statusCommands = commands.filter((command) => command.visible !== false && command.status);
 
   if (tabs) {
     return (
@@ -910,7 +948,22 @@ function EntityListPanel<Row>({
               </button>
             </>
           )}
-          {commands.filter((command) => command.visible !== false).map((command) => {
+          {statusCommands.length > 0 && (
+            <StateMenu
+              label="Status"
+              disabled={changing}
+              commands={statusCommands.map((command) => ({
+                id: command.id,
+                label: typeof command.label === "function" ? command.label(commandContext) : command.label,
+                title: command.disabledReason?.(commandContext),
+                disabled: changing || Boolean(command.disabled?.(commandContext)),
+                busy: busyCommand === command.id,
+                busyLabel: command.pendingLabel,
+                onSelect: () => openCommand(command),
+              }))}
+            />
+          )}
+          {commands.filter((command) => command.visible !== false && !command.status).map((command) => {
             const disabled = changing || Boolean(command.disabled?.(commandContext));
             const label = typeof command.label === "function" ? command.label(commandContext) : command.label;
             const titleText = command.disabledReason?.(commandContext);
@@ -920,13 +973,7 @@ function EntityListPanel<Row>({
                 type="button"
                 title={titleText}
                 disabled={disabled}
-                onClick={() => {
-                  if (command.onOpen) command.onOpen(commandContext);
-                  else if (command.assistant) setAssistantCommand(command.id);
-                  else if (command.panel) setPanelCommand(command.id);
-                  else if (command.confirm) setConfirmingCommand(command.id);
-                  else void runCommand(command);
-                }}
+                onClick={() => void openCommand(command)}
                 className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                   command.destructive
                     ? "border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-stone-900 dark:text-red-300 dark:hover:bg-red-950"
@@ -940,7 +987,7 @@ function EntityListPanel<Row>({
           })}
           {/* Last, so it sits at the far right of the list's toolbar. A
               display preference, kept apart from the record commands. */}
-          {!sideList && <ListViewModeMenu mode={viewMode} onChange={setViewMode} />}
+          {!sideList && <ListViewModeMenu mode={savedViewMode} onChange={setViewMode} fields={defaultColumns} order={order} hidden={hidden} onFieldsChange={setFields} disabled={changing} />}
         </ListCommandToolbar>
       )}
 
@@ -1024,7 +1071,7 @@ function EntityListPanel<Row>({
       {(summary ?? beforeTable)?.(rows)}
       <ListSearchPanel columns={definition.columns} controls={controls} toggles={definition.searchToggles} label={sideList?.searchLabel} id={searchPanelId} listScope={scope} />
       {sideList ? (
-        <div ref={sideScrollRef} className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
+        <div ref={sideScrollRef} data-side-list-rows className={sideList.bodyClassName ?? "max-h-[28rem] overflow-y-auto xl:max-h-none xl:min-h-0 xl:flex-1"}>
           {visibleRows.map((row) => {
             const id = getId(row);
             const active = sideList.isActive?.(row) ?? false;
@@ -1058,6 +1105,7 @@ function EntityListPanel<Row>({
         </div>
       ) : (
         <div ref={tableViewportRef} className={viewMode === "table" ? "list-scroll-x" : "list-scroll-none"}>
+          {formLayout && <p className="px-4 py-2 text-xs text-stone-500" role="status">All fields shown for editing. Your saved layout returns after Save or Cancel.</p>}
           {inlineCreating && create ? (
             <form
               id={createFormId}
@@ -1216,7 +1264,7 @@ function EntityListPanel<Row>({
             )}
           </tbody>
           {footer && rows.length > 0 && (
-            <tfoot>{footer({ rows, visibleRows, selectionColumn: selectionMode === "multi" })}</tfoot>
+            <tfoot>{footer({ rows, visibleRows, selectionColumn: selectionMode === "multi", columns: tableColumns })}</tfoot>
           )}
           </table>
         </div>

@@ -7,6 +7,7 @@ import { requireModuleAccess } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import {
   AUC,
+  acknowledgementBlockedReason,
   back,
   canonicalGrade,
   colomboToday,
@@ -16,6 +17,7 @@ import {
   stageImport,
   toISODate,
   saleGroupIds,
+  saleGroupLots,
   saleBrokerName,
   saleDetailPath,
   writeAudit,
@@ -91,6 +93,8 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
     .from("auction_sales")
     .select("id, broker_id, sale_no, target_sale_no, dispatch_date")
     .in("id", groupIds);
+  const notReceived = await acknowledgementBlockedReason(supabase, groupIds);
+  if (notReceived) return back(`${AUC}/documents/${importId}`, notReceived);
   const saleIdByDispatchDate = new Map(
     (groupSales ?? [])
       .filter((sale) => sale.dispatch_date)
@@ -101,11 +105,12 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
   // header — is what a lot created from the acknowledgement is stamped with;
   // see the provisional_sale_no assignment below.
   const targetSaleNoBySaleId = new Map((groupSales ?? []).map((sale) => [sale.id as string, sale.target_sale_no as string | null]));
-  const { data: lotRows } = await supabase
-    .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, net_wt, sample_allowance, lot_invoices(invoice_no)")
-    .in("sale_id", groupIds);
-  const invoiced = buildInvoicedLots((lotRows ?? []) as unknown as Parameters<typeof buildInvoicedLots>[0]);
+  const lotRows = await saleGroupLots<{ id: string; sale_id: string; invoice_no: string | null }>(
+    supabase,
+    groupIds,
+    "id, sale_id, invoice_no, grade, net_wt, sample_allowance, lot_invoices(invoice_no)",
+  );
+  const invoiced = buildInvoicedLots(lotRows as unknown as Parameters<typeof buildInvoicedLots>[0]);
   const recon = reconcileAcknowledgement(invoiced, parsed);
 
   // Resolve marks by code OR name (Asia Siyaka acks print only the mark name),
@@ -129,33 +134,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       .select("id, code");
     for (const m of created ?? []) markByCode.set((m.code as string).toUpperCase(), m.id as string);
   }
-
-  // Apply acknowledgement to every matched invoiced lot (in parallel — each touches a
-  // distinct lot, then the sweep below moves whatever's left).
-  const ackUpdateErrors = (
-    await Promise.all(
-      recon.rows
-        .filter((row) => row.invoiced && (row.status === "catalogued" || row.status === "shutout"))
-        .map((row) =>
-          supabase
-            .from("auction_lots")
-            .update({
-              lot_no: row.ack?.lotNo ?? null,
-              mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
-              state: "acknowledged",
-              shutout: row.status === "shutout",
-              shutout_reason:
-                row.status === "shutout"
-                  ? row.ack?.shutoutReason ?? "Listed under Shutout/Violation in the acknowledgement"
-                  : null,
-            })
-            .eq("id", row.invoiced!.id),
-        ),
-    )
-  )
-    .map((result) => result.error)
-    .filter((error) => error !== null);
-  if (ackUpdateErrors.length > 0) return back(detail, friendlyError(ackUpdateErrors[0]));
 
   // Acknowledgement lines with no invoice of ours behind them — the rows that
   // need a lot created (or an existing one carried forward onto this sale).
@@ -235,66 +213,84 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       `${undeclared.length} acknowledged invoice${undeclared.length === 1 ? " has" : "s have"} no record in this system: ${undeclared.join(", ")}. Select each row and use "Register re-print" or "Register skipped sale" to name the earlier sale it came from, then confirm.`,
     );
   }
+  for (const row of ackOnlyEntries) {
+    const outcome = carryForward.get(row.invoice_no);
+    if (outcome?.status === "blocked") {
+      const blockedDispatch = formatFourDigitNo(outcome.lot.auction_sales?.sale_no) || "—";
+      return back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on dispatch invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
+    }
+  }
 
-  const rowsToCreate = [];
+  // Apply acknowledgement to every matched invoiced lot (in parallel — each touches a
+  // distinct lot, then the sweep below moves whatever's left).
+  const ackUpdateErrors = (
+    await Promise.all(
+      recon.rows
+        .filter((row) => row.invoiced && (row.status === "catalogued" || row.status === "shutout"))
+        .map((row) =>
+          supabase
+            .from("auction_lots")
+            .update({
+              lot_no: row.ack?.lotNo ?? null,
+              mark_id: row.ack ? markByCode.get(row.ack.markCode.toUpperCase()) ?? null : null,
+              state: "acknowledged",
+              shutout: row.status === "shutout",
+              shutout_reason:
+                row.status === "shutout"
+                  ? row.ack?.shutoutReason ?? "Listed under Shutout/Violation in the acknowledgement"
+                  : null,
+            })
+            .eq("id", row.invoiced!.id),
+        ),
+    )
+  )
+    .map((result) => result.error)
+    .filter((error) => error !== null);
+  if (ackUpdateErrors.length > 0) return back(detail, friendlyError(ackUpdateErrors[0]));
+
+  const rowsToCreate: Record<string, unknown>[] = [];
   let carriedForwardCount = 0;
-  // Origin sales of skipped-sale lots: their dispatch status has to be
-  // re-derived too, or sale 15 stays "invoiced" with nothing left to catalogue.
   const skippedOriginSaleIds = new Set<string>();
 
+  // A lot the broker catalogues again gets a row of its OWN for that sale, on
+  // the dispatch invoice the tea physically left the factory on — never on the
+  // acknowledging sale's dispatch invoice. Its weights are carried from the
+  // source row, so each sale keeps its own sample deduction and net weight.
+  //
+  // ONE question, TWO exclusive answers — was the lot offered to buyers in the
+  // sale it was assigned to? (outcome.isReprint, see wasOffered)
+  //
+  //   yes → RE-PRINT      it faced buyers and did not sell; the source row
+  //                       keeps its own record untouched.
+  //   no  → SKIPPED SALE  the broker held it back and catalogued it later, so
+  //                       the source sale must stop counting it.
   for (const row of ackOnlyEntries) {
-    const outcome = carryForward.get(row.invoice_no) ?? { status: "unmatched" as const };
+    const outcome = carryForward.get(row.invoice_no);
+    if (outcome?.status !== "matched") continue;
 
-    if (outcome.status !== "matched") {
-      if (outcome.status === "blocked") {
-        const blockedDispatch = formatFourDigitNo(outcome.lot.auction_sales?.sale_no) || "—";
-        back(detail, `Invoice ${row.invoice_no} already belongs to a sold/settled lot on dispatch invoice ${blockedDispatch}; it cannot be rolled forward automatically.`);
-      }
-      rowsToCreate.push(row);
-      continue;
-    }
-
-    // A lot this ack lists again always gets a NEW row here — never edit the
-    // candidate's sale. Its own sale keeps the record of what happened to it
-    // there, and the new row links back via reprint_source_lot_id so the two
-    // read as one history.
-    //
-    // ONE question, TWO exclusive answers — was the lot offered to buyers in
-    // the sale it sits in? (outcome.isReprint, see wasOffered)
-    //
-    //   yes → RE-PRINT      it faced buyers and did not sell. Nothing skipped;
-    //                       the origin row keeps its own record untouched.
-    //   no  → SKIPPED SALE  the broker held it back and catalogued it later.
-    //                       It never appeared in the origin sale, so that sale
-    //                       must stop counting it.
-    //
-    // A lot is never both: it either went up for sale there, or it did not.
     const candidate = outcome.lot;
     const skippedSale = !outcome.isReprint;
+    const cameFrom = formatSaleNo(candidate.provisional_sale_no ?? candidate.auction_sales?.target_sale_no ?? null) || null;
     carriedForwardCount += 1;
+    const { ackLot: _ackLot, ...lotRow } = row;
     rowsToCreate.push({
-      ...row,
-      invoice_no: candidate.invoice_no ?? row.invoice_no,
+      ...lotRow,
+      sale_id: candidate.sale_id,
+      invoice_no: candidate.invoice_no ?? withGroupPrefix(row.invoice_no),
+      previous_sale_no: cameFrom,
       bags: candidate.bags ?? row.bags,
       kg_per_bag: candidate.kg_per_bag ?? row.kg_per_bag,
       gross_wt: candidate.gross_wt,
       sample_allowance: candidate.sample_allowance,
       net_wt: candidate.net_wt ?? row.net_wt,
-      // Each kind links through its OWN column. Sharing one made every
-      // re-print count include skipped sales.
       reprint_source_lot_id: skippedSale ? null : candidate.id,
       skipped_source_lot_id: skippedSale ? candidate.id : null,
       reprint: outcome.isReprint,
-      // The destination row is flagged, but carries no number: it IS the sale
-      // the lot was finally acknowledged in.
       skipped_sale: skippedSale,
       unsold: false,
     });
 
     if (skippedSale) {
-      // The origin row was left behind at `invoiced` for ever, never offered.
-      // Acknowledge it where it stands and record where it actually went, so
-      // that sale stops counting a lot it never put up.
       const { error: originError } = await supabase
         .from("auction_lots")
         .update({
@@ -308,40 +304,36 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       skippedOriginSaleIds.add(candidate.sale_id);
     }
 
-    const fromSale = formatSaleNo(candidate.auction_sales?.target_sale_no ?? null) || "—";
-    // State only advances from `invoiced`; a lot already valued or shut out
-    // keeps what it reached. Report what actually changed, not the happy path.
-    const originNote = skippedSale
-      ? candidate.state === "invoiced"
-        ? "The original lot never faced a buyer there, so it is marked acknowledged and flagged as a skipped sale"
-        : `The original lot never faced a buyer there, so it is left at ${candidate.state ?? "its current state"} and flagged as a skipped sale`
-      : "The original lot was offered there and did not sell, so it keeps its own record unchanged";
+    const fromSale = cameFrom || "—";
     await writeAudit(supabase, profile.factory_id, {
-      saleId: row.sale_id,
+      saleId: candidate.sale_id,
       lotId: candidate.id,
       action: skippedSale ? "Skipped sale acknowledged" : "Re-print acknowledged",
-      detail: `Invoice ${row.invoice_no} sits in sale ${fromSale} but the broker catalogued it in sale ${row.provisional_sale_no || "—"}. ${originNote}; a lot was added to the later sale${skippedSale ? " as a normal lot" : " as a re-print"}.`,
+      detail: `Invoice ${row.invoice_no} sits in sale ${fromSale} but the broker catalogued it in sale ${row.provisional_sale_no || "—"}. A row for sale ${row.provisional_sale_no || "—"} was added on the same dispatch invoice${skippedSale ? ", and the source sale stops counting it" : ", as a re-print"}.`,
       reason: `ACK sale ${parsed.saleNo ?? "—"} listed this invoice${row.ackLot.dispatchDate ? ` on ${row.ackLot.dispatchDate}` : ""}.`,
       actor: profile.name,
     });
   }
 
-  let createdLotsFromAck: { id: string; sale_id: string; invoice_no: string; state: string }[] = [];
   if (rowsToCreate.length > 0) {
-    const { data: createdLots } = await supabase
+    const { data: createdLots, error: createError } = await supabase
       .from("auction_lots")
-      .insert(rowsToCreate.map(({ ackLot: _ackLot, ...row }) => ({ ...row, invoice_no: withGroupPrefix(row.invoice_no) })))
-      .select("id, sale_id, invoice_no, state");
+      .insert(rowsToCreate)
+      .select("id, invoice_no");
+    if (createError) return back(detail, friendlyError(createError));
     if (createdLots && createdLots.length > 0) {
-      createdLotsFromAck = createdLots as { id: string; sale_id: string; invoice_no: string; state: string }[];
-      await supabase.from("lot_invoices").insert(
+      const { error: linkError } = await supabase.from("lot_invoices").insert(
         createdLots.map((lot) => ({
           factory_id: profile.factory_id,
           lot_id: lot.id,
           invoice_no: formatFourDigitNo(lot.invoice_no as string),
         })),
       );
+      if (linkError) return back(detail, friendlyError(linkError));
     }
+  }
+  for (const originSaleId of skippedOriginSaleIds) {
+    await syncDispatchForBrokerInvoice(supabase, originSaleId, profile.factory_id);
   }
 
 
@@ -360,10 +352,6 @@ export async function confirmAcknowledgement(importId: string, saleId: string) {
       if (sid) affectedSales.add(sid);
     }
   }
-  for (const lot of createdLotsFromAck) {
-    if (lot.state === "acknowledged") affectedSales.add(lot.sale_id as string);
-  }
-  for (const originSaleId of skippedOriginSaleIds) affectedSales.add(originSaleId);
   if (affectedSales.size > 0) {
     await supabase
       .from("auction_sales")
@@ -504,10 +492,11 @@ export async function confirmContract(importId: string, saleId: string) {
   // The sellers contract covers the broker's whole sale — match lots across all
   // dispatches in the sale group, and file each sale line under its lot's own dispatch.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase
-    .from("auction_lots")
-    .select("id, sale_id, invoice_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, lot_invoices(invoice_no)")
-    .in("sale_id", groupIds);
+  const lotRows = await saleGroupLots<ContractLot>(
+    supabase,
+    groupIds,
+    "id, sale_id, invoice_no, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, state, lot_invoices(invoice_no)",
+  );
   type ContractLot = {
     id: string;
     sale_id: string;
@@ -622,7 +611,7 @@ export async function confirmContract(importId: string, saleId: string) {
   for (const line of matchedLines) {
     const lot = lotByInv.get(invoiceMatchKey(line.invoiceNo))!;
     saleLineByLot.set(lot.id, {
-      factory_id: profile.factory_id, sale_id: lot.sale_id, lot_id: lot.id,
+      factory_id: profile.factory_id, sale_id: groupIds.includes(lot.sale_id) ? lot.sale_id : saleId, lot_id: lot.id,
       buyer_id: buyerByName.get(line.buyerName) ?? null,
       gross_wt: line.grossWt, sample_allowance: line.sampleAllowance,
       net_wt: line.netWt, price_per_kg: line.pricePerKg,
@@ -887,6 +876,6 @@ export async function rejectImport(importId: string, saleId: string) {
     contract: "Sellers Contract",
   }[importRow.doc_type as string] ?? "Document";
   redirect(
-    `${documentDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Dispatch Invoice, or lot was created or changed.`)}`,
+    `${saleDetail}?notice=${encodeURIComponent(`${documentLabel} rejected. No sale, Dispatch Invoice, or lot was created or changed.`)}`,
   );
 }

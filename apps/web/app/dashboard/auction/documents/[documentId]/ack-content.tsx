@@ -10,7 +10,7 @@ import {
 } from "@tea/api";
 import { confirmAcknowledgement, rejectImport } from "@/app/dashboard/auction/actions";
 import { buildInvoicedLots } from "@/app/dashboard/auction/recon-helpers";
-import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { acknowledgementBlockedReason, canonicalGrade, gradeAliasMap, saleGroupIds, saleGroupLots } from "@/app/dashboard/auction/_actions/_shared";
 import { formatFourDigitNo, formatSaleNo } from "@/app/dashboard/auction/sale-number";
 import { resolveAckCarryForward, type CarryForwardOutcome } from "@/app/dashboard/auction/_actions/carry-forward";
 import { applyServerListSearch } from "@/lib/list-search-state";
@@ -44,6 +44,7 @@ export async function AckContent({
   // The ack is the broker's statement for the WHOLE sale — reconcile against
   // every dispatch in this sale's group, not just the one being reviewed.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const grnBlocked = await acknowledgementBlockedReason(supabase, groupIds);
   // The sale this document belongs to is the one it was uploaded against, not
   // whatever its header appears to say — an Asia Siyaka acknowledgement prints
   // no sale number at all, and reading one out of the text produced "27" for
@@ -57,10 +58,11 @@ export async function AckContent({
     .maybeSingle();
   const documentSaleNo =
     formatSaleNo((ackSale?.target_sale_no as string | null) || (ackSale?.sale_no as string | null)) || null;
-  const { data: lotRows } = await supabase
-    .from("auction_lots")
-    .select("id, sale_id, invoice_no, grade, net_wt, sample_allowance, state, lot_no, lot_source, reprint, reprint_registered, marks(code), lot_invoices(invoice_no)")
-    .in("sale_id", groupIds);
+  const lotRows = await saleGroupLots<Record<string, unknown>>(
+    supabase,
+    groupIds,
+    "id, sale_id, invoice_no, grade, net_wt, sample_allowance, state, lot_no, lot_source, reprint, reprint_registered, marks(code), lot_invoices(invoice_no)",
+  );
   const { data: auditRows } = await supabase
     .from("auction_audit")
     .select("action, detail, reason, actor, confidence_shown, created_at")
@@ -74,7 +76,7 @@ export async function AckContent({
     ...rawParsed,
     lots: rawParsed.lots.map((lot) => ({ ...lot, grade: canonicalGrade(lot.grade, aliases) })),
   };
-  const invoiced = buildInvoicedLots(lotRows ?? []);
+  const invoiced = buildInvoicedLots(lotRows as unknown as Parameters<typeof buildInvoicedLots>[0]);
   const recon = reconcileAcknowledgement(invoiced, parsed);
   const confirmedDoc = imp.status === "confirmed";
 
@@ -368,6 +370,13 @@ export async function AckContent({
 
       <ReconTable rows={visibleRows} saleId={saleId} warningInvoiceNos={warningInvoiceNos} canRegisterReprint={profile.role === "owner"} />
 
+      {!confirmed && grnBlocked && (
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+          <p className="font-medium">Record GRN before confirming</p>
+          <p className="mt-1">{grnBlocked}</p>
+        </div>
+      )}
+
       {!confirmed && undeclaredInvoices.length > 0 && (
         <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-400">
           <p className="font-medium">
@@ -390,10 +399,9 @@ export async function AckContent({
               pendingText="Acknowledging..."
               variant="primary"
               className="rounded-md px-4 py-2 text-sm"
-              disabled={undeclaredInvoices.length > 0}
-              title={undeclaredInvoices.length > 0
-                ? `Declare the earlier sale for ${undeclaredInvoices.join(", ")} first.`
-                : undefined}
+              disabled={undeclaredInvoices.length > 0 || Boolean(grnBlocked)}
+              title={grnBlocked
+                ?? (undeclaredInvoices.length > 0 ? `Declare the earlier sale for ${undeclaredInvoices.join(", ")} first.` : undefined)}
             >
               Confirm — acknowledge {s.catalogued} lot(s)
             </SubmitButton>

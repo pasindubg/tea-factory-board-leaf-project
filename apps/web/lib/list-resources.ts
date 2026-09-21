@@ -162,6 +162,7 @@ export type AuctionPhysicalDispatchListRow = {
   dispatchDateFrom: string;
   dispatchDateTo: string;
   warehouse: string;
+  targetSaleNo: string | null;
   invoiceCount: number;
   status: string;
   /** Server-side creation date in the factory's Asia/Colombo calendar. */

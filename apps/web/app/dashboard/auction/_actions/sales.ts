@@ -13,7 +13,7 @@ import { formatFourDigitNo, formatSaleNo, saleNoMatches } from "../sale-number";
 import { isOpenDraft } from "../state-buckets";
 import { IMAGINARY_BROKER_NAME } from "../placeholder-broker";
 import { resolveInvoicePrefix } from "../invoice-number";
-import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
+import { dispatchSaleConflict, syncBundledDispatchStatus, syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 
 async function nextBundledDispatchNo(supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"]) {
   const { data } = await supabase.from("auction_bundled_dispatches").select("dispatch_no");
@@ -275,6 +275,8 @@ async function insertDispatch(
       }
     }
     if (!bundleId) return { ok: false, error: "Could not create the bundled dispatch." };
+    const saleConflict = await dispatchSaleConflict(supabase, profile.factory_id, bundleId, targetSaleNo);
+    if (saleConflict) return { ok: false, error: saleConflict };
   }
   const { data, error } = await supabase
     .from("auction_sales")
@@ -314,6 +316,7 @@ async function insertDispatch(
     }
     return { ok: false, error: friendlyError(linkError) };
   }
+  await syncDispatchForBrokerInvoice(supabase, data.id as string, profile.factory_id);
   revalidatePath(AUC);
   revalidatePath(`${AUC}/dispatches`);
   revalidatePath(`${AUC}/dispatches/details`);
@@ -448,7 +451,7 @@ export async function deleteSale(id: string): Promise<ListMutationResult> {
   // while sale proceeds, VAT and settlements reject deletion with a readable
   // dependent-record error.
   const { data: sale } = await supabase
-    .from("auction_sales").select("id, status").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
+    .from("auction_sales").select("id, status, bundled_dispatch_id").eq("id", id).eq("factory_id", profile.factory_id).maybeSingle();
   if (!sale) return { ok: false, error: "Dispatch invoice not found." };
   // The owner may delete at any point in the lifecycle; everyone else only
   // while it is still an unconfirmed draft.
@@ -457,6 +460,8 @@ export async function deleteSale(id: string): Promise<ListMutationResult> {
   }
   const { error: deleteError } = await deleteTenantRow(supabase, "auction_sales", id);
   if (deleteError) return { ok: false, error: deleteError };
+  const dispatchId = (sale as { bundled_dispatch_id?: string | null }).bundled_dispatch_id;
+  if (dispatchId) await syncBundledDispatchStatus(supabase, dispatchId, profile.factory_id);
   revalidatePath(AUC);
   return { ok: true, notice: "Dispatch invoice deleted." };
 }
@@ -479,7 +484,7 @@ export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutati
   const [{ data: dispatches, error: dispatchError }, { data: lots, error: lotError }] = await Promise.all([
     supabase
       .from("auction_sales")
-      .select("id, sale_no, target_sale_no")
+      .select("id, sale_no, target_sale_no, bundled_dispatch_id")
       .eq("factory_id", profile.factory_id)
       .eq("sale_kind", "dispatch"),
     supabase
@@ -542,6 +547,12 @@ export async function deleteAuctionSaleGroup(saleNo: string): Promise<ListMutati
   if (succeeded === 0) {
     return { ok: false, error: failures[0] ?? "No dispatch invoices were deleted." };
   }
+  const affectedDispatchIds = new Set(
+    (dispatches ?? [])
+      .filter((dispatch) => dispatchIds.has(dispatch.id as string) && dispatch.bundled_dispatch_id)
+      .map((dispatch) => dispatch.bundled_dispatch_id as string),
+  );
+  for (const bundleId of affectedDispatchIds) await syncBundledDispatchStatus(supabase, bundleId, profile.factory_id);
   revalidatePath(AUC);
   return {
     ok: true,
@@ -556,7 +567,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
   // selling-mark branch below reuses this row rather than re-reading it.
   const { data: currentSale, error: currentSaleError } = await supabase
     .from("auction_sales")
-    .select("id, broker_id, sale_kind, status, dispatch_date, entry_source, sale_no, target_sale_no, sale_date")
+    .select("id, broker_id, sale_kind, status, dispatch_date, entry_source, sale_no, target_sale_no, sale_date, bundled_dispatch_id")
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .maybeSingle();
@@ -581,6 +592,9 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
     const effectiveSaleDate = formData.has("sale_date") ? saleDate : (currentSale.sale_date as string | null) ?? "";
     const conflict = await conflictingSaleDateError(supabase, profile.factory_id, effectiveSaleNo, effectiveSaleDate, id);
     if (conflict) return { ok: false, error: conflict };
+    const dispatchId = currentSale.bundled_dispatch_id as string | null;
+    const saleConflict = dispatchId ? await dispatchSaleConflict(supabase, profile.factory_id, dispatchId, effectiveSaleNo, id) : null;
+    if (saleConflict) return { ok: false, error: saleConflict };
   }
   if (formData.has("prompt_date")) updates.prompt_date = promptDate || null;
   if (formData.has("selling_mark_id")) {
@@ -628,6 +642,7 @@ export async function updateSale(id: string, formData: FormData): Promise<ListMu
         .eq("factory_id", profile.factory_id)
         .is("final_sale_no", null);
       if (lotUpdateError) return { ok: false, error: friendlyError(lotUpdateError) };
+      await syncDispatchForBrokerInvoice(supabase, id, profile.factory_id);
     }
   }
   revalidatePath(AUC);

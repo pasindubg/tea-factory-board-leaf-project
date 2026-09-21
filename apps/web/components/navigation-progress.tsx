@@ -26,6 +26,7 @@ export function NavigationProgress() {
     const onClick = (event: MouseEvent) => {
       const link = (event.target as Element | null)?.closest("a[href]") as HTMLAnchorElement | null;
       if (!link || link.target || link.hasAttribute("download") || event.defaultPrevented) return;
+      if (link.closest("[data-detail-workspace-rail]")) return;
       const target = new URL(link.href, window.location.href);
       if (target.origin === window.location.origin && target.href !== window.location.href) onNavigationStart();
     };
@@ -76,7 +77,7 @@ export function NavigationProgress() {
       />
       {/* Same signal, full screen, above everything — swallows every click
           until the route settles. */}
-      <div aria-hidden="true" className="navigation-progress-overlay fixed inset-0 z-[195] cursor-progress" />
+      <div aria-hidden="true" className="navigation-progress-overlay fixed inset-0 z-[195]" />
     </>
   );
 }

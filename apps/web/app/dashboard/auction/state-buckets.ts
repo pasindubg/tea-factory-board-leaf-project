@@ -17,6 +17,7 @@ export const STATE_BUCKET: Record<string, StateBucket> = {
   catalogued: { label: "Catalogued",  style: ACTIVE },
   valued:     { label: "Valued",  style: ACTIVE },
   sold:       { label: "Sold",    style: SOLD },
+  settled:    { label: "Settled", style: SOLD },
   broker_statement: { label: "Broker statement", style: SOLD },
 };
 

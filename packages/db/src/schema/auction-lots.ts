@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, integer, numeric, boolean, timestamp, index, uniqueIndex, foreignKey, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { auctionSales } from "./auction-sales";
@@ -81,6 +82,9 @@ export const auctionLots = pgTable(
     // On the origin row only: the sale the broker actually acknowledged it in.
     // The destination row leaves this null — it IS that sale.
     skippedSaleNo: text("skipped_sale_no"),
+    // The sale this lot was assigned to before a later acknowledgement moved
+    // it, so a re-print or skipped sale still shows where it came from.
+    previousSaleNo: text("previous_sale_no"),
     withdrawn: boolean("withdrawn").default(false).notNull(),
     notValued: boolean("not_valued").default(false).notNull(),
     missing: boolean("missing").default(false).notNull(),
@@ -107,9 +111,14 @@ export const auctionLots = pgTable(
     index("idx_auction_lots_factory").on(t.factoryId),
     index("idx_auction_lots_sale").on(t.saleId),
     // A sale can carry a given invoice at most once — carry-forward always
-    // creates a NEW row in the destination sale (never mutates the source),
-    // so this is what actually stops a duplicate child being created twice.
-    uniqueIndex("uq_auction_lots_sale_invoice").on(t.saleId, t.invoiceNo),
+    // creates a NEW row for the destination sale (never mutates the source),
+    // and that row stays on the dispatch invoice the tea physically left on,
+    // so the sale it is catalogued for is part of the key.
+    uniqueIndex("uq_auction_lots_sale_invoice").on(
+      t.saleId,
+      t.invoiceNo,
+      sql`COALESCE(${t.finalSaleNo}, ${t.provisionalSaleNo}, '')`,
+    ),
     index("idx_auction_lots_factory_provisional_sale").on(t.factoryId, t.provisionalSaleNo),
     index("idx_auction_lots_factory_final_sale").on(t.factoryId, t.finalSaleNo),
     // LOV integrity, enforced by the database rather than by each caller: a lot

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pencil, Printer } from "lucide-react";
@@ -52,6 +53,7 @@ type SaleDetail = {
   driver_name: string | null;
   transporter: string | null;
   bundle_dispatch_no: string | null;
+  bundled_dispatch_id: string | null;
   created_date: string | null;
 };
 
@@ -282,9 +284,7 @@ export function DispatchDetailEditor({
         commands: [
           {
             id: "confirm-invoice",
-            label: isConfirming
-              ? "Confirming…"
-              : "Confirm",
+            label: "Confirm",
             disabled: !canConfirmDraft || isConfirming,
             busy: isConfirming,
             busyLabel: "Confirming…",
@@ -292,7 +292,7 @@ export function DispatchDetailEditor({
           },
           {
             id: "record-grn",
-            label: "GRN",
+            label: "Record GRN",
             disabled: !canProceedToGrn,
             onSelect: () => setGrnOpen(true),
           },
@@ -329,9 +329,7 @@ export function DispatchDetailEditor({
         <form action={createNewDispatch}>
           <DetailRecordPanel
             tone="draft"
-            eyebrow="Draft dispatch invoice"
-            title={`Dispatch Invoice Details · ${liveCreation.nextDispatchNo}`}
-            description="Enter the invoice details here. The workspace stays in place after saving."
+            title={`New dispatch invoice ${liveCreation.nextDispatchNo}`}
             contentClassName="pt-5"
             actions={
               <>
@@ -354,15 +352,7 @@ export function DispatchDetailEditor({
       ) : (
         <form ref={formRef} action={saveDispatch}>
           <DetailRecordPanel
-            eyebrow="Dispatch invoice details"
-            title={`Dispatch Invoice Details · ${sale.sale_no}`}
-            description={
-              <>
-                {broker}
-                {sale.dispatch_date ? ` · invoiced ${sale.dispatch_date}` : ""}
-                {sale.sale_date ? ` · sale ${sale.sale_date}` : ""}
-              </>
-            }
+            title={`Dispatch invoice ${sale.sale_no}`}
             contentClassName=""
             actions={
               <>
@@ -418,8 +408,12 @@ export function DispatchDetailEditor({
                 value={sale.created_date ?? "—"}
               />
               <DetailField
-                label="Bundle dispatch"
-                value={sale.bundle_dispatch_no ?? "—"}
+                label="Dispatch"
+                value={sale.bundled_dispatch_id && sale.bundle_dispatch_no ? (
+                  <Link href={`/dashboard/auction/dispatches/${sale.bundled_dispatch_id}`} className="text-green-700 hover:underline dark:text-green-400">
+                    {sale.bundle_dispatch_no}
+                  </Link>
+                ) : "—"}
               />
               <DetailField
                 label="Dispatch date"

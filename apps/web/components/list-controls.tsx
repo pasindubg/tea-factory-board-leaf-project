@@ -185,6 +185,10 @@ function subscribeToListResource(identity: string, listener: ListResourceListene
   };
 }
 
+export function subscribeLocalListRefresh(scope: string, listener: ListResourceListener) {
+  return subscribeToListResource(`local:${scope}`, listener);
+}
+
 /** Refresh every framework list mounted on the page — what the detail rail's
  * manual refresh button calls, now that rails no longer refetch themselves on
  * every navigation. */
@@ -552,11 +556,13 @@ export function ListCommandToolbar({
           // receive it.
           onClick={() => { void onRefresh(); }}
           disabled={refreshing}
-          aria-label="Refresh list"
+          aria-label={refreshing ? "Refreshing list" : "Refresh list"}
           title="Refresh list"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-green-950 dark:hover:text-green-300"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 transition hover:bg-green-50 hover:text-green-800 disabled:cursor-default dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-green-950 dark:hover:text-green-300"
         >
-          <RefreshGlyph spinning={refreshing} />
+          {refreshing
+            ? <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-green-600/25 border-t-green-600 dark:border-green-400/25 dark:border-t-green-400" />
+            : <RefreshGlyph />}
         </button>
       )}
       {showSelectionSummary ? <ListSelectionSummary count={count} /> : null}
@@ -577,7 +583,7 @@ export function ListCommandToolbar({
   );
 }
 
-function RefreshGlyph({ spinning }: { spinning: boolean }) {
+function RefreshGlyph() {
   return (
     <svg
       aria-hidden="true"
@@ -586,7 +592,7 @@ function RefreshGlyph({ spinning }: { spinning: boolean }) {
       stroke="currentColor"
       strokeWidth="1.8"
       strokeLinecap="round"
-      className={`h-4 w-4 ${spinning ? "animate-spin" : ""}`}
+      className="h-4 w-4"
     >
       {/* An open circle with an arrowhead — the gap is what reads as "again". */}
       <path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6" />
@@ -657,7 +663,7 @@ function DeleteGlyph() {
 }
 
 export function ListSurface({ children, className = "", refreshing = false, ...frame }: Omit<FrameworkListProps, "children" | "className"> & { children: React.ReactNode; className?: string; refreshing?: boolean }) {
-  return <FrameworkList {...frame} className={`rounded-[1.25rem] shadow-sm ${className}`}><div data-list-surface aria-busy={refreshing}>{refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}{children}</div></FrameworkList>;
+  return <FrameworkList {...frame} className={`rounded-[1.25rem] shadow-sm ${className}`}><div data-list-surface aria-busy={refreshing}>{children}</div></FrameworkList>;
 }
 
 export function ListSidePanel({
@@ -670,7 +676,6 @@ export function ListSidePanel({
     <aside data-list-side-panel className={`flex overflow-hidden rounded-[1.5rem] border border-stone-200 bg-white shadow-lg shadow-stone-950/5 dark:border-stone-700 dark:bg-stone-900 dark:shadow-black/20 ${className}`}>
       <FrameworkList {...frame} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-inherit shadow-none">
         <div data-list-surface aria-busy={refreshing} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {refreshing && <p className="border-b border-green-100 bg-green-50/70 px-4 py-2 text-xs font-medium text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status">Refreshing this list…</p>}
           {children}
         </div>
       </FrameworkList>

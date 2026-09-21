@@ -164,7 +164,8 @@ export function matchCarryForwardLot(
       const invoiceMatches =
         invoiceNumbersMatch(lot.invoiceNo, row.invoiceNo) ||
         lot.invoiceNos.some((invoiceNo) => invoiceNumbersMatch(invoiceNo, row.invoiceNo));
-      return invoiceMatches || lotNumbersMatch(lot.lotNo, row.lotNo);
+      const hasNoInvoice = !lot.invoiceNo && lot.invoiceNos.length === 0;
+      return invoiceMatches || (hasNoInvoice && lotNumbersMatch(lot.lotNo, row.lotNo));
     })
     // Most recently dispatched first: if an invoice number was somehow reused,
     // the latest record is the one the broker is talking about.

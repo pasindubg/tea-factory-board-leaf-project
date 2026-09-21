@@ -9,8 +9,21 @@ const NOT_DISPATCHED = null;
 const DISPATCHED = "2026-05-07T04:30:00Z";
 
 describe("deriveDispatchStatus", () => {
-  it("stays draft until the dispatcher marks it", () => {
+  it("stays draft while any dispatch invoice is still a draft", () => {
     expect(deriveDispatchStatus(["draft", "invoiced"], NOT_DISPATCHED)).toBe("draft");
+  });
+
+  it("becomes invoiced once every dispatch invoice is confirmed", () => {
+    expect(deriveDispatchStatus(["invoiced", "invoiced"], NOT_DISPATCHED)).toBe("invoiced");
+    expect(deriveDispatchStatus(["invoiced", "grn"], NOT_DISPATCHED)).toBe("invoiced");
+  });
+
+  it("falls back from invoiced to draft when a new draft invoice joins", () => {
+    expect(deriveDispatchStatus(["invoiced", "draft"], NOT_DISPATCHED)).toBe("draft");
+  });
+
+  it("prefers dispatched over invoiced once the dispatcher marks it", () => {
+    expect(deriveDispatchStatus(["invoiced", "invoiced"], DISPATCHED)).toBe("dispatched");
   });
 
   it("reports dispatched once marked, while invoices are still in progress", () => {
@@ -67,9 +80,9 @@ describe("deriveDispatchStatus", () => {
 });
 
 describe("canMarkDispatched", () => {
-  it("is offered only from draft", () => {
-    expect(canMarkDispatched("draft")).toBe(true);
-    for (const status of ["dispatched", "received", "catalogued", null, undefined]) {
+  it("is offered only once the dispatch is invoiced", () => {
+    expect(canMarkDispatched("invoiced")).toBe(true);
+    for (const status of ["draft", "dispatched", "received", "catalogued", null, undefined]) {
       expect(canMarkDispatched(status)).toBe(false);
     }
   });

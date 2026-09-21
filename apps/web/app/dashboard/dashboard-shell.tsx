@@ -180,28 +180,35 @@ function DashboardBreadcrumbs({ pathname, nav }: { pathname: string; nav: readon
 function UrlToast() {
   const searchParams = useSearchParams();
   const message = searchParams.get("error") || searchParams.get("notice");
-  const kind = searchParams.get("error") ? "error" : "notice";
-  const [visibleMessage, setVisibleMessage] = useState<string | null>(null);
+  const [visible, setVisible] = useState<{ message: string; kind: "error" | "notice" } | null>(null);
 
   useEffect(() => {
     if (!message) return;
-    setVisibleMessage(message);
-    const timer = window.setTimeout(() => setVisibleMessage(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [message]);
+    setVisible({ message, kind: searchParams.get("error") ? "error" : "notice" });
+    const url = new URL(window.location.href);
+    url.searchParams.delete("error");
+    url.searchParams.delete("notice");
+    window.history.replaceState(null, "", url);
+  }, [message, searchParams]);
 
-  if (!visibleMessage) return null;
+  useEffect(() => {
+    if (!visible) return;
+    const timer = window.setTimeout(() => setVisible(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [visible]);
+
+  if (!visible) return null;
 
   return (
     <div
-      role={kind === "error" ? "alert" : "status"}
+      role={visible.kind === "error" ? "alert" : "status"}
       className={`fixed bottom-5 right-5 z-[120] max-w-sm rounded-2xl border px-4 py-3 text-sm font-medium shadow-xl ${
-        kind === "error"
+        visible.kind === "error"
           ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
           : "border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-300"
       }`}
     >
-      {visibleMessage}
+      {visible.message}
     </div>
   );
 }

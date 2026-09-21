@@ -10,6 +10,7 @@ import { requireProfile } from "@/lib/profile";
 import { friendlyError } from "@/lib/errors";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { buildCompositeInvoiceNo, resolveInvoicePrefix } from "../invoice-number";
+import { brokerInvoiceRank } from "../dispatch-status";
 
 export const AUC = "/dashboard/auction";
 export const str = (v: FormDataEntryValue | null) => String(v ?? "").trim();
@@ -271,6 +272,52 @@ export async function saleGroupIds(supabase: Supa, factoryId: string, saleId: st
     .filter((s) => saleNoKey(((s.target_sale_no as string | null) || (s.sale_no as string))) === saleNoKey(key))
     .map((s) => s.id as string);
   return ids.includes(saleId) ? ids : [saleId, ...ids];
+}
+
+export async function acknowledgementBlockedReason(supabase: Supa, groupIds: readonly string[]): Promise<string | null> {
+  const { data } = await supabase
+    .from("auction_sales")
+    .select("sale_no, status, entry_source")
+    .in("id", [...groupIds]);
+  const notReceived = (data ?? [])
+    .filter((sale) => sale.entry_source !== "reprint-register")
+    .filter((sale) => brokerInvoiceRank(sale.status as string | null) < brokerInvoiceRank("grn"))
+    .map((sale) => formatFourDigitNo(sale.sale_no as string) || (sale.sale_no as string));
+  if (notReceived.length === 0) return null;
+  const one = notReceived.length === 1;
+  return `Dispatch invoice${one ? "" : "s"} ${notReceived.join(", ")} ${one ? "has" : "have"} not been dispatched and received at GRN yet. Record GRN for ${one ? "it" : "them"} before confirming this acknowledgement.`;
+}
+
+type SaleAssignment = {
+  provisional_sale_no: string | null;
+  final_sale_no: string | null;
+  auction_sales: { sale_no: string | null; target_sale_no: string | null } | null;
+};
+
+export async function saleGroupLots<Row>(supabase: Supa, groupIds: readonly string[], columns: string): Promise<Row[]> {
+  const { data: invoice } = await supabase
+    .from("auction_sales")
+    .select("broker_id, sale_no, target_sale_no")
+    .in("id", [...groupIds])
+    .limit(1)
+    .maybeSingle();
+  const saleNo = formatSaleNo((invoice?.target_sale_no as string | null) || (invoice?.sale_no as string | null));
+  const select = `${columns}, provisional_sale_no, final_sale_no, auction_sales!inner(broker_id, sale_no, target_sale_no)`;
+  const query = saleNo && invoice?.broker_id
+    ? supabase
+        .from("auction_lots")
+        .select(select)
+        .eq("auction_sales.broker_id", invoice.broker_id as string)
+        .or(`sale_id.in.(${groupIds.join(",")}),provisional_sale_no.eq.${saleNo},final_sale_no.eq.${saleNo}`)
+    : supabase.from("auction_lots").select(select).in("sale_id", [...groupIds]);
+  const { data } = await query;
+  const rows = (data ?? []) as unknown as (Row & SaleAssignment)[];
+  if (!saleNo) return rows;
+  return rows.filter((lot) =>
+    saleNoMatches(
+      lot.final_sale_no || lot.provisional_sale_no || lot.auction_sales?.target_sale_no || lot.auction_sales?.sale_no || null,
+      saleNo,
+    ));
 }
 
 /**

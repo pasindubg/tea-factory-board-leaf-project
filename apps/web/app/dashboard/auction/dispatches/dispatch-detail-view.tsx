@@ -13,8 +13,8 @@ import { showAppToast } from "@/components/action-feedback";
 import { startNavigationFeedback } from "@/components/navigation-progress";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
-import { completeDispatchGrn, createBundledDispatch, deleteBundledDispatch, markDispatchDispatched, updateBundledDispatch } from "../actions";
-import { brokerInvoiceRank, canMarkDispatched, canRecordDispatchGrn, type DispatchStatus } from "../dispatch-status";
+import { completeDispatchGrn, createBundledDispatch, deleteBundledDispatch, markDispatchDispatched, markDispatchInvoiced, updateBundledDispatch } from "../actions";
+import { brokerInvoiceRank, canMarkDispatched, canMarkInvoiced, canRecordDispatchGrn, type DispatchStatus } from "../dispatch-status";
 import { BundledDispatchForm, type WarehouseOption } from "./bundled-dispatch-form";
 import { DispatchDetailLists, type DispatchInvoiceRow } from "./dispatch-detail-lists";
 import type { AuctionInvoiceOverviewListRow } from "@/lib/list-resources";
@@ -32,6 +32,7 @@ type DispatchDetailHeader = {
   dateFrom: string;
   dateTo: string;
   warehouse: string;
+  targetSaleNo: string | null;
   status: DispatchStatus;
   createdAt: string | null;
   /** The lorry that took the load. Inherited by every Dispatch Invoice in this
@@ -120,6 +121,16 @@ export function DispatchDetailView({
     }
   }
 
+  async function markInvoiced() {
+    const result = await markDispatchInvoiced(dispatch.id);
+    if (!result.ok) {
+      showAppToast(result.error, "error");
+      return;
+    }
+    showAppToast(result.notice ?? "Dispatch marked as invoiced.");
+    router.refresh();
+  }
+
   async function recordGrn() {
     setRecordingGrn(true);
     try {
@@ -150,6 +161,7 @@ export function DispatchDetailView({
     router.refresh();
   }
 
+  const invoicedCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("invoiced")).length;
   const grnCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("grn")).length;
   const cataloguedCount = invoices.filter((invoice) => brokerInvoiceRank(invoice.status) >= brokerInvoiceRank("catalogued")).length;
 
@@ -203,26 +215,39 @@ export function DispatchDetailView({
         currentKey: status,
         testId: "physical-dispatch-state-indicator",
         menuLabel: "State",
-        // All four stages are always shown so the dispatcher can see what is
+        // All five stages are always shown so the dispatcher can see what is
         // still ahead, even though only two of them are ever clicked.
         steps: [
           { key: "draft", label: "Draft", metric: `${invoices.length} dispatch invoices` },
+          { key: "invoiced", label: "Invoiced", metric: `${invoicedCount}/${invoices.length} confirmed` },
           { key: "dispatched", label: "Dispatched", metric: `${lots.length} lots` },
           { key: "received", label: "Received", metric: `${grnCount}/${invoices.length} at GRN` },
           { key: "catalogued", label: "Catalogued", metric: `${cataloguedCount}/${invoices.length} acknowledged` },
         ],
         commands: [
           {
+            id: "mark-invoiced",
+            label: "Invoice",
+            disabled: !canMarkInvoiced(status) || invoices.length === invoicedCount || creatingDispatch,
+            busyLabel: "Invoicing…",
+            confirm: {
+              title: "Invoice this dispatch?",
+              description: `This confirms ${invoices.length - invoicedCount} draft dispatch invoice${invoices.length - invoicedCount === 1 ? "" : "s"} in this dispatch and marks the dispatch as invoiced. Once confirmed, only the owner can edit or delete them.`,
+              confirmLabel: "Confirm and invoice",
+            },
+            onSelect: markInvoiced,
+          },
+          {
             id: "mark-dispatched",
-            label: markingDispatched ? "Marking…" : "Dispatched",
+            label: "Dispatch",
             disabled: !canDispatch || markingDispatched || creatingDispatch,
             busy: markingDispatched,
-            busyLabel: "Marking…",
+            busyLabel: "Dispatching…",
             onSelect: markDispatched,
           },
           {
             id: "record-grn",
-            label: recordingGrn ? "Recording…" : "GRN",
+            label: "Record GRN",
             disabled: !canRecordGrn || recordingGrn || creatingDispatch,
             busy: recordingGrn,
             busyLabel: "Recording…",
@@ -245,9 +270,7 @@ export function DispatchDetailView({
       {creatingDispatch ? (
         <DetailRecordPanel
           tone="draft"
-          eyebrow="New dispatch"
-          title="Create physical dispatch"
-          description="Bundle eligible Dispatch Invoices into a new outbound dispatch."
+          title="New dispatch"
           contentClassName="pt-5"
         >
           <BundledDispatchForm
@@ -261,9 +284,7 @@ export function DispatchDetailView({
         <>
           <form ref={formRef} action={saveDispatch}>
             <DetailRecordPanel
-              eyebrow="Dispatch details"
-              title={`Dispatch Details · ${dispatch.dispatchNo}`}
-              description={`${dateRange(dispatch.dateFrom, dispatch.dateTo)} · ${dispatch.warehouse}`}
+              title={`Dispatch ${dispatch.dispatchNo}`}
               contentClassName="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
               actions={
                 /* Editing a dispatch is owner-only, matching its delete. */
@@ -343,9 +364,11 @@ export function DispatchDetailView({
                   </label>
                   {/* System-assigned, so it stays read-only while editing. */}
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
+                  <DetailField label="Sale no." value={dispatch.targetSaleNo || "—"} />
                 </>
               ) : (
                 <>
+                  <DetailField label="Sale no." value={dispatch.targetSaleNo || "—"} />
                   <DetailField label="Dispatch date(s)" value={dateRange(dispatch.dateFrom, dispatch.dateTo)} />
                   <DetailField label="Created date" value={createdDate(dispatch.createdAt)} />
                   <DetailField label="Warehouse" value={dispatch.warehouse} />

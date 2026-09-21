@@ -1,0 +1,1 @@
+ALTER TABLE "auction_bundled_dispatches" ADD COLUMN "invoiced_at" timestamp;

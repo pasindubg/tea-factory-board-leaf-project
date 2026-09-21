@@ -6,10 +6,11 @@ import type { ListMutationResult } from "@/lib/list-mutations";
 import { requireModuleAccess, requireModuleRole } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { AUC, str } from "./_shared";
-import { formatFourDigitNo } from "../sale-number";
+import { formatFourDigitNo, formatSaleNo, saleNoKey } from "../sale-number";
 import { isOpenDraft } from "../state-buckets";
 import {
   canMarkDispatched,
+  canMarkInvoiced,
   canRecordDispatchGrn,
   deriveDispatchStatus,
   DISPATCH_STATUS_LABELS,
@@ -47,13 +48,13 @@ export async function syncBundledDispatchStatus(
   const [{ data: dispatch, error: dispatchError }, { data: invoices, error: invoiceError }] = await Promise.all([
     supabase
       .from("auction_bundled_dispatches")
-      .select("id, status, dispatched_at")
+      .select("id, status, dispatched_at, target_sale_no")
       .eq("id", dispatchId)
       .eq("factory_id", factoryId)
       .maybeSingle(),
     supabase
       .from("auction_sales")
-      .select("status")
+      .select("status, target_sale_no")
       .eq("bundled_dispatch_id", dispatchId)
       .eq("factory_id", factoryId)
       .eq("sale_kind", "dispatch"),
@@ -66,11 +67,14 @@ export async function syncBundledDispatchStatus(
     (invoices ?? []).map((invoice) => invoice.status as string | null),
     (dispatch as { dispatched_at?: string | null }).dispatched_at ?? null,
   );
-  if (next === current) return { ok: true, status: current };
+  const saleNos = [...new Set((invoices ?? []).map((invoice) => formatSaleNo(invoice.target_sale_no as string | null)).filter(Boolean))];
+  const nextSaleNo = saleNos.length === 1 ? saleNos[0] : null;
+  const currentSaleNo = (dispatch as { target_sale_no?: string | null }).target_sale_no ?? null;
+  if (next === current && nextSaleNo === currentSaleNo) return { ok: true, status: current };
 
   const { error: updateError } = await supabase
     .from("auction_bundled_dispatches")
-    .update({ status: next })
+    .update({ status: next, target_sale_no: nextSaleNo })
     .eq("id", dispatchId)
     .eq("factory_id", factoryId);
   if (updateError) return { ok: false, error: friendlyError(updateError) };
@@ -97,6 +101,65 @@ export async function syncDispatchForBrokerInvoice(
   if (dispatchId) await syncBundledDispatchStatus(supabase, dispatchId, factoryId);
 }
 
+export async function dispatchSaleConflict(
+  supabase: Awaited<ReturnType<typeof requireModuleAccess>>["supabase"],
+  factoryId: string,
+  dispatchId: string,
+  saleNo: string | null,
+  excludeInvoiceId?: string,
+): Promise<string | null> {
+  if (!saleNo) return null;
+  const { data, error } = await supabase
+    .from("auction_sales")
+    .select("id, target_sale_no")
+    .eq("bundled_dispatch_id", dispatchId)
+    .eq("factory_id", factoryId)
+    .eq("sale_kind", "dispatch");
+  if (error) return friendlyError(error);
+  const other = (data ?? []).find((invoice) =>
+    invoice.id !== excludeInvoiceId
+    && invoice.target_sale_no
+    && saleNoKey(invoice.target_sale_no as string) !== saleNoKey(saleNo));
+  if (!other) return null;
+  return `This dispatch goes to sale ${formatSaleNo(other.target_sale_no as string)}. Every dispatch invoice in a dispatch must go to the same sale.`;
+}
+
+export async function markDispatchInvoiced(id: string): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  const { data: dispatch, error } = await supabase
+    .from("auction_bundled_dispatches")
+    .select("id, status")
+    .eq("id", id)
+    .eq("factory_id", profile.factory_id)
+    .maybeSingle();
+  if (error) return { ok: false, error: friendlyError(error) };
+  if (!dispatch) return { ok: false, error: "Dispatch not found." };
+  if (!canMarkInvoiced(dispatch.status as string)) {
+    return { ok: false, error: "This dispatch is already past draft." };
+  }
+
+  const { data: confirmed, error: confirmError } = await supabase
+    .from("auction_sales")
+    .update({ status: "invoiced" })
+    .eq("bundled_dispatch_id", id)
+    .eq("factory_id", profile.factory_id)
+    .eq("sale_kind", "dispatch")
+    .in("status", ["draft", "dispatched"])
+    .select("id");
+  if (confirmError) return { ok: false, error: friendlyError(confirmError) };
+  if (!confirmed?.length) return { ok: false, error: "This dispatch has no draft dispatch invoices to confirm." };
+
+  const synced = await syncBundledDispatchStatus(supabase, id, profile.factory_id);
+  if (!synced.ok) return synced;
+  revalidatePath(AUC);
+  revalidatePath(`${AUC}/dispatches/${id}`);
+  return {
+    ok: true,
+    notice: `${confirmed.length} dispatch invoice${confirmed.length === 1 ? "" : "s"} confirmed; dispatch marked as ${DISPATCH_STATUS_LABELS[synced.status].toLowerCase()}.`,
+    invalidate: [{ kind: "all", key: "auction.physical-dispatches" }],
+  };
+}
+
 /**
  * The dispatcher marking the lorry as gone — the only status the user sets by
  * hand. It records the moment rather than writing the status directly, then
@@ -114,7 +177,12 @@ export async function markDispatchDispatched(id: string): Promise<ListMutationRe
   if (error) return { ok: false, error: friendlyError(error) };
   if (!dispatch) return { ok: false, error: "Dispatch not found." };
   if (!canMarkDispatched(dispatch.status as string)) {
-    return { ok: false, error: "This dispatch has already left draft." };
+    return {
+      ok: false,
+      error: dispatch.status === "draft"
+        ? "Mark this dispatch as invoiced before dispatching it."
+        : "This dispatch has already been dispatched.",
+    };
   }
 
   const { error: markError } = await supabase
@@ -122,7 +190,7 @@ export async function markDispatchDispatched(id: string): Promise<ListMutationRe
     .update({ dispatched_at: new Date().toISOString() })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
-    .eq("status", "draft");
+    .eq("status", "invoiced");
   if (markError) return { ok: false, error: friendlyError(markError) };
 
   const synced = await syncBundledDispatchStatus(supabase, id, profile.factory_id);
@@ -228,7 +296,7 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
   // eligible, unbundled, and dated within this physical dispatch range.
   const { data: invoices, error: invoiceError } = await supabase
     .from("auction_sales")
-    .select("id, dispatch_date, status, bundled_dispatch_id")
+    .select("id, dispatch_date, status, bundled_dispatch_id, target_sale_no")
     .eq("factory_id", profile.factory_id)
     .eq("sale_kind", "dispatch")
     .in("id", invoiceIds);
@@ -240,6 +308,10 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
   }
   if ((invoices ?? []).some((invoice) => invoice.bundled_dispatch_id)) {
     return { ok: false, error: "A selected Dispatch Invoice already belongs to another bundled dispatch." };
+  }
+  const selectedSales = new Set((invoices ?? []).map((invoice) => saleNoKey(invoice.target_sale_no as string | null)).filter(Boolean));
+  if (selectedSales.size > 1) {
+    return { ok: false, error: "The selected Dispatch Invoices go to different sales. A dispatch goes to one sale only." };
   }
 
   // The value posted by the LOV is still untrusted. Resolve it within this
@@ -330,6 +402,7 @@ export async function createBundledDispatch(formData: FormData): Promise<ListMut
     }
     return { ok: false, error: friendlyError(linksError) };
   }
+  await syncBundledDispatchStatus(supabase, bundleId, profile.factory_id);
 
   return {
     ok: true,

@@ -194,18 +194,23 @@ export default async function SaleDetailPage({
     saleNoMatches(lot.final_sale_no || lot.provisional_sale_no, saleNo),
   );
   const assignedDispatchIds = new Set(assignedLotRows.map((lot) => lot.sale_id));
-  const dispatches = allDispatchRows.filter(
+  const targetedDispatches = allDispatchRows.filter(
     (dispatch) =>
-      assignedDispatchIds.has(dispatch.id) ||
       saleNoMatches(dispatch.target_sale_no, saleNo) ||
       (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no, saleNo)),
   );
+  const dispatches = targetedDispatches.length > 0
+    ? targetedDispatches
+    : allDispatchRows.filter((dispatch) => assignedDispatchIds.has(dispatch.id));
   const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id));
   // Every lot this sale holds, including ones that have since skipped away —
   // membership, used for "does this sale exist" and for resolving its invoice.
-  const saleLotRows = allLotRows.filter(
-    (lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id),
-  );
+  const dispatchById = new Map(allDispatchRows.map((dispatch) => [dispatch.id, dispatch]));
+  const saleLotRows = allLotRows.filter((lot) => {
+    const dispatch = dispatchById.get(lot.sale_id);
+    const dispatchSaleNo = dispatch?.target_sale_no || dispatch?.sale_no || null;
+    return saleNoMatches(lot.final_sale_no || lot.provisional_sale_no || dispatchSaleNo, saleNo);
+  });
   // What this sale actually counts. Everything below derives from it, so the
   // exclusion applies once and reaches every figure on the page.
   const lotRows = saleLotRows.filter((lot) => !skippedAway(lot));
@@ -218,7 +223,6 @@ export default async function SaleDetailPage({
     if (allDispatchRows.length > 0 || allLotRows.length > 0) notFound();
     return (
       <DetailRecordPanel
-        eyebrow="Sale details"
         title="No auction sales yet"
         description="A sale appears here once a dispatch invoice is created and dispatched."
       >
@@ -411,17 +415,19 @@ export default async function SaleDetailPage({
   // makes "did not sell" knowable for anything of theirs still valued.
   const brokerBySaleId = new Map(allDispatchRows.map((d) => [d.id, d.broker_id]));
   const saleNoBySaleId = new Map(allDispatchRows.map((d) => [d.id, d.target_sale_no ?? d.sale_no]));
-  const groupOf = (lot: LotRow) => brokerSaleKey(brokerBySaleId.get(lot.sale_id), saleNoBySaleId.get(lot.sale_id));
+  const assignedSaleNo = (lot: LotRow) =>
+    lot.final_sale_no || lot.provisional_sale_no || saleNoBySaleId.get(lot.sale_id) || null;
+  const groupOf = (lot: LotRow) => brokerSaleKey(brokerBySaleId.get(lot.sale_id), assignedSaleNo(lot));
   const soldGroups = soldBrokerSaleKeys(allLotRows.map((lot) => ({
     state: lot.state,
     brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
-    saleNo: saleNoBySaleId.get(lot.sale_id) ?? null,
+    saleNo: assignedSaleNo(lot),
   })));
   const notSoldCount = issueLotRows.filter((lot) => isUnsoldLot(lot, soldGroups.has(groupOf(lot)))).length;
   const valuedGroups = valuedBrokerSaleKeys(allLotRows.map((lot) => ({
     state: lot.state,
     brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
-    saleNo: saleNoBySaleId.get(lot.sale_id) ?? null,
+    saleNo: assignedSaleNo(lot),
   })));
   const notValuedCount = issueLotRows.filter((lot) => isNotValuedLot(lot, valuedGroups.has(groupOf(lot)))).length;
   const acknowledgedCount = lotRows.filter((lot) => lot.state !== "invoiced").length;
@@ -580,9 +586,7 @@ export default async function SaleDetailPage({
       }
     >
       <DetailRecordPanel
-        eyebrow="Sale details"
         title={`Sale ${displaySaleNo}`}
-        description={`${plural(dispatches.length, "dispatch invoice")} · ${plural(lotRows.length, "lot")} · ${soldCount} sold · ${notSoldCount} not sold`}
         contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
         footer={
           issueSteps.length > 0 || revenueCheck.status !== "pending" && revenueCheck.status !== "unavailable" ? (

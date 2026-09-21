@@ -1,5 +1,5 @@
 import "server-only";
-import { createClient as createNeonClient, getAuthUser as getNeonUser } from "@/lib/neon/server";
+import { createClient as createNeonClient, forgetAuthCache, getAuthUser as getNeonUser } from "@/lib/neon/server";
 import { signOut as neonSignOut } from "@/lib/neon/auth";
 import { cookies } from "next/headers";
 
@@ -26,6 +26,7 @@ export async function signOut() {
   const store = await cookies();
   const all = store.getAll();
   const header = all.map((c) => `${c.name}=${c.value}`).join("; ");
+  forgetAuthCache(header);
   const { error } = await neonSignOut(header);
   if (error) throw new Error("Could not end the session. Please retry.");
   for (const { name } of all) {

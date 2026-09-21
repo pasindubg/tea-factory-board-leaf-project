@@ -30,13 +30,15 @@ export const auctionBundledDispatches = pgTable(
     // Daily bundles are created automatically when a Broker Invoice is made.
     // Manual date-range bundles remain supported for legacy records.
     autoCreated: boolean("auto_created").default(false).notNull(),
-    // draft -> dispatched (manual) -> received -> catalogued. Only the first
-    // transition is a human action; see app/dashboard/auction/dispatch-status.ts.
-    status: text("status", { enum: ["draft", "dispatched", "received", "catalogued"] }).default("draft").notNull(),
+    // draft -> invoiced -> dispatched (manual) -> received -> catalogued. Only
+    // "dispatched" is a human action; see app/dashboard/auction/dispatch-status.ts.
+    status: text("status", { enum: ["draft", "invoiced", "dispatched", "received", "catalogued"] }).default("draft").notNull(),
     // When the dispatcher marked it as gone. Held separately from `status` so
     // the derived stages can fall back to "dispatched" rather than "draft" if
     // a new broker invoice joins an already-received dispatch.
     dispatchedAt: timestamp("dispatched_at"),
+    invoicedAt: timestamp("invoiced_at"),
+    targetSaleNo: text("target_sale_no"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     // Immutable server date derived from created_at in the factory's
     // Asia/Colombo calendar, matching auction_sales.created_date. Generated so

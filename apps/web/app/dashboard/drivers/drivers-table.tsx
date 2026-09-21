@@ -101,12 +101,16 @@ export function DriversTable({ rows }: { rows: DriverRow[] }) {
         {
           id: "deactivate",
           label: "Deactivate",
+          pendingLabel: "Deactivating…",
+          status: true,
           disabled: ({ selectedRows }) => selectedRows.length === 0 || !selectedRows.some((row) => row.active),
           run: ({ selectedRows }) => setDriversActive(selectedRows, false),
         },
         {
           id: "activate",
           label: "Reactivate",
+          pendingLabel: "Reactivating…",
+          status: true,
           disabled: ({ selectedRows }) => selectedRows.length === 0 || !selectedRows.some((row) => !row.active),
           run: ({ selectedRows }) => setDriversActive(selectedRows, true),
         },
