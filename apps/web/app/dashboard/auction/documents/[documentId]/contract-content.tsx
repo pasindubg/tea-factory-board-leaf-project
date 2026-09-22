@@ -14,7 +14,7 @@ import {
   type SaleInput,
 } from "@tea/api";
 import { confirmContract, rejectImport } from "@/app/dashboard/auction/actions";
-import { canonicalGrade, gradeAliasMap, saleGroupIds } from "@/app/dashboard/auction/_actions/_shared";
+import { canonicalGrade, gradeAliasMap, saleGroupIds, saleGroupLots } from "@/app/dashboard/auction/_actions/_shared";
 import { loadSaleRevenueCheck } from "@/app/dashboard/auction/_actions/revenue-check";
 
 /** A contract staged before rate parsing existed has no `rates` block. */
@@ -52,10 +52,7 @@ export async function ContractContent({
   // The contract covers the broker's whole sale — match against lots on every
   // dispatch in this sale's group.
   const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
-  const { data: lotRows } = await supabase
-    .from("auction_lots")
-    .select("id, invoice_no, grade, net_wt, lot_invoices(invoice_no)")
-    .in("sale_id", groupIds);
+  const lotRows = await saleGroupLots<Record<string, unknown>>(supabase, groupIds, "id, invoice_no, grade, net_wt, lot_invoices(invoice_no)");
   const lotIds = (lotRows ?? []).map((l) => l.id as string);
   const { data: valRows } = await supabase
     .from("valuations")

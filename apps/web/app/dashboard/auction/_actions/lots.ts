@@ -5,8 +5,8 @@ import { requireModuleAccess } from "@/lib/profile";
 import { deleteTenantRow } from "@/lib/tenant-data";
 import { friendlyError } from "@/lib/errors";
 import type { ListMutationResult } from "@/lib/list-mutations";
-import { invoiceMatchKey } from "@tea/api";
-import { AUC, conflictingSaleDateError, str, num, writeAudit, gradeRulesByCode, isRecordId, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
+import { invoiceMatchKey, type AckLot } from "@tea/api";
+import { AUC, canonicalGrade, conflictingSaleDateError, str, num, toISODate, writeAudit, gradeAliasMap, gradeRulesByCode, isRecordId, nextDispatchNo, notAnExisting, saleGroupIds, unsoldBlockedReason, type Supa } from "./_shared";
 import { syncDispatchForBrokerInvoice } from "./bundled-dispatches";
 import { formatFourDigitNo, formatSaleNo, saleNoKey, saleNoMatches } from "../sale-number";
 import { isLotState } from "../lot-states";
@@ -939,6 +939,159 @@ export async function registerLotSkippedSale(saleId: string, invoiceNo: string, 
 
   revalidatePath(`${AUC}/${saleId}`);
   return { ok: true, notice: `Registered as dispatched to sale ${dispatchedSaleNo}, acknowledged in sale ${acknowledgedSaleNo || "—"}.` };
+}
+
+type GroupInvoice = {
+  id: string;
+  sale_no: string;
+  target_sale_no: string | null;
+  broker_id: string;
+  selling_mark_id: string | null;
+  status: string;
+  sale_date: string | null;
+  dispatch_date: string | null;
+  bundled_dispatch_id: string | null;
+};
+
+async function openDispatchInvoiceForMark(
+  supabase: Supa,
+  factoryId: string,
+  invoices: GroupInvoice[],
+  markId: string,
+  dispatchDate: string | null,
+): Promise<GroupInvoice | null> {
+  const sibling = invoices.find((invoice) => invoice.dispatch_date === dispatchDate) ?? invoices[0];
+  if (!sibling) return null;
+  const prefix = parseCompositeInvoiceNo(sibling.sale_no)?.prefix;
+  if (!prefix) return null;
+  const { data, error } = await supabase
+    .from("auction_sales")
+    .insert({
+      factory_id: factoryId,
+      broker_id: sibling.broker_id,
+      sale_no: await nextDispatchNo(supabase, factoryId, prefix),
+      sale_kind: "dispatch",
+      entry_source: "invoice",
+      status: sibling.status,
+      target_sale_no: sibling.target_sale_no,
+      sale_date: sibling.sale_date,
+      dispatch_date: dispatchDate ?? sibling.dispatch_date,
+      selling_mark_id: markId,
+      bundled_dispatch_id: sibling.bundled_dispatch_id,
+    })
+    .select("id, sale_no, target_sale_no, broker_id, selling_mark_id, status, sale_date, dispatch_date, bundled_dispatch_id")
+    .single();
+  if (error || !data) return null;
+  const created = data as GroupInvoice;
+  if (created.bundled_dispatch_id) {
+    await supabase.from("auction_bundled_dispatch_invoices").insert({
+      factory_id: factoryId,
+      bundled_dispatch_id: created.bundled_dispatch_id,
+      broker_invoice_id: created.id,
+    });
+  }
+  return created;
+}
+
+/**
+ * The third answer to an acknowledgement row this system has no invoice for:
+ * it belongs to THIS sale and was simply never entered. The lot is created on
+ * the dispatch invoice of this sale that already carries the broker and the
+ * mark the acknowledgement prints, so it reconciles like any other invoice.
+ */
+export async function registerLotsInSale(saleId: string, invoiceNos: string[]): Promise<ListMutationResult> {
+  const { supabase, profile } = await requireModuleAccess("auction");
+  if (profile.role !== "owner") return { ok: false, error: "Only the owner can add an acknowledged invoice to this sale." };
+  if (invoiceNos.length === 0) return { ok: false, error: "Select the acknowledgement rows to add." };
+
+  const groupIds = await saleGroupIds(supabase, profile.factory_id, saleId);
+  const { data: groupInvoices, error: groupError } = await supabase
+    .from("auction_sales")
+    .select("id, sale_no, target_sale_no, broker_id, selling_mark_id, status, sale_date, dispatch_date, bundled_dispatch_id")
+    .in("id", groupIds);
+  if (groupError) return { ok: false, error: friendlyError(groupError) };
+  const invoices = (groupInvoices ?? []) as GroupInvoice[];
+  const saleNo = formatSaleNo(invoices[0]?.target_sale_no || invoices[0]?.sale_no || null);
+
+  const { data: staged, error: stagedError } = await supabase
+    .from("doc_imports")
+    .select("parsed_json")
+    .eq("doc_type", "acknowledgement")
+    .eq("status", "parsed")
+    .in("sale_id", groupIds)
+    .maybeSingle();
+  if (stagedError) return { ok: false, error: friendlyError(stagedError) };
+  const ackLots = ((staged?.parsed_json as { lots?: AckLot[] } | null)?.lots ?? []);
+  if (ackLots.length === 0) return { ok: false, error: "The staged acknowledgement for this sale could not be read." };
+
+  const { data: markRows } = await supabase.from("marks").select("id, code, name");
+  const markByLabel = new Map<string, string>();
+  for (const mark of markRows ?? []) {
+    markByLabel.set((mark.code as string).toUpperCase(), mark.id as string);
+    if (mark.name) markByLabel.set((mark.name as string).toUpperCase(), mark.id as string);
+  }
+
+  const { data: groupLots } = await supabase.from("auction_lots").select("invoice_no").in("sale_id", groupIds);
+  const groupPrefix = (groupLots ?? [])
+    .map((lot) => parseCompositeInvoiceNo(lot.invoice_no as string | null)?.prefix)
+    .find(Boolean) ?? null;
+
+  const aliases = await gradeAliasMap(supabase, profile.factory_id);
+  const rows: Record<string, unknown>[] = [];
+  for (const invoiceNo of invoiceNos) {
+    const ackLot = ackLots.find((lot) => formatFourDigitNo(lot.invoiceNo) === formatFourDigitNo(invoiceNo));
+    if (!ackLot) return { ok: false, error: `Invoice ${formatFourDigitNo(invoiceNo)} is not on the staged acknowledgement.` };
+    const markId = markByLabel.get(ackLot.markCode.toUpperCase()) ?? markByLabel.get(ackLot.markName.toUpperCase());
+    if (!markId) return { ok: false, error: `Selling mark ${ackLot.markCode} is not registered, so invoice ${formatFourDigitNo(invoiceNo)} cannot be placed.` };
+    // A mark this sale has no dispatch invoice for yet gets one, alongside the
+    // sale's existing invoices: same broker, same dispatch, its own mark.
+    const target = invoices.find((invoice) => invoice.selling_mark_id === markId)
+      ?? await openDispatchInvoiceForMark(supabase, profile.factory_id, invoices, markId, toISODate(ackLot.dispatchDate));
+    if (!target) {
+      return {
+        ok: false,
+        error: `Could not open a dispatch invoice for ${ackLot.markCode} in this sale. Create one, then add invoice ${formatFourDigitNo(invoiceNo)}.`,
+      };
+    }
+    if (!invoices.includes(target)) invoices.push(target);
+    const stored = formatFourDigitNo(ackLot.invoiceNo);
+    rows.push({
+      factory_id: profile.factory_id,
+      sale_id: target.id,
+      mark_id: markId,
+      invoice_no: groupPrefix ? buildCompositeInvoiceNo(groupPrefix, stored) : stored,
+      provisional_sale_no: saleNo,
+      grade: canonicalGrade(ackLot.grade, aliases),
+      bags: ackLot.bags,
+      kg_per_bag: ackLot.kgPerBag,
+      net_wt: ackLot.netWt,
+      state: "invoiced",
+      lot_source: "acknowledgement",
+    });
+  }
+
+  const { data: created, error: createError } = await supabase.from("auction_lots").insert(rows).select("id, sale_id, invoice_no");
+  if (createError) return { ok: false, error: friendlyError(createError) };
+  const createdLots = (created ?? []) as { id: string; sale_id: string; invoice_no: string }[];
+  if (createdLots.length > 0) {
+    const { error: linkError } = await supabase.from("lot_invoices").insert(
+      createdLots.map((lot) => ({ factory_id: profile.factory_id, lot_id: lot.id, invoice_no: formatFourDigitNo(lot.invoice_no) })),
+    );
+    if (linkError) return { ok: false, error: friendlyError(linkError) };
+  }
+  for (const lot of createdLots) {
+    await writeAudit(supabase, profile.factory_id, {
+      saleId: lot.sale_id,
+      lotId: lot.id,
+      action: "Invoice added from acknowledgement",
+      detail: `Invoice ${formatFourDigitNo(lot.invoice_no)} was catalogued by the broker in sale ${saleNo || "—"} but had never been entered. The lot was created on this sale's dispatch invoice for its selling mark.`,
+      reason: "Declared by the operator on the acknowledgement review as belonging to this sale.",
+      actor: profile.name,
+    });
+  }
+
+  revalidatePath(`${AUC}/${saleId}`);
+  return { ok: true, notice: `${createdLots.length} invoice${createdLots.length === 1 ? "" : "s"} added to sale ${saleNo || "—"}.` };
 }
 
 /** Registers a pre-existing lot as the root of a historic re-print chain.

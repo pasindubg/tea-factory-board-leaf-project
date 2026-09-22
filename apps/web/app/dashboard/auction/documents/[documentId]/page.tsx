@@ -83,9 +83,7 @@ export default async function DocumentDetailPage({
       headerActions={<BankUploadAssistant />}
     >
       <DetailRecordPanel
-        eyebrow="Document details"
         title={docRow.source_filename ?? "document.pdf"}
-        description={`${DOC_TYPE_LABELS[docRow.doc_type]} · ${brokerName}${saleNo ? ` · Sale ${saleNo}` : ""}`}
         contentClassName="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4"
       >
         <DetailField label="Document type" value={DOC_TYPE_LABELS[docRow.doc_type]} />

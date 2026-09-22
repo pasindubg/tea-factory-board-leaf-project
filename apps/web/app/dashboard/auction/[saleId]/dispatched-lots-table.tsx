@@ -64,6 +64,17 @@ function statusCell(row: LotRow, soldLotIds: Set<string>) {
 function columns(isOwner: boolean, soldLotIds: Set<string>): EntityListColumn<LotRow>[] {
   return [
     {
+      key: "lot_source",
+      label: "Lot origin",
+      accessor: (row) => row.lot_source,
+      filter: "select",
+      filterOptions: [
+        { value: "factory", label: "Factory" },
+        { value: "acknowledgement", label: "From ack" },
+      ],
+      searchOnly: true,
+    },
+    {
       key: "invoice_no",
       label: "Invoice(s)",
       accessor: (row) => (row.lot_invoices ?? []).map((invoice) => invoice.invoice_no).join(", ") || row.invoice_no || null,
@@ -505,6 +516,7 @@ export function DispatchedLotsTable({
   const soldIds = new Set(soldLotIds);
   const definition: ListDefinition<LotRow> = {
     columns: columns(isOwner, soldIds),
+    searchToggles: [{ id: "exclude-from-ack", label: "Exclude From ack", query: "lot_source!=acknowledgement" }],
     selectionMode: canEdit ? "multi" : "single",
     add: canAdd,
     edit: canEdit,

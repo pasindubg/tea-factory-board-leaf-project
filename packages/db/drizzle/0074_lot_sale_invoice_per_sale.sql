@@ -1,0 +1,2 @@
+DROP INDEX "uq_auction_lots_sale_invoice";--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_auction_lots_sale_invoice" ON "auction_lots" USING btree ("sale_id","invoice_no",COALESCE("final_sale_no", "provisional_sale_no", ''));

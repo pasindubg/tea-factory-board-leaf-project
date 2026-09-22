@@ -117,5 +117,8 @@ try {
 }
 
 if (neon) await applyNeonSql(["002_grants.sql", "003_request_identity.sql"]);
+if (neon && pending.length > 0) {
+  console.log("Schema changed: refresh the Data API schema cache (Neon Console > Data API > Refresh schema cache).");
+}
 
 await sql.end();

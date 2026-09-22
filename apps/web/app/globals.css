@@ -77,12 +77,12 @@ body {
 }
 
 /* Material 3 surface treatment for the existing page primitives. */
-.dashboard-content :is(.rounded-xl, .rounded-lg).border {
+.dashboard-content :is(.rounded-xl, .rounded-lg).border:not(button) {
   border-color: color-mix(in srgb, var(--md-outline-variant) 72%, transparent) !important;
 }
 
-.dashboard-content :is(.rounded-xl, .rounded-lg).border.bg-white,
-.dashboard-content :is(.rounded-xl, .rounded-lg).border[class*="dark:bg-stone"] {
+.dashboard-content :is(.rounded-xl, .rounded-lg).border.bg-white:not(button),
+.dashboard-content :is(.rounded-xl, .rounded-lg).border[class*="dark:bg-stone"]:not(button) {
   background: color-mix(in srgb, var(--md-surface-bright) 96%, var(--md-primary) 4%) !important;
   box-shadow: var(--md-shadow);
 }
@@ -168,9 +168,41 @@ body {
   animation: navigation-dim 2.4s ease-in-out infinite;
 }
 
+@keyframes navigation-overlay-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .navigation-progress-overlay {
-  background: color-mix(in srgb, var(--md-primary) 14%, transparent);
-  animation: navigation-dim 2.4s ease-in-out infinite;
+  background: color-mix(in srgb, #0c0a09 40%, transparent);
+  animation: navigation-overlay-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes refresh-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+[data-list-surface][aria-busy="true"] :is(table, [data-side-list-rows]),
+[data-detail-workspace-rail][aria-busy="true"] [data-side-list-rows],
+[data-detail-workspace-body][aria-busy="true"] > :not([data-list-surface], :has([data-list-surface])),
+[data-detail-workspace-body][aria-busy="true"] :has([data-list-surface]) > :not([data-list-surface], :has([data-list-surface])) {
+  animation: refresh-breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-list-surface][aria-busy="true"] :is(table, [data-side-list-rows]),
+  [data-detail-workspace-rail][aria-busy="true"] [data-side-list-rows],
+  [data-detail-workspace-body][aria-busy="true"] > :not([data-list-surface], :has([data-list-surface])),
+  [data-detail-workspace-body][aria-busy="true"] :has([data-list-surface]) > :not([data-list-surface], :has([data-list-surface])) {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .navigation-progress-overlay {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 .dashboard-content input[type="radio"]:focus-visible {

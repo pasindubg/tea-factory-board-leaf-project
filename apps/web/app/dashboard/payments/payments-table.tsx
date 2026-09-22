@@ -75,6 +75,7 @@ export function PaymentsTable({
           id: "mark-paid",
           label: "Mark paid",
           pendingLabel: "Marking paid…",
+          status: true,
           visible: canManage,
           disabled: ({ selectedRows }) => !selectedRows.some((row) => row.status !== "paid"),
           run: ({ selectedRows }) => changeStatus(selectedRows, true),
@@ -83,12 +84,13 @@ export function PaymentsTable({
           id: "mark-pending",
           label: "Mark pending",
           pendingLabel: "Marking pending…",
+          status: true,
           visible: canManage,
           disabled: ({ selectedRows }) => !selectedRows.some((row) => row.status === "paid"),
           run: ({ selectedRows }) => changeStatus(selectedRows, false),
         },
       ]}
-      footer={({ rows: liveRows, selectionColumn }) => {
+      footer={({ rows: liveRows, selectionColumn, columns }) => {
         const totals = liveRows.reduce(
           (total, row) => ({
             kg: total.kg + row.totalKg,
@@ -98,15 +100,17 @@ export function PaymentsTable({
           }),
           { kg: 0, gross: 0, deduction: 0, net: 0 },
         );
+        const values: Record<string, string> = {
+          supplierName: `Total (${liveRows.length})`,
+          totalKg: totals.kg.toFixed(2),
+          grossAmount: lkr(totals.gross),
+          deductionAmount: lkr(totals.deduction),
+          totalAmount: lkr(totals.net),
+        };
         return (
           <tr className="border-t border-stone-200 font-medium dark:border-stone-700">
             {selectionColumn && <td />}
-            <td className="px-4 py-3">Total ({liveRows.length})</td>
-            <td className="px-4 py-3 text-right tabular-nums">{totals.kg.toFixed(2)}</td>
-            <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.gross)}</td>
-            <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.deduction)}</td>
-            <td className="px-4 py-3 text-right tabular-nums">{lkr(totals.net)}</td>
-            <td />
+            {columns.map((column) => <td key={column.key} className={`px-4 py-3 ${column.cellClassName ?? ""}`}>{values[column.key]}</td>)}
           </tr>
         );
       }}

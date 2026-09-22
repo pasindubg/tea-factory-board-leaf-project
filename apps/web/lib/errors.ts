@@ -132,6 +132,8 @@ export function friendlyError(err: unknown): string {
       const ceiling = digits ? ` It must be under ${(10 ** Number(digits)).toLocaleString()}.` : "";
       return `One of the numbers on this row is too large for the field it goes in.${ceiling} Check the weights, then save again.`;
     }
+    case "P0001": // raise_exception — our own guards, written for the operator
+      return msg || "That change is not allowed.";
     case "42501": // insufficient_privilege (RLS denial)
       return "You don't have permission to do that.";
     default:

@@ -161,6 +161,25 @@ Auction identifiers are similar but not interchangeable.
 - Code should use `formatFourDigitNo` for dispatch, invoice, and lot numbers, and `formatSaleNo` for `target_sale_no` and sales overview/detail display. Both functions render their numeric values as four digits.
 - Multiple brokers can participate in the same auction sale number. Any sale-level overview grouped by sale number must show all participating brokers, not a single overwritten broker.
 
+## Shared list display preferences
+
+- The gear menu on every framework table includes **Arrange / hide fields**.
+  Move fields with the up/down buttons, choose visible fields, then Save;
+  Cancel discards the draft and Reset restores the declaration's field order.
+- Preferences (including mode and widths) persist in browser local storage,
+  keyed by authenticated factory, user, and list/tab scope. They survive sign-out
+  and later sessions in the same browser, but do not sync between devices.
+  Old unscoped preferences are not adopted by another account.
+- At least one field remains visible. New fields appear automatically; removed
+  fields are ignored. Hidden display fields remain searchable.
+- While creating or editing, show all fields in original order with horizontal
+  scrolling, then restore the saved layout. This preserves positional custom
+  create rows and makes every required input reachable.
+- Footer renderers use the framework-provided `columns` order and field keys,
+  never positional totals. Selection controls are not configurable fields.
+- Card side rails and custom workflow/matrix renderers do not have table-column
+  layouts and are not affected by table display preferences.
+
 ## Detail Pages
 
 Detail pages are operational work surfaces. Keep the user anchored on the record they are editing or reviewing.

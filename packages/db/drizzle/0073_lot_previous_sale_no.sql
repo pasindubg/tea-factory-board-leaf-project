@@ -1,0 +1,1 @@
+ALTER TABLE "auction_lots" ADD COLUMN "previous_sale_no" text;

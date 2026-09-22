@@ -12,6 +12,8 @@ const FACTORY_SCOPED_TABLES = new Set([
   "auction_grade_aliases",
   "auction_grades",
   "auction_lots",
+  "auction_lot_sales",
+  "auction_lot_sales_current",
   "auction_sales",
   "auction_warehouses",
   "access_roles",

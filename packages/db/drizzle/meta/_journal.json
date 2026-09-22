@@ -491,6 +491,62 @@
       "when": 1788792620015,
       "tag": "0069_chilly_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1789807447182,
+      "tag": "0070_dispatch_invoiced_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1789807808286,
+      "tag": "0071_dispatch_invoiced_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1789813538752,
+      "tag": "0072_dispatch_target_sale_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1789888821633,
+      "tag": "0073_lot_previous_sale_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1789889966919,
+      "tag": "0074_lot_sale_invoice_per_sale",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1789893317345,
+      "tag": "0075_auction_lot_sale_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1789910162306,
+      "tag": "0076_lot_invoice_reuse_per_sale",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1789910300196,
+      "tag": "0077_lot_invoice_reuse_chain",
+      "breakpoints": true
     }
   ]
 }

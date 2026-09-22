@@ -12,18 +12,20 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useId,
   useRef,
   useState,
+  useTransition,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { LovCombobox } from "@/components/lov-combobox";
 import type { LovOption, LovSourceKey } from "@/lib/list-lov";
 import { showAppToast } from "@/components/action-feedback";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { refreshMountedListInstances } from "@/components/list-controls";
+import { StateMenu, type StateMenuCommand } from "@/components/state-menu";
 import { AppButton } from "@/components/ui/button";
 import type { ListMutationResult } from "@/lib/list-mutations";
 import {
@@ -44,14 +46,7 @@ export type DetailWorkspaceSearchAction = {
   label?: string;
 };
 
-export type DetailWorkspaceStateCommand = {
-  id: string;
-  label: string;
-  disabled?: boolean;
-  busy?: boolean;
-  busyLabel?: string;
-  onSelect: () => void | Promise<void>;
-};
+export type DetailWorkspaceStateCommand = StateMenuCommand;
 
 export type DetailWorkspaceState = {
   currentKey: string | null;
@@ -97,13 +92,20 @@ export function DetailWorkspace({
   bodyClassName?: string;
 }) {
   const [railCollapsed, setRailCollapsed] = useState(false);
-  const [railRefreshing, setRailRefreshing] = useState(false);
+  const [refreshing, startRefresh] = useTransition();
+  const wasRefreshing = useRef(false);
+  useEffect(() => {
+    if (wasRefreshing.current && !refreshing) void refreshMountedListInstances();
+    wasRefreshing.current = refreshing;
+  }, [refreshing]);
+  const router = useRouter();
   const railId = `detail-workspace-rail-${useId().replace(/:/g, "")}`;
 
   return (
     <div
       data-detail-workspace
       data-detail-workspace-rail-collapsed={railCollapsed || undefined}
+      aria-busy={refreshing || undefined}
       className={`grid min-h-[calc(100dvh-8rem)] w-full items-start gap-6 xl:grid-rows-[auto_minmax(0,1fr)] ${
         railCollapsed
           ? "xl:grid-cols-[minmax(0,1fr)]"
@@ -156,7 +158,7 @@ export function DetailWorkspace({
             </AppButton>
           ) : null}
 
-          {state?.commands?.length ? <DetailStateMenu state={state} /> : null}
+          {state?.commands?.length ? <StateMenu label={state.menuLabel} commands={state.commands} onSettled={() => void refreshMountedListInstances()} /> : null}
           {deleteAction ? <DetailDeleteCommand config={deleteAction} /> : null}
           {headerActions}
         </div>
@@ -166,7 +168,18 @@ export function DetailWorkspace({
 
       <aside
         id={railId}
+        data-detail-workspace-rail
+        aria-busy={refreshing || undefined}
         aria-label={railAriaLabel}
+        onClickCapture={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          const link = (event.target as Element).closest<HTMLAnchorElement>("a[href]");
+          if (!link || link.target) return;
+          const url = new URL(link.href, window.location.href);
+          if (url.origin !== window.location.origin || url.href === window.location.href) return;
+          event.preventDefault();
+          startRefresh(() => router.push(`${url.pathname}${url.search}${url.hash}`));
+        }}
         className={`min-w-0 xl:sticky xl:top-0 xl:col-start-1 xl:row-span-2 xl:row-start-1 xl:h-[calc(100dvh-8rem)] xl:min-h-[34rem] ${railCollapsed ? "hidden" : ""}`}
       >
         <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
@@ -179,13 +192,11 @@ export function DetailWorkspace({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Refresh record list"
-                title="Refresh record list"
-                busy={railRefreshing}
-                onClick={() => {
-                  setRailRefreshing(true);
-                  void refreshMountedListInstances().finally(() => setRailRefreshing(false));
-                }}
+                aria-label="Refresh page"
+                title="Refresh page"
+                busy={refreshing}
+                busyLabel="Refreshing…"
+                onClick={() => startRefresh(() => router.refresh())}
               >
                 <RefreshCw aria-hidden="true" className="h-4 w-4" />
               </AppButton>
@@ -209,128 +220,11 @@ export function DetailWorkspace({
 
       <div
         data-detail-workspace-body
+        aria-busy={refreshing || undefined}
         className={`min-w-0 space-y-5 xl:row-start-2 ${railCollapsed ? "xl:col-start-1" : "xl:col-start-2"} ${bodyClassName}`}
       >
         {children}
       </div>
-    </div>
-  );
-}
-
-function DetailStateMenu({ state }: { state: DetailWorkspaceState }) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const generatedId = useId().replace(/:/g, "");
-  const menuId = `detail-state-menu-${generatedId}`;
-
-  const closeMenu = useCallback((restoreFocus = false) => {
-    setOpen(false);
-    if (restoreFocus) window.setTimeout(() => triggerRef.current?.focus(), 0);
-  }, []);
-
-  function focusCommand(direction: 1 | -1, from: number) {
-    const enabled = itemRefs.current
-      .map((element, index) => ({ element, index }))
-      .filter((item) => item.element && !item.element.disabled);
-    if (enabled.length === 0) return;
-    const currentPosition = enabled.findIndex((item) => item.index === from);
-    const nextPosition =
-      currentPosition < 0
-        ? direction === 1
-          ? 0
-          : enabled.length - 1
-        : (currentPosition + direction + enabled.length) % enabled.length;
-    enabled[nextPosition]?.element?.focus();
-  }
-
-  useEffect(() => {
-    if (!open) return;
-
-    const firstEnabled = itemRefs.current.find((item) => item && !item.disabled);
-    firstEnabled?.focus();
-
-    function closeOnOutsidePointer(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) closeMenu();
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") closeMenu(true);
-    }
-
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [closeMenu, open]);
-
-  return (
-    <div ref={menuRef} className="relative">
-      <AppButton
-        ref={triggerRef}
-        type="button"
-        variant="secondary"
-        aria-controls={menuId}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((current) => !current)}
-        className="min-w-28"
-      >
-        {state.menuLabel ?? "State"}
-        <ChevronDown aria-hidden="true" className="h-4 w-4" />
-      </AppButton>
-
-      {open ? (
-        <div
-          id={menuId}
-          role="menu"
-          aria-label={state.menuLabel ?? "State commands"}
-          className="absolute left-0 top-[calc(100%+0.5rem)] z-[90] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-stone-200 bg-white p-2 shadow-2xl dark:border-stone-700 dark:bg-stone-950"
-          onKeyDown={(event) => {
-            const currentIndex = itemRefs.current.findIndex(
-              (item) => item === document.activeElement,
-            );
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              focusCommand(1, currentIndex);
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              focusCommand(-1, currentIndex);
-            } else if (event.key === "Home") {
-              event.preventDefault();
-              focusCommand(1, -1);
-            } else if (event.key === "End") {
-              event.preventDefault();
-              focusCommand(-1, -1);
-            }
-          }}
-        >
-          {state.commands?.map((command, index) => (
-            <AppButton
-              key={command.id}
-              ref={(element) => {
-                itemRefs.current[index] = element;
-              }}
-              type="button"
-              role="menuitem"
-              variant="ghost"
-              disabled={command.disabled}
-              busy={command.busy}
-              busyLabel={command.busyLabel ?? "Working…"}
-              onClick={() => {
-                closeMenu();
-                void command.onSelect();
-              }}
-              className="min-h-11 w-full justify-start rounded-xl border-transparent px-3 py-2 text-left shadow-none"
-            >
-              <span className="text-sm font-semibold">{command.label}</span>
-            </AppButton>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -465,7 +359,6 @@ function DetailDeleteCommand({
 }
 
 export function DetailRecordPanel({
-  eyebrow,
   title,
   description,
   actions,
@@ -478,7 +371,6 @@ export function DetailRecordPanel({
   defaultCollapsed = false,
   collapseLabel,
 }: {
-  eyebrow?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -507,18 +399,7 @@ export function DetailRecordPanel({
     >
       <div className={`flex flex-wrap items-start justify-between gap-4 ${contentVisible ? "border-b border-stone-100 pb-4 dark:border-stone-800" : ""}`}>
         <div className="min-w-0">
-          {eyebrow ? (
-            <p
-              className={`text-xs font-semibold uppercase tracking-[0.16em] ${
-                tone === "draft"
-                  ? "text-green-700 dark:text-green-400"
-                  : "text-stone-500 dark:text-stone-400"
-              }`}
-            >
-              {eyebrow}
-            </p>
-          ) : null}
-          <h2 className="mt-1 text-xl font-semibold">{title}</h2>
+          <h2 className="text-xl font-semibold">{title}</h2>
           {description ? (
             <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
               {description}

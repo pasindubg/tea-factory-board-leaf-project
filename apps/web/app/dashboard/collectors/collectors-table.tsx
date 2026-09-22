@@ -102,12 +102,16 @@ export function CollectorsTable({ rows }: { rows: CollectorRow[] }) {
         {
           id: "deactivate",
           label: "Deactivate",
+          pendingLabel: "Deactivating…",
+          status: true,
           disabled: ({ selectedRows }) => selectedRows.length === 0 || !selectedRows.some((row) => row.active),
           run: ({ selectedRows }) => setCollectorsActive(selectedRows, false),
         },
         {
           id: "activate",
           label: "Reactivate",
+          pendingLabel: "Reactivating…",
+          status: true,
           disabled: ({ selectedRows }) => selectedRows.length === 0 || !selectedRows.some((row) => !row.active),
           run: ({ selectedRows }) => setCollectorsActive(selectedRows, true),
         },

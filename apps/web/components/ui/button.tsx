@@ -7,7 +7,7 @@ export type ButtonSize = "sm" | "md" | "icon";
 
 const variants: Record<ButtonVariant, string> = {
   primary: "border-transparent bg-green-700 text-white hover:bg-green-800 dark:bg-green-600 dark:text-white dark:hover:bg-green-500",
-  secondary: "border-stone-300 bg-white text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-200 dark:hover:bg-stone-800",
+  secondary: "border-stone-300 bg-white text-stone-800 hover:bg-stone-100 dark:border-stone-500 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700",
   danger: "border-transparent bg-red-700 text-white hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-500",
   ghost: "border-transparent bg-transparent text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800",
 };
@@ -46,15 +46,27 @@ export const AppButton = forwardRef<HTMLButtonElement, AppButtonProps>(
         {...props}
         disabled={disabled || busy}
         aria-busy={busy || undefined}
-        className={`inline-flex items-center justify-center gap-2 border font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-stone-950 ${variants[variant]} ${sizes[size]} ${className}`}
+        className={`inline-flex items-center justify-center gap-2 border font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 ${busy ? "cursor-default" : "disabled:cursor-not-allowed disabled:opacity-50"} dark:focus-visible:ring-offset-stone-950 ${variants[variant]} ${sizes[size]} ${className}`}
       >
-        {busy && (
-          <span
-            aria-hidden="true"
-            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
-          />
+        {busy && size === "icon" ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="h-4 w-4 animate-spin rounded-full border-2 border-green-600/25 border-t-green-600 dark:border-green-400/25 dark:border-t-green-400"
+            />
+            <span className="sr-only">{busyLabel}</span>
+          </>
+        ) : (
+          <>
+            {busy && (
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+              />
+            )}
+            {busy ? busyLabel : children}
+          </>
         )}
-        {busy ? busyLabel : children}
       </button>
     );
   },

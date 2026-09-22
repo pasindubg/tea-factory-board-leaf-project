@@ -98,6 +98,7 @@ type RefreshLotRow = {
   invoice_no: string | null;
   provisional_sale_no: string | null;
   final_sale_no: string | null;
+  previous_sale_no: string | null;
   lot_no: string | null;
   grade: string | null;
   bags: number | null;
@@ -144,6 +145,8 @@ type EstateInvoiceColumns = {
 type RefreshInvoiceOverviewLot = {
   id: string;
   sale_id: string;
+  assigned_sale_no: string | null;
+  dispatch_sale_no: string | null;
   invoice_no: string | null;
   lot_no: string | null;
   grade: string | null;
@@ -1174,7 +1177,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     async load({ supabase }, _params, search) {
       let query = supabase
         .from("auction_bundled_dispatches")
-        .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, status, created_date, auction_bundled_dispatch_invoices(id)");
+        .select("id, dispatch_no, dispatch_date_from, dispatch_date_to, warehouse, target_sale_no, status, created_date, auction_bundled_dispatch_invoices(id)");
       query = search.apply(query);
       const { data, error } = await applyListPage(
         query.order("dispatch_date_from", { ascending: false }).order("dispatch_no", { ascending: false }).order("id"),
@@ -1187,6 +1190,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         dispatch_date_from: string;
         dispatch_date_to: string;
         warehouse: string;
+        target_sale_no: string | null;
         status: string;
         created_date: string | null;
         auction_bundled_dispatch_invoices: { id: string }[] | null;
@@ -1200,6 +1204,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           dispatchDateFrom: dispatch.dispatch_date_from,
           dispatchDateTo: dispatch.dispatch_date_to,
           warehouse: dispatch.warehouse,
+          targetSaleNo: dispatch.target_sale_no,
           invoiceCount: dispatch.auction_bundled_dispatch_invoices?.length ?? 0,
           status: dispatch.status,
           createdDate: dispatch.created_date ?? null,
@@ -1391,7 +1396,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
 
       const [{ data: lots, error: lotError }, { data: thresholds, error: thresholdError }] = await Promise.all([
         supabase
-          .from("auction_lots")
+          // Only the rows belonging to the sale this dispatch invoice targets:
+          // a re-printed invoice keeps a row here for every sale it reached.
+          .from("auction_lot_sales_current")
           .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, mf_date, bag_type, chest_type, chest_numbers, moisture_level, state, ${LOT_FLAG_SELECT}, lot_source, reprint_source_lot_id, skipped_source_lot_id, marks(code, name), lot_invoices(invoice_no)`)
           .eq("sale_id", saleId)
           .eq("factory_id", profile.factory_id)
@@ -1514,10 +1521,12 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     moduleKey: "auction",
     parse: parseOptionalDispatchParams,
     async load({ supabase }, params) {
+      // Every row, including the earlier-sale rows of a re-printed invoice —
+      // "active" below is what marks the latest one.
       const { data, error } = await supabase
-        .from("auction_lots")
+        .from("auction_lot_sales")
         .select(
-          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, ` +
+          `id, sale_id, invoice_no, lot_no, grade, bags, kg_per_bag, gross_wt, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, created_at, assigned_sale_no, dispatch_sale_no, ` +
             "marks(code, name), lot_invoices(invoice_no), " +
             "auction_sales(id, sale_no, target_sale_no, dispatch_date, sale_date, status, broker_id, bundled_dispatch_id, brokers(name), marks(code, name))",
         )
@@ -1528,12 +1537,16 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       const lots = (data ?? []) as unknown as RefreshInvoiceOverviewLot[];
       // Which broker sold something in which sale — the proof that anything
       // still `valued` for that broker in that sale was offered and not bought.
+      // Keyed on the sale the lot is ASSIGNED to: a lot carried into a later
+      // sale keeps its dispatch invoice, whose own sale already sold.
+      const saleNoOfLot = (lot: RefreshInvoiceOverviewLot) =>
+        lot.assigned_sale_no ?? lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no ?? null;
       const groupOfLot = (lot: RefreshInvoiceOverviewLot) =>
-        brokerSaleKey(lot.auction_sales?.broker_id, lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no);
+        brokerSaleKey(lot.auction_sales?.broker_id, saleNoOfLot(lot));
       const soldGroups = soldBrokerSaleKeys(lots.map((lot) => ({
         state: lot.state,
         brokerId: lot.auction_sales?.broker_id ?? null,
-        saleNo: lot.auction_sales?.target_sale_no ?? lot.auction_sales?.sale_no ?? null,
+        saleNo: saleNoOfLot(lot),
       })));
 
       // The LATEST sale each invoice reached. An invoice appears once per sale
@@ -1573,7 +1586,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       // say about the rows that remain.
       const dispatchId = params.dispatchId as string | undefined;
       const scoped = dispatchId
-        ? lots.filter((lot) => lot.auction_sales?.bundled_dispatch_id === dispatchId)
+        ? lots.filter((lot) =>
+            lot.auction_sales?.bundled_dispatch_id === dispatchId
+            && saleNoMatches(lot.assigned_sale_no, lot.dispatch_sale_no))
         : lots;
 
       return {
@@ -1815,7 +1830,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           .eq("sale_kind", "dispatch"),
         supabase
           .from("auction_lots")
-          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
+          .select(`id, sale_id, invoice_no, provisional_sale_no, final_sale_no, previous_sale_no, lot_no, grade, bags, kg_per_bag, sample_allowance, net_wt, ${ESTATE_INVOICE_SELECT}, state, ${LOT_FLAG_SELECT}, reprint_source_lot_id, skipped_source_lot_id, lot_invoices(invoice_no), marks(code, name)`)
           .eq("factory_id", profile.factory_id)
           .order("invoice_no"),
       ]);
@@ -1834,7 +1849,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         || (!dispatch.target_sale_no && saleNoMatches(dispatch.sale_no as string | null, saleNo)),
       );
       const dispatchIds = new Set(dispatches.map((dispatch) => dispatch.id as string));
-      const lotRows = allLotRows.filter((lot) => assignedDispatchIds.has(lot.sale_id) || dispatchIds.has(lot.sale_id));
+      const dispatchSaleNoById = new Map(
+        (allDispatches ?? []).map((dispatch) => [
+          dispatch.id as string,
+          ((dispatch.target_sale_no as string | null) || (dispatch.sale_no as string | null)) ?? null,
+        ]),
+      );
+      const lotRows = allLotRows.filter((lot) =>
+        saleNoMatches(lot.final_sale_no || lot.provisional_sale_no || dispatchSaleNoById.get(lot.sale_id) || null, saleNo));
       const lotIds = lotRows.map((lot) => lot.id);
       const [{ data: lines, error: lineError }, { data: reprintTouchedLots, error: reprintError }] = lotIds.length > 0
         ? await Promise.all([
@@ -1885,12 +1907,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
       // Which BROKER sold something in which sale. Built factory-wide, because
       // a lot's dispatch invoice can be a sibling dispatch outside this group.
       const brokerBySaleId = new Map((allDispatches ?? []).map((d) => [d.id as string, d.broker_id as string | null]));
-      const groupOf = (lot: { sale_id: string }) =>
-        brokerSaleKey(brokerBySaleId.get(lot.sale_id), targetSaleNoByDispatchId.get(lot.sale_id));
+      const saleNoOfLot = (lot: RefreshLotRow) =>
+        lot.final_sale_no || lot.provisional_sale_no || targetSaleNoByDispatchId.get(lot.sale_id) || null;
+      const groupOf = (lot: RefreshLotRow) =>
+        brokerSaleKey(brokerBySaleId.get(lot.sale_id), saleNoOfLot(lot));
       const soldGroups = soldBrokerSaleKeys(allLotRows.map((lot) => ({
         state: lot.state,
         brokerId: brokerBySaleId.get(lot.sale_id) ?? null,
-        saleNo: targetSaleNoByDispatchId.get(lot.sale_id) ?? null,
+        saleNo: saleNoOfLot(lot),
       })));
 
       return {
@@ -1903,14 +1927,14 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
           // The sale that last catalogued the parent lot. The lot's own
           // final/provisional number is the authority — the same pair the sale
           // filter above uses — with the parent dispatch's target as backstop.
-          const previousSaleNo = parentLot
+          const previousSaleNo = formatSaleNo(lot.previous_sale_no ?? null) || (parentLot
             ? formatSaleNo(
                 parentLot.final_sale_no
                   || parentLot.provisional_sale_no
                   || targetSaleNoByDispatchId.get(parentLot.sale_id)
                   || null,
               ) || null
-            : null;
+            : null);
           const invoices = (lot.lot_invoices ?? []).map((invoice) => formatFourDigitNo(invoice.invoice_no)).filter(Boolean);
           const state = stateBucket(lot.state);
           return {

@@ -5,7 +5,8 @@ import { EntityList, type EntityListColumn, type EntityListCommand } from "@/com
 import type { ListDefinition } from "@/components/list-controls";
 import { SubmitButton } from "@/components/submit-button";
 import { AppButton } from "@/components/ui/button";
-import { registerLotReprint, registerLotSkippedSale } from "@/app/dashboard/auction/actions";
+import type { ListMutationResult } from "@/lib/list-mutations";
+import { registerLotReprint, registerLotSkippedSale, registerLotsInSale } from "@/app/dashboard/auction/actions";
 
 /**
  * What the row is SHOWN as. Two of these are not reconciliation statuses:
@@ -78,7 +79,14 @@ const COLUMNS: EntityListColumn<ReviewReconRow>[] = [
   { key: "notes", label: "Notes", accessor: (row) => reconciliationNotes(row), filter: "text", lov: false, cellClassName: "text-xs text-stone-500 dark:text-stone-400", render: reconciliationNotes },
 ];
 
-const LIST = { columns: COLUMNS, selectionMode: "single" } satisfies ListDefinition<ReviewReconRow>;
+const LIST = { columns: COLUMNS, selectionMode: "multi" } satisfies ListDefinition<ReviewReconRow>;
+
+/** Every selected row must be an acknowledgement line we hold no invoice for. */
+function registrableReason(rows: ReviewReconRow[], what: string): string | undefined {
+  if (rows.length === 0) return "Select the acknowledgement rows to register.";
+  if (rows.some((row) => !row.ack || row.invoiced)) return `Only an acknowledgement row we never invoiced can be registered as ${what}.`;
+  return rows.every((row) => row.canRegister) ? undefined : "One of the selected invoices is already resolved.";
+}
 
 export function ReconTable({
   rows,
@@ -98,18 +106,13 @@ export function ReconTable({
     label: "Register re-print",
     pendingLabel: "Registering…",
     visible: canRegisterReprint,
-    disabled: ({ selectedRows }) => selectedRows.length !== 1 || !selectedRows[0]?.canRegister,
-    disabledReason: ({ selectedRows }) => {
-      if (selectedRows.length !== 1) return "Select exactly one row.";
-      const row = selectedRows[0]!;
-      if (!row.ack || row.invoiced) return "Only an acknowledgement row we never invoiced can be registered as a re-print.";
-      return row.canRegister ? undefined : "This invoice is already a re-print.";
-    },
+    disabled: ({ selectedRows }) => Boolean(registrableReason(selectedRows, "a re-print")),
+    disabledReason: ({ selectedRows }) => registrableReason(selectedRows, "a re-print"),
     panel: {
       title: "Register as a re-print",
-      action: (formData, { selectedRows }) => registerLotReprint(saleId, selectedRows[0]!.invoiceNo, formData),
+      action: (formData, { selectedRows }) => registerEach(selectedRows, (invoiceNo) => registerLotReprint(saleId, invoiceNo, formData), "re-print"),
       render: ({ action, close, command }) => (
-        <RegisterReprintForm row={command.selectedRows[0]!} action={action} onCancel={close} />
+        <RegisterReprintForm rows={command.selectedRows} action={action} onCancel={close} />
       ),
     },
   }, {
@@ -121,20 +124,30 @@ export function ReconTable({
     label: "Register skipped sale",
     pendingLabel: "Registering…",
     visible: canRegisterReprint,
-    disabled: ({ selectedRows }) => selectedRows.length !== 1 || !selectedRows[0]?.canRegister,
-    disabledReason: ({ selectedRows }) => {
-      if (selectedRows.length !== 1) return "Select exactly one row.";
-      const row = selectedRows[0]!;
-      if (!row.ack || row.invoiced) return "Only an acknowledgement row we never invoiced can be registered as a skipped sale.";
-      return row.canRegister ? undefined : "This invoice is already resolved.";
-    },
+    disabled: ({ selectedRows }) => Boolean(registrableReason(selectedRows, "a skipped sale")),
+    disabledReason: ({ selectedRows }) => registrableReason(selectedRows, "a skipped sale"),
     panel: {
       title: "Register a skipped sale",
-      action: (formData, { selectedRows }) => registerLotSkippedSale(saleId, selectedRows[0]!.invoiceNo, formData),
+      action: (formData, { selectedRows }) => registerEach(selectedRows, (invoiceNo) => registerLotSkippedSale(saleId, invoiceNo, formData), "skipped sale"),
       render: ({ action, close, command }) => (
-        <RegisterSkippedSaleForm row={command.selectedRows[0]!} action={action} onCancel={close} />
+        <RegisterSkippedSaleForm rows={command.selectedRows} action={action} onCancel={close} />
       ),
     },
+  }, {
+    // The third answer: the invoice belongs to THIS sale and was never entered.
+    id: "add-to-this-sale",
+    label: "Add to this sale",
+    pendingLabel: "Adding…",
+    visible: canRegisterReprint,
+    disabled: ({ selectedRows }) => Boolean(registrableReason(selectedRows, "part of this sale")),
+    disabledReason: ({ selectedRows }) => registrableReason(selectedRows, "part of this sale"),
+    confirm: {
+      title: ({ selectedRows }) => `Add ${selectedRows.length} invoice${selectedRows.length === 1 ? "" : "s"} to this sale?`,
+      description: ({ selectedRows }) =>
+        `${selectedRows.map((row) => row.invoiceNo).join(", ")} will be created on this sale's dispatch invoice for the selling mark the acknowledgement prints, using its grade, bags and weights. Use this only when the invoice really was dispatched to this sale but never entered.`,
+      confirmLabel: "Add to this sale",
+    },
+    run: ({ selectedRows }) => registerLotsInSale(saleId, selectedRows.map((row) => row.invoiceNo)),
   }];
 
   return (
@@ -153,20 +166,41 @@ export function ReconTable({
   );
 }
 
+/**
+ * One declaration, applied to each selected row in turn: the two register
+ * commands each write one invoice, and the panel's answer covers them all.
+ */
+async function registerEach(
+  rows: ReviewReconRow[],
+  register: (invoiceNo: string) => Promise<ListMutationResult>,
+  what: string,
+): Promise<ListMutationResult> {
+  let done = 0;
+  for (const row of rows) {
+    const result = await register(row.invoiceNo);
+    if (!result.ok) {
+      return done === 0 ? result : { ok: false, error: `${row.invoiceNo}: ${result.error} (${done} already registered)` };
+    }
+    done += 1;
+  }
+  return { ok: true, notice: `${done} invoice${done === 1 ? "" : "s"} registered as ${what}.` };
+}
+
 function RegisterReprintForm({
-  row,
+  rows,
   action,
   onCancel,
 }: {
-  row: ReviewReconRow;
+  rows: ReviewReconRow[];
   action: (formData: FormData) => Promise<void>;
   onCancel: () => void;
 }) {
+  const row = rows[0]!;
   return (
     <form action={action} className="mt-1 space-y-3 rounded-lg border border-stone-200 p-3 text-left dark:border-stone-700">
       <input type="hidden" name="grade" value={row.ack?.grade ?? ""} />
       <input type="hidden" name="net_wt" value={row.ack?.netWt ?? 0} />
-      <p className="text-xs text-stone-500 dark:text-stone-400">Invoice: {row.invoiceNo}</p>
+      <p className="text-xs text-stone-500 dark:text-stone-400">Invoice{rows.length === 1 ? "" : "s"}: {rows.map((item) => item.invoiceNo).join(", ")}</p>
       <p className="text-xs leading-5 text-stone-600 dark:text-stone-300">
         The broker catalogued this invoice but the system has no record of it. Registering it declares that it was
         offered before. Give the sale it was first offered in to record that sale too, or leave it blank.
@@ -201,19 +235,20 @@ function RegisterReprintForm({
 }
 
 function RegisterSkippedSaleForm({
-  row,
+  rows,
   action,
   onCancel,
 }: {
-  row: ReviewReconRow;
+  rows: ReviewReconRow[];
   action: (formData: FormData) => Promise<void>;
   onCancel: () => void;
 }) {
+  const row = rows[0]!;
   return (
     <form action={action} className="mt-1 space-y-3 rounded-lg border border-stone-200 p-3 text-left dark:border-stone-700">
       <input type="hidden" name="grade" value={row.ack?.grade ?? ""} />
       <input type="hidden" name="net_wt" value={row.ack?.netWt ?? 0} />
-      <p className="text-xs text-stone-500 dark:text-stone-400">Invoice: {row.invoiceNo}</p>
+      <p className="text-xs text-stone-500 dark:text-stone-400">Invoice{rows.length === 1 ? "" : "s"}: {rows.map((item) => item.invoiceNo).join(", ")}</p>
       <p className="text-xs leading-5 text-stone-600 dark:text-stone-300">
         The broker catalogued this invoice here, but it was dispatched to an earlier sale that this system has no
         record of. Give that sale and the lot will be created in it, marked acknowledged and flagged as a skipped
