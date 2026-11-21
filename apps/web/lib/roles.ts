@@ -13,10 +13,32 @@ export type Role =
 
 export const ALL_WEB_ROLES: readonly Role[] = ["owner", "manager", "supervisor", "accountant", "collector"];
 export const MANAGEMENT_ROLES: readonly Role[] = ["owner", "manager"];
+export const MOBILE_SUPPLIER_REGISTRATION_ROLES: readonly Role[] = ["field_officer", "driver"];
+export const MOBILE_APP_ROLES: readonly Role[] = [...ALL_WEB_ROLES, "supplier", "driver", "field_officer"];
+export const MOBILE_DATA_RESOURCE_ROLES = {
+  "supplier.home": ["supplier"],
+  "supplier.request-type": ["supplier"],
+  "supplier.requests": ["supplier"],
+  "supplier.messages": ["supplier"],
+  "driver.handovers": ["driver"],
+  "collector.suppliers": ["collector"],
+  "collector.weighings": ["collector"],
+} as const satisfies Record<string, readonly Role[]>;
+export const MOBILE_COMMAND_ROLES = {
+  "supplier.request.create": ["supplier"],
+  "supplier.request.acknowledge": ["supplier"],
+  "supplier.messages.read": ["supplier"],
+  "driver.handover": ["driver"],
+  "collector.weighing.create": ["collector"],
+} as const satisfies Record<string, readonly Role[]>;
+
+export function roleMayRegisterSuppliers(role: string | null | undefined) {
+  return MOBILE_SUPPLIER_REGISTRATION_ROLES.some((allowed) => allowed === role);
+}
 // `field_officer` is mobile-only: it has no PAGE_DEFINITIONS entry, so a role
 // built on it reaches no web page. It is listed here so owners can create the
 // login at all.
-export const CUSTOMIZABLE_BASE_ROLES: readonly Role[] = ["manager", "supervisor", "accountant", "collector", "field_officer"];
+export const CUSTOMIZABLE_BASE_ROLES: readonly Role[] = ["manager", "supervisor", "accountant", "collector", "field_officer", "driver"];
 
 export const ROLE_LABELS: Record<Role, string> = {
   owner: "Owner",

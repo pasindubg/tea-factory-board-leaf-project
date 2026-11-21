@@ -11,7 +11,7 @@ function supplierFields(formData: FormData) {
   const landSize = String(formData.get("land_size_acres") ?? "").trim();
   const cultivated = String(formData.get("cultivated_area_acres") ?? "").trim();
   return {
-    customer_no: String(formData.get("customer_no") ?? "").trim(),
+    customer_no: String(formData.get("customer_no") ?? "").trim() || null,
     name: String(formData.get("name") ?? "").trim(),
     phone: String(formData.get("phone") ?? "").trim(),
     nic_number: String(formData.get("nic_number") ?? "").trim() || null,
@@ -38,8 +38,7 @@ function coordinateError(value: string, label: string, limit: number): string | 
 
 /** The starred registration fields, enforced here as well as by the database. */
 function mandatoryFieldError(fields: ReturnType<typeof supplierFields>): string | null {
-  if (!fields.customer_no) return "Customer number is required.";
-  if (!/^[0-9]+$/.test(fields.customer_no)) return "Customer number must be digits only.";
+  if (fields.customer_no && !/^[0-9]+$/.test(fields.customer_no)) return "Customer number must be digits only.";
   if (!fields.name) return "Customer name is required.";
   if (!fields.phone) return "Mobile number is required.";
   return (

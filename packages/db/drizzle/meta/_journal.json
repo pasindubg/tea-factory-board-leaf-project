@@ -547,6 +547,55 @@
       "when": 1789910300196,
       "tag": "0077_lot_invoice_reuse_chain",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1790187700154,
+      "tag": "0078_living_scorpion",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1790188541194,
+      "tag": "0079_dispatch_bag_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1790188771474,
+      "tag": "0080_condemned_caretaker",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1790189019453,
+      "tag": "0081_wooden_kree",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792514146883,
+      "tag": "0082_driver_supplier_registration",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792514790229,
+      "tag": "0083_driver_user_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792520471772,
+      "tag": "0084_supplier_registration_numbers",
+      "breakpoints": true
     }
   ]
 }

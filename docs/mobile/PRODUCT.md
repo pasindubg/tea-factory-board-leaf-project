@@ -10,6 +10,15 @@ inherits its vision, multi-tenancy rules, and superleaf/quality model and only
 documents what the field app adds. Build plan: [MILESTONES.md](./MILESTONES.md).
 Technical design: [ARCHITECTURE.md](./ARCHITECTURE.md). Tracks GitHub issue #13.
 
+**2026-11-21 release direction:** Keep separate web/mobile applications, with
+the mobile UI served as an HTML/CSS/JS single-page application from Vercel and
+rendered inside an Android APK shell. Normal UI/workflow additions should arrive
+through a web deployment; the shell provides camera/GPS and other installed
+native capabilities. New native capabilities can still require an APK update.
+Both applications use the shared Neon backend through authenticated server
+operations. The app displays **Network disconnected** when the phone goes
+offline. See [HYBRID_APP.md](./HYBRID_APP.md) for the implementation.
+
 ## The idea in one paragraph
 
 The factory already runs the ERP at the gate. The field app extends that loop to
@@ -17,7 +26,11 @@ the two people who are *not* at a desk: the **supplier** (estate owner /
 smallholder, in the field) and the **driver** (lorry route collector). Suppliers
 register, request advances/fertiliser/tea packets, signal when leaf is ready,
 receive messages from the factory, and **acknowledge money received** — closing a
-trust gap where cash passes hand-to-hand through a driver. Drivers see their
+trust gap where cash passes hand-to-hand through a driver. Field officers and drivers can register suppliers on an active factory line,
+including GPS and optional supplier/bank-book photographs. Each driver record
+links to an existing Driver user through **User ID**; that login sees only the
+active lines assigned to its driver record, including those lines' suppliers and
+handover requests. Field officers can register across the factory's active lines. Drivers also see their
 route, each stop's pending tasks (cash to hand over, deliveries to make, inquiries
 to service), and can flag watered leaf at the point of collection. Everything reads
 and writes the same `factory_id`-scoped tables the ERP uses, so a request raised on
@@ -51,7 +64,7 @@ principle below).
 
 | # | Feature | Persona | ERP integration | Milestone |
 |---|---|---|---|---|
-| 1 | **Supplier registration** (with map location captured at signup) | Supplier | new `supplier` identity links to existing `suppliers` row | FA1 / M12 |
+| 1 | **Supplier registration** (automatic read-only registration number, map location, optional photo and bank book; office assigns the existing customer number later) | Field officer, Driver | new `supplier` identity links to existing `suppliers` row | FA1 / M12 |
 | 2 | **Phone-number OTP security** for login, money requests, and acknowledgements | Supplier, Driver | Supabase phone auth + `factory_id` RLS | FA1 / M12 |
 | 3 | **Requests**: advances, fertiliser, tea packets | Supplier | new `supplier_requests`; advances feed payment deductions (M6 `supplier_adjustments`) | FA2 |
 | 4 | **Delivery-ready inquiry** for irregular suppliers | Supplier | `supplier_requests` (type `delivery_ready`) → driver route stop | FA2 / FA4 |

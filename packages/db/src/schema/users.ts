@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, timestamp, index, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, index, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { factories } from "./factories";
 import { suppliers } from "./suppliers";
 import { accessRoles } from "./access-roles";
@@ -31,5 +31,5 @@ export const users = pgTable(
     active: boolean("active").default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("idx_users_factory").on(t.factoryId), index("idx_users_access_role").on(t.accessRoleId)],
+  (t) => [index("idx_users_factory").on(t.factoryId), index("idx_users_access_role").on(t.accessRoleId), uniqueIndex("uq_users_factory_id").on(t.factoryId, t.id)],
 );

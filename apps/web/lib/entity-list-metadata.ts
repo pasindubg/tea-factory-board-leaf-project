@@ -28,7 +28,7 @@ export const ENTITY_LIST_METADATA: Record<ListResourceKey, { title: string; desc
   "leaf.collectors": { title: "Collectors", description: "Collection staff registered to this factory." },
   "users.devices": { title: "Bound devices", description: "Phones a mobile login is currently tied to." },
   "leaf.vehicles": { title: "Vehicles", description: "The vans that run the collection lines." },
-  "leaf.drivers": { title: "Drivers", description: "Drivers who run the collection lines." },
+  "leaf.drivers": { title: "Drivers", description: "Existing Driver users linked to the collection lines they run." },
   "leaf.lines": { title: "Lines", description: "Collection routes and the vehicle and drivers that run them." },
   "leaf.line-drivers": { title: "Drivers on this line", description: "Drivers assigned to run this collection line." },
   "communications.sent-messages": { title: "Messages", description: "Messages sent to customers." },

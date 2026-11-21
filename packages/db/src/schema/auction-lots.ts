@@ -108,6 +108,7 @@ export const auctionLots = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
+    uniqueIndex("uq_auction_lots_factory_id").on(t.factoryId, t.id),
     index("idx_auction_lots_factory").on(t.factoryId),
     index("idx_auction_lots_sale").on(t.saleId),
     // A sale can carry a given invoice at most once — carry-forward always

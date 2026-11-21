@@ -14,6 +14,15 @@ const input = "w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 te
 function columns(collectors: CollectorOption[]): EntityListColumn<SupplierRow>[] {
   return [
     {
+      key: "registrationNo",
+      label: "Registration no",
+      accessor: (row) => row.registrationNo,
+      sortable: true,
+      filter: "text",
+      lov: false,
+      minWidth: 130,
+    },
+    {
       key: "customerNo",
       label: "Customer no",
       accessor: (row) => row.customerNo,
@@ -21,7 +30,8 @@ function columns(collectors: CollectorOption[]): EntityListColumn<SupplierRow>[]
       filter: "text",
       lov: false,
       minWidth: 110,
-      edit: (row, { formId }) => <input form={formId} name="customer_no" aria-label="Customer number" required inputMode="numeric" pattern="[0-9]+" defaultValue={row.customerNo} className={input} />,
+      render: (row) => row.customerNo ?? "Awaiting office assignment",
+      edit: (row, { formId }) => <input form={formId} name="customer_no" aria-label="Customer number" inputMode="numeric" pattern="[0-9]+" defaultValue={row.customerNo ?? ""} placeholder="Assign existing customer number" className={input} />,
     },
     {
       key: "name",

@@ -3,6 +3,11 @@
 Build plan for the Phase 2 suppliers/driver field app (issue #13). Product:
 [PRODUCT.md](./PRODUCT.md). Design: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
+**Hybrid mobile implementation (2026-11-21):** The existing mobile screens run
+as a Vercel-ready React SPA with an Android WebView shell and an online-only
+connection guard. The hosted Metro workflow was removed. See
+[HYBRID_APP.md](./HYBRID_APP.md) for the release and phone verification steps.
+
 These milestones (**FA0–FA7**) are the concrete decomposition of the canonical
 roadmap's **M12–M17** for this issue. They sit in Phase 2 and assume the Phase 1
 ERP continues in parallel. Each is independently shippable with a verification gate,
@@ -26,22 +31,24 @@ the canonical milestones are noted.
 ---
 
 ## FA8 — Field customer registration  ⬅ SHIPS FIRST, ahead of FA0
-The only field-app surface going to the factory right now. A `field_officer`
+The only field-app surface going to the factory right now. A `field_officer` or `driver`
 logs in with a username and password, is bound to that one phone, picks the
 **line** they are working, and registers customers onto it — capturing the GPS
 fix that FA5 route optimisation will later order stops by.
 
 - Registry (web only): `vehicles`, `drivers`, `lines` (one vehicle per line),
-  `line_drivers` (a line takes 1..n drivers). Field officers read these; they
+  `line_drivers` (a line takes 1..n drivers). Field officers and drivers read these; they
   never create them.
 - `suppliers` gains `customer_no` (the identifier the customer already carries
-  in the factory's existing system — text, unique per factory), `line_id`
+  in the factory's existing system — nullable text, unique per factory, assigned
+  by office staff through the ERP), `registration_no` (an immutable, automatic
+  per-factory sequence allocated on save), `line_id`
   (composite FK, so a customer can never be put on another tenant's line),
   `address`, `cultivated_area_acres`, photo/bank-book paths, bank account
   fields, GPS accuracy/timestamp, and registration provenance.
 - Per-device auth: `user_devices` + `register_device()`; the phone's
   secure-storage id rides on every request as `x-device-id`, and a RESTRICTIVE
-  RLS policy refuses a field officer's write from any other handset. Owners
+  RLS policy refuses a field officer's or driver's supplier access from any other handset. Owners
   and managers release a lost phone from *Bound devices*.
 - Private `supplier-documents` bucket, pathed `factory_id/supplier_id/`.
 - App flow: **line list → customers on that line → register customer**, so the
@@ -51,6 +58,28 @@ fix that FA5 route optimisation will later order stops by.
 pass; a field officer registers a customer from the bound phone and the same
 insert is refused from a second device; the customer, its line, and its map
 location appear on the web suppliers list.
+
+**2026-10-20 update:** Drivers retain money/item handover and also reach supplier
+registration through **Register suppliers → line → + New**. Field officers keep
+the same registration flow. Both use the list-owned create panel, server-derived
+factory/actor identity, validated active lines and create-only image uploads.
+Drivers are existing active Driver users linked through the ERP driver list
+**User ID** LOV. Their line and handover visibility is restricted to active lines
+assigned through `line_drivers`; unlinked or unassigned drivers see no lines.
+Field officers retain factory-wide supplier-registration access.
+**2026-10-21 numbering update:** Mobile users enter neither number. The read-only
+registration field says **Assigned automatically on save**; saving displays the
+allocated number on the receipt and supplier list. `customer_no` stays unassigned
+until office staff edit it in ERP Customers. Database guards also block direct
+mobile attempts to set/change it or alter the registration number. A tenant-scoped
+counter increments in the same transaction as the supplier insert, serializing
+concurrent registrations and rolling failed allocations back. Deleted numbers
+are retained in numbering history and never reused.
+Verify with `pnpm --dir packages/db exec tsx src/verify-mobile-registration-neon.ts`
+(source the development `.env` first); its synthetic fixtures and policy trial
+always roll back. A real-account/phone smoke test remains separate.
+`verify-supplier-numbering-neon.ts` additionally tests simultaneous saves using
+synthetic development factories and removes every fixture afterward.
 
 **Deferred from this milestone:** offline outbox (online-only for now, but
 `client_uuid` is already stored as the idempotency key), and OCR of the bank

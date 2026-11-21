@@ -30,6 +30,7 @@ export type LovSourceKey =
   | "leaf.collectors"
   | "leaf.vehicles"
   | "leaf.drivers"
+  | "users.driver-accounts"
   | "leaf.lines";
 
 export const LOV_SOURCE_KEYS = [
@@ -42,6 +43,7 @@ export const LOV_SOURCE_KEYS = [
   "leaf.collectors",
   "leaf.vehicles",
   "leaf.drivers",
+  "users.driver-accounts",
   "leaf.lines",
 ] as const satisfies readonly LovSourceKey[];
 

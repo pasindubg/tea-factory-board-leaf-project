@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { BucketApi } from "@/lib/db/storage";
@@ -43,6 +44,24 @@ export function presignUpload(bucket: string, key: string, contentType: string, 
     new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: size, ...(createOnly ? { IfNoneMatch: "*" } : {}) }),
     { expiresIn, signableHeaders: new Set(["content-type", "content-length", ...(createOnly ? ["if-none-match"] : [])]) },
   );
+}
+
+/** Retry an interrupted upload only if the existing bytes are identical. */
+export async function createSupplierPhoto(factoryId: string, path: string, bytes: Uint8Array) {
+  if (outsideFactory(path, factoryId)) throw new Error("Storage path is outside this factory.");
+  const bucket = "supplier-documents";
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  try {
+    await s3().send(new PutObjectCommand({
+      Bucket: bucket, Key: path, Body: bytes, IfNoneMatch: "*",
+      ContentType: "image/jpeg", Metadata: { sha256: digest },
+    }));
+    return true;
+  } catch (error) {
+    if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 412) throw error;
+    const existing = await s3().send(new HeadObjectCommand({ Bucket: bucket, Key: path }));
+    return existing.Metadata?.sha256 === digest;
+  }
 }
 
 export function neonBucket(bucket: string, factoryId: string): BucketApi {

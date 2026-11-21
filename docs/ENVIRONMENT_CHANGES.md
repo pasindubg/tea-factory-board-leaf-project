@@ -2,6 +2,111 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-11-21 - Hybrid mobile app
+
+- Moved the Field App screens into `apps/mobile/web`, a Vite workspace using
+  React and React Native Web. Removed the draft hosted Expo/Metro scripts and
+  Render deploy hook. Mobile CI checks the site and can build a debug Android
+  APK from `apps/mobile/shell`.
+- The mobile site uses authenticated ERP API routes for application data.
+  Mobile registration images are compressed before same-origin uploads.
+  The Android shell stores sessions with Android Keystore and shows a
+  full-screen connection error on disconnect. Offline saves are not queued.
+- See [the hybrid release guide](mobile/HYBRID_APP.md) for Vercel, Git and Android
+  build settings. The development Vite server proxies the local API.
+- Verified the site build and typecheck, 301 web tests and 60 development Neon
+  registration checks with rollback. A browser smoke test with simulated API
+  responses verified login, binding, location, JPEG upload, registration and
+  draft preservation across a disconnect. Android unit tests, lint and debug
+  assembly passed, and an emulator showed the native disconnect screen. The
+  seeded development auth test returned 401 and the new bootstrap route still
+  returned 404 in production, so live phone sign-in and rollout remain pending.
+
+## 2026-11-21 - Mobile hybrid architecture clarification
+
+- Recorded the requested Vercel-hosted HTML/CSS/JS mobile SPA inside an Android
+  shell in [mobile/HYBRID_APP.md](mobile/HYBRID_APP.md). Keep the web/mobile
+  folders, share API contracts and use the existing authenticated API/Neon
+  backend. Normal UI/workflow releases are web deploys; native shell/capability
+  changes can require an APK update.
+- Marked the earlier Render/Metro release proposal as superseded. Its local
+  uncommitted scripts/workflow remain drafts; no provider setup, cloud release,
+  package install or runtime migration was performed by this documentation change.
+
+## 2026-11-21 - Hosted Expo Go release configuration
+
+- Added `apps/mobile/scripts/hosting.mjs` and `start:hosted`, `build:go`,
+  `check:backend`, `test:hosting` commands. Hosted Metro and native exports use
+  the reviewed public API/Neon pair in `.env.production`, disable machine dotenv
+  files, and reject conflicting overrides. Render's public HTTPS origin supplies
+  manifest URLs; its `PORT` supplies the listener port.
+- `apps/mobile/scripts/render-build.sh` is the versioned Render build command;
+  it uses Corepack's pinned pnpm, verifies both native bundles and rejects an
+  unavailable mobile API before Render replaces a running deployment.
+- Added `.github/workflows/mobile.yml`: checks PRs/pushes to `main` and
+  `blm-cloud-release`; manual deployments are restricted to the release branch
+  and send the verified SHA to Render's secret deploy hook. The API route probe
+  is anonymous and blocks missing/protected endpoints before requesting a deploy.
+- The hosted service and new workflow use Node 24.22.0 (compatible with the
+  installed Expo/React Native packages) and pnpm 9.15.9. Existing local development
+  commands and web release workflows are unchanged; no dependency or lockfile
+  changes, new database, or migrations are introduced by this hosting setup.
+- See [mobile/HOSTING.md](mobile/HOSTING.md) for exact Render settings, the
+  `RENDER_MOBILE_DEPLOY_HOOK_URL` GitHub secret, release ordering and phone checks.
+  Configuration is prepared locally; no commit, push, Render service, repository
+  secret or cloud deployment was created by this task. Production mobile list
+  and registration endpoints were still absent during the initial inspection.
+- Validation: repository-wide typecheck/lint, four hosting guard tests, six
+  mocked deploy-hook scenarios, and Android/iOS exports passed. A temporary
+  Metro server returned production-mode native bundles for both platforms with
+  the configured public HTTPS manifest URLs. The real anonymous API gate failed
+  as expected on the missing production list endpoint (404). Render/Linux and
+  physical-phone acceptance remain pending.
+
+## 2026-10-21 - Automatic supplier registration numbers
+
+- Applied and recorded `0084_supplier_registration_numbers.sql` atomically on
+  **Neon development-01 only**, after verifying the 0083 migration hash/ceiling.
+  Existing customer numbers were compared before/after and preserved. Existing
+  suppliers received registration numbers in creation order within each factory.
+- `registration_no` is a positive, unique per-factory, immutable number generated
+  by a `SECURITY INVOKER` trigger. Its RLS-protected counter uses a transactional
+  upsert, so simultaneous saves serialize and failed inserts do not consume
+  numbers. Counter access is limited to the trigger; users cannot reserve/reset
+  numbers. Deleted registrations' numbers are never reused.
+- `customer_no` is nullable until office assignment. Its digit validation,
+  per-factory uniqueness and leading zeros are preserved. Mobile registration
+  rejects either submitted number; the database additionally blocks non-office
+  roles from assigning/changing customer numbers through direct Data API writes.
+- The native create panel shows **Assigned automatically on save** in a read-only
+  registration field, then shows the number on the saved receipt and list. ERP
+  Customers has a read-only Registration no column and an editable Customer no
+  column for office assignment. Retrying an existing registration returns the
+  same registration number even after the office assigns a customer number.
+- Validation: 295 web tests, 8 native render/navigation checks, web/mobile/database
+  type checks and web lint passed. The rollback-only registration suite passed 60 checks for
+  role/device/tenant protections; the separate concurrency check passed 8 checks,
+  including ten simultaneous registrations receiving 1–10 and independent factory
+  sequences. All synthetic records were removed. Tenant invariants pass for 55
+  tables; the live numbering trigger remains an invoker function and no supplier
+  is missing a registration number. ERP create-row behavior was checked in the
+  signed-in browser without saving customer data.
+- The legacy seed-based `db:verify-rls` still stops on missing collector/supplier
+  fixtures before mutations; no reseed was performed. The old Supabase OTP auth
+  suite does not exercise the active Neon login flow. Physical Android GPS/camera
+  registration remains a user acceptance check.
+
+## 2026-10-20 - Driver and field-officer supplier registration
+
+- Both `driver` and `field_officer` use the same line → supplier list → built-in `+ New` registration panel. Drivers reach it from **Register suppliers** and retain money/item handover. Restricted account screens also offer **Sign out and switch account**.
+- Mobile list reads now use allowlisted resources in the central server registry. The bearer-session `requireMobileProfile` gate resolves the active user and factory through the session/RLS and returns `withTenantDataScope`; `POST /api/mobile/suppliers` validates an active same-factory line, required customer/GPS fields, image ownership/existence and registration provenance. Factory and acting user come from the authenticated profile. Retrying the same completed registration does not insert it twice.
+- Applied and recorded `0082_driver_supplier_registration.sql` atomically on Neon **development-01 only**, after inspecting the migration ceiling. It extends the existing restrictive supplier-device policy and create-only document upload permission to drivers; the separate factory-isolation policy remains in force. Drivers now claim their handset at sign-in just like field officers. Preview/Production are unchanged.
+- Validation: 288 web tests, 7 native render/navigation recovery checks, mobile/web/database type checks and web lint passed. The host-pinned `packages/db/src/verify-mobile-registration-neon.ts` passed 36 checks using synthetic factories/users in a transaction that rolls back, covering both roles, wrong/missing/released phones, cross-factory writes/reads, tenant replacement, line FK checks and delete dependencies. Tenant invariants passed for 54 factory-scoped tables. The Android bundle and unsigned endpoint rejection were verified on the live development servers.
+- Applied and recorded `0083_driver_user_assignments.sql` on **development-01 only**. It links each driver record to one existing active Driver user through the **User ID** LOV, with a same-factory composite FK, unique mapping and database role guard. The composite NO ACTION constraint is deferred so the existing single-column ON DELETE SET NULL can preserve driver history on user removal; the rollback test verifies that behavior. Driver is also selectable as a base role when configuring existing user accounts.
+- Native registration reads and saves additionally check the signed-in driver's own `drivers.user_id → line_drivers` links. RLS restricts drivers to their own active line assignments and those lines' suppliers/handover requests; a driver cannot edit the registry, assign themselves another line or promote their own account. Field officers retain registration across active factory lines. The existing Drivers page and its User ID options were verified in the signed-in development browser without saving any user/driver/line assignments.
+- The legacy seed-based `db:verify-rls` stopped because seeded collector/supplier rows are missing on this branch; it did not mutate data. No reseed was performed. The feature-specific rollback suite and tenant-invariant checks cover this change.
+- Actual phone GPS/camera capture and a completed signed-in registration remain acceptance checks for the user. The old Supabase OTP verification suite does not exercise this Neon bearer-session flow; no existing account passwords or bindings were reset for these tests.
+
 ## 2026-09-18 - Neon cutover hardening and verification (not yet released)
 
 - Web login is username/password only. Legacy email confirmation links return to login. Runtime session, auth administration, storage and job adapters now use Neon; keeping the Supabase SDK for PostgREST compatibility does not imply using the Supabase service.

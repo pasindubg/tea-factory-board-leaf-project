@@ -60,7 +60,7 @@ in **[MILESTONES.md](MILESTONES.md)**.
 |-------|-----------|
 | Monorepo | Turborepo + pnpm workspaces |
 | Web dashboard | Next.js 15 (App Router), TypeScript, Tailwind CSS v4, Recharts |
-| Mobile app | Expo (React Native), TypeScript |
+| Mobile app | React with Vite + Android WebView shell ([release guide](docs/mobile/HYBRID_APP.md)) |
 | Backend | Supabase — Postgres, Auth (email OTP), Row Level Security for multi-tenancy |
 | ORM / migrations | Drizzle ORM + drizzle-kit |
 | API | `supabase-js` for CRUD; tRPC reserved for payment calculation & sync |

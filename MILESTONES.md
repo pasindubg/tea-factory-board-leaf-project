@@ -22,6 +22,19 @@ that first.
 > only after the ERP is complete — and M7/M8 quietly build the supplier-quality
 > dataset it will monetize.
 
+**Mobile registration (2026-10-20):** Field officers and drivers both register
+suppliers on their bound phones; drivers also retain handover. See FA8 in
+[the mobile plan](docs/mobile/MILESTONES.md) for the tenant/device verification gate.
+**Numbering (2026-10-21):** Registration numbers are automatic and immutable;
+existing customer numbers remain unassigned until the office enters them in ERP
+Customers. Concurrent and failed-save numbering checks pass on development.
+
+**Mobile release direction (2026-11-21):** A hosted mobile SPA in an Android
+shell replaces the proposed continuously hosted Expo Go server as the target.
+See [the hybrid build and release guide](docs/mobile/HYBRID_APP.md).
+The migrated mobile app needs Android acceptance with the deployed API before
+staff rollout.
+
 ---
 
 # Phase 1 — Factory ERP

@@ -15,7 +15,7 @@ function lineInvalidation(): ListInvalidation[] {
 
 function driverFields(formData: FormData) {
   return {
-    name: String(formData.get("name") ?? "").trim(),
+    user_id: String(formData.get("user_id") ?? "").trim(),
     phone: String(formData.get("phone") ?? "").trim() || null,
     nic_number: String(formData.get("nic_number") ?? "").trim() || null,
     licence_no: String(formData.get("licence_no") ?? "").trim() || null,
@@ -25,9 +25,13 @@ function driverFields(formData: FormData) {
 export async function createDriver(formData: FormData): Promise<ListMutationResult> {
   const { supabase, profile } = await requirePagePermission("drivers", "create");
   const fields = driverFields(formData);
-  if (!fields.name) return { ok: false, error: "Driver name is required." };
+  if (!fields.user_id) return { ok: false, error: "Choose an existing Driver user in User ID." };
+  const { data: user, error: userError } = await supabase.from("users").select("id, name")
+    .eq("id", fields.user_id).eq("role", "driver").eq("active", true).maybeSingle();
+  if (userError) return { ok: false, error: friendlyError(userError) };
+  if (!user) return { ok: false, error: "User ID must be an active Driver user in this factory." };
 
-  const { error } = await supabase.from("drivers").insert({ factory_id: profile.factory_id, ...fields });
+  const { error } = await supabase.from("drivers").insert({ factory_id: profile.factory_id, ...fields, name: user.name });
   if (error) return { ok: false, error: friendlyError(error) };
 
   revalidatePath(DRIVERS_PATH);
@@ -39,11 +43,15 @@ export async function updateDriver(id: string, formData: FormData): Promise<List
   const { supabase, profile } = await requirePagePermission("drivers", "update");
   if (!id) return { ok: false, error: "Driver id is required." };
   const fields = driverFields(formData);
-  if (!fields.name) return { ok: false, error: "Driver name is required." };
+  if (!fields.user_id) return { ok: false, error: "Choose an existing Driver user in User ID." };
+  const { data: user, error: userError } = await supabase.from("users").select("id, name")
+    .eq("id", fields.user_id).eq("role", "driver").eq("active", true).maybeSingle();
+  if (userError) return { ok: false, error: friendlyError(userError) };
+  if (!user) return { ok: false, error: "User ID must be an active Driver user in this factory." };
 
   const { data, error } = await supabase
     .from("drivers")
-    .update(fields)
+    .update({ ...fields, name: user.name })
     .eq("id", id)
     .eq("factory_id", profile.factory_id)
     .select("id")

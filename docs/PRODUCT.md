@@ -29,8 +29,19 @@ below and the A-track in [MILESTONES.md](../MILESTONES.md).
 | Factory owner | Office | Desktop | Web app, full access incl. user management |
 | Manager | Office / factory floor | Desktop | Web app, full access except user management |
 | Collector / weighing clerk (`collector` role) | Desk at the factory gate | Desktop | Web app, **restricted**: weighing entry + own records only |
+| Field officer / route driver | In the field | Phone | Mobile supplier registration; Driver user IDs see assigned lines and their handovers only |
 | Estate owner / leaf supplier | In the field | Phone | Mobile field app (**Phase 2**) |
 | Platform admin | — | Desktop | Admin panel (**Phase 2**) |
+
+Supplier registration uses an automatic, read-only registration number in a
+separate sequence for each factory. The office assigns the factory's existing
+customer number afterward through ERP Customers; mobile users cannot enter or
+change it. Existing customer numbers keep their leading zeros.
+
+**Mobile release direction (2026-11-21):** Keep `apps/web` and `apps/mobile`
+separate. The target mobile release is a Vercel-hosted single-page web UI inside
+an Android shell with native camera/GPS adapters, calling the shared authenticated
+API and Neon database. See [mobile/HYBRID_APP.md](mobile/HYBRID_APP.md). The mobile interface requires an internet connection.
 
 **The reality check that shaped this (June 2026, customer zero):** collectors do
 not use phones on the job. Leaf bags arrive at the factory, are weighed at the

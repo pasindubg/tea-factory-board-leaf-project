@@ -1,0 +1,36 @@
+plugins { id 'com.android.application' }
+
+def mobileWebUrl = providers.gradleProperty('MOBILE_WEB_URL').orElse('').get()
+def parsedUrl
+try { parsedUrl = new URI(mobileWebUrl) } catch (Exception ignored) { throw new GradleException('MOBILE_WEB_URL must be a valid HTTPS origin.') }
+if (parsedUrl.scheme != 'https' || !parsedUrl.host || parsedUrl.userInfo || parsedUrl.query || parsedUrl.fragment || !(parsedUrl.path in ['', '/'])) {
+    throw new GradleException('Set -PMOBILE_WEB_URL=https://your-mobile-site.vercel.app (origin only).')
+}
+
+android {
+    namespace 'lk.boardleaf.field'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'lk.boardleaf.field'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        buildConfigField 'String', 'MOBILE_WEB_URL', '"' + mobileWebUrl.replaceAll('/$', '') + '"'
+    }
+    buildFeatures { buildConfig true }
+    buildTypes {
+        debug { applicationIdSuffix '.debug'; versionNameSuffix '-debug' }
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError true }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    testImplementation 'junit:junit:4.13.2'
+}

@@ -1,0 +1,108 @@
+export type Role =
+  | "owner"
+  | "manager"
+  | "supervisor"
+  | "accountant"
+  | "collector"
+  | "supplier"
+  | "driver"
+  | "field_officer";
+
+export type Profile = {
+  id: string;
+  name: string;
+  role: Role;
+  factory_id: string;
+  supplier_id: string | null; // set for supplier-role logins (links to a suppliers row)
+};
+
+// The supplier a supplier-role login represents.
+export type LinkedSupplier = { id: string; name: string; area: string | null };
+
+// --- Field-app request catalogue (server-driven UI, see docs/mobile) ---
+export type RequestField = {
+  name: string;
+  type: "text" | "number" | "date" | "boolean";
+  label: string;
+  required?: boolean;
+};
+
+export type RequestType = {
+  id: string;
+  key: string;
+  label: string;
+  fields: RequestField[];
+  requires_amount: boolean;
+  creates_advance: boolean;
+  sort_order: number;
+};
+
+export type RequestStatus =
+  | "pending"
+  | "approved"
+  | "declined"
+  | "handed_to_driver"
+  | "acknowledged"
+  | "cancelled";
+
+export type SupplierRequest = {
+  id: string;
+  supplier_id: string;
+  type_key: string;
+  amount: string | null;
+  status: RequestStatus;
+  note: string | null;
+  requested_at: string;
+  handed_at: string | null;
+  acknowledged_at: string | null;
+  suppliers?: { name: string } | null; // joined for the driver route view
+};
+
+// --- Factory → supplier messages (FA3) ---
+export type SupplierMessage = {
+  id: string;
+  supplier_id: string | null; // null = broadcast to all suppliers
+  title: string;
+  body: string;
+  sent_at: string;
+  read_at: string | null;
+};
+
+// --- Field officer: customer registration by line ---
+export type LineRow = {
+  id: string;
+  line_no: string;
+  name: string | null;
+  vehicles: { vehicle_no: string } | null;
+};
+
+export type CustomerRow = {
+  id: string;
+  registration_no: number;
+  customer_no: string | null;
+  name: string;
+  phone: string;
+  address: string | null;
+  latitude: string;
+  longitude: string;
+};
+
+export type DeviceRegistration = "bound" | "claimed" | "blocked" | "invalid";
+
+// --- Legacy collector shapes (parked M4 collector screens) ---
+export type CollectorRow = { id: string; name: string; area: string | null };
+export type Supplier = { id: string; name: string; area: string | null };
+export type Weighing = {
+  id: string;
+  weight_kg: string;
+  collected_at: string;
+  suppliers: { name: string } | null;
+};
+
+export type MobileRegistrationResource =
+  | { key: "field.lines"; params?: undefined }
+  | { key: "field.line-suppliers"; params: { lineId: string } };
+
+export function roleMayRegisterSuppliers(role: string | null | undefined) {
+  return role === "driver" || role === "field_officer";
+}

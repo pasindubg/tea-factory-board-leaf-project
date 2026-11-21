@@ -1,0 +1,10 @@
+html, body, #root, #online-content { height: 100%; margin: 0; }
+body { color: #1c1917; background: #fafaf9; font: 16px system-ui, sans-serif; }
+#online-content { display: flex; flex-direction: column; }
+.mobile-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mobile-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: white; border-block: 1px solid #e7e5e4; }
+.mobile-bar button, .notice button { color: #166534; background: white; border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; font: inherit; }
+.network-overlay, .notice { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; gap: 8px; }
+.network-overlay { position: fixed; z-index: 10000; inset: 0; background: #fafaf9; }
+.network-overlay strong { font-size: 22px; }
+.network-overlay p { margin: 0; color: #57534e; }
