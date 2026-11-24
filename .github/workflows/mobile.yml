@@ -1,0 +1,63 @@
+name: Mobile checks
+
+on:
+  pull_request:
+    branches: [main, blm-cloud-release]
+  push:
+    branches: [main, blm-cloud-release]
+  workflow_dispatch:
+    inputs:
+      mobile_web_url:
+        description: HTTPS origin of the hosted mobile website
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.22.0"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/mobile/web typecheck
+      - run: pnpm --dir apps/mobile/web build
+      - run: pnpm --dir apps/mobile-api build
+
+  android:
+    runs-on: ubuntu-latest
+    needs: web
+    defaults:
+      run:
+        working-directory: apps/mobile/shell
+    env:
+      MOBILE_WEB_URL: ${{ inputs.mobile_web_url || 'https://field.example.com' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - run: gradle --no-daemon "-PMOBILE_WEB_URL=$MOBILE_WEB_URL" testDebugUnitTest lintDebug assembleDebug
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: tea-factory-field-test-apk
+          path: apps/mobile/shell/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

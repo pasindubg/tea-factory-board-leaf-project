@@ -1,4 +1,8 @@
 import "server-only";
+import { NextResponse } from "next/server";
+import { requireMobileProfile } from "@/lib/neon/mobile-session";
+import { MOBILE_SUPPLIER_REGISTRATION_ROLES } from "@/lib/roles";
+import { mobileRegistrationLineIds } from "@/lib/mobile-driver-lines";
 
 import { invoiceMatchKey } from "@tea/api";
 import { JOB_DEFINITIONS, JOB_STATE_CHIPS, isJobKey, type JobKey, type JobRunStatus } from "@/lib/background-jobs";
@@ -28,6 +32,40 @@ import {
 } from "@/lib/list-search-query";
 
 type AccessContext = Awaited<ReturnType<typeof requireModuleAccess>>;
+
+/** Native lists use the same server-owned registry with bearer authentication.
+ * Neither a table name nor tenant/actor predicates can come from the phone. */
+export async function loadMobileRegistrationResource(request: Request, input: unknown) {
+  const candidate = input as { key?: unknown; params?: unknown } | null;
+  if (!candidate || (candidate.key !== "field.lines" && candidate.key !== "field.line-suppliers")) {
+    return NextResponse.json({ error: "Unknown list resource." }, { status: 400 });
+  }
+  const parsed = candidate.key === "field.lines"
+    ? parseNoListParams(candidate.params)
+    : parseUuidListParams(candidate.params, "lineId");
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const caller = await requireMobileProfile(request, MOBILE_SUPPLIER_REGISTRATION_ROLES);
+  if (caller instanceof Response) return caller;
+  if (!caller.deviceBound) return NextResponse.json({ error: "Sign in on your registered phone to view supplier registration." }, { status: 403 });
+  const { supabase } = caller;
+  const lineIds = await mobileRegistrationLineIds(caller);
+  if (candidate.key === "field.lines") {
+    if (lineIds?.length === 0) return NextResponse.json({ ok: true, rows: [] });
+    let query = supabase.from("lines").select("id, line_no, name, vehicles(vehicle_no)").eq("active", true);
+    if (lineIds) query = query.in("id", lineIds);
+    const { data, error } = await query.order("line_no");
+    if (error) return NextResponse.json({ error: friendlyError(error) }, { status: 400 });
+    return NextResponse.json({ ok: true, rows: data ?? [] });
+  }
+  const lineId = (parsed.value as { lineId: string }).lineId;
+  if (lineIds && !lineIds.includes(lineId)) return NextResponse.json({ error: "This line is not assigned to your Driver user." }, { status: 404 });
+  const line = await supabase.from("lines").select("id").eq("id", lineId).eq("active", true).maybeSingle();
+  if (line.error || !line.data) return NextResponse.json({ error: "This line is not available in your factory." }, { status: 404 });
+  const { data, error } = await supabase.from("suppliers")
+    .select("id, registration_no, customer_no, name, phone, address, latitude, longitude").eq("line_id", lineId).order("name");
+  if (error) return NextResponse.json({ error: friendlyError(error) }, { status: 400 });
+  return NextResponse.json({ ok: true, rows: data ?? [] });
+}
 type ResourceParams = Readonly<Record<string, unknown>>;
 type ResourceSearchArgs = {
   criteria: Record<string, string>;
@@ -852,6 +890,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     moduleKey: "suppliers",
     parse: parseNoParams,
     search: { columns: {
+      registrationNo: { column: "registration_no", mode: "equals" },
       active: { column: "active", mode: "equals" },
       lineNo: { column: "lines.line_no", mode: "contains", embed: "lines" },
     } },
@@ -860,7 +899,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         supabase
           .from("suppliers")
           .select(
-            "id, customer_no, name, phone, nic_number, area, address, land_size_acres, cultivated_area_acres, latitude, longitude, bank_account_no, bank_name, bank_parse_status, photo_path, bank_book_path, collector_id, line_id, active, collectors(name), lines(line_no)",
+            "id, registration_no, customer_no, name, phone, nic_number, area, address, land_size_acres, cultivated_area_acres, latitude, longitude, bank_account_no, bank_name, bank_parse_status, photo_path, bank_book_path, collector_id, line_id, active, collectors(name), lines(line_no)",
           ),
       );
       const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
@@ -885,6 +924,7 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         hasMore,
         rows: page.map((supplier) => ({
           id: supplier.id,
+          registrationNo: supplier.registration_no,
           customerNo: supplier.customer_no,
           name: supplier.name,
           area: supplier.area,
@@ -993,9 +1033,11 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
     parse: parseNoParams,
     search: { columns: {
       active: { column: "active", mode: "equals" },
+      userId: { column: "users.username", mode: "contains", embed: "users" },
     } },
     async load({ supabase }, _params, search) {
-      const query = search.apply(supabase.from("drivers").select("id, name, phone, nic_number, licence_no, active"));
+      const inner = activeEmbeds(search.criteria, search.advancedQuery, search.columns).has("users") ? "!inner" : "";
+      const query = search.apply(supabase.from("drivers").select(`id, user_id, name, phone, nic_number, licence_no, active, users!drivers_user_id_users_id_fk${inner}(name, username)`));
       const { data, error } = await applyListPage(query.order("active", { ascending: false }).order("name").order("id"), search.page);
       if (error) return { ok: false, error: friendlyError(error) };
       const { rows: page, hasMore } = splitPage(data ?? [], search.page.limit);
@@ -1004,7 +1046,9 @@ export const resources: Record<ListResourceKey, ResourceDefinition> = {
         hasMore,
         rows: page.map((driver) => ({
           id: driver.id,
-          name: driver.name,
+          userId: driver.user_id ?? null,
+          userLabel: (driver.users as unknown as { username: string | null; name: string } | null)?.username ?? (driver.users as unknown as { name: string } | null)?.name ?? null,
+          name: (driver.users as unknown as { name: string } | null)?.name ?? driver.name,
           phone: driver.phone,
           nicNumber: driver.nic_number,
           licenceNo: driver.licence_no,

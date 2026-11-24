@@ -13,8 +13,9 @@ const cellInput = "w-full min-w-24 rounded border border-stone-300 bg-white px-2
 export function NewCustomerRow({ formId, collectors }: { formId: string; collectors: CollectorOption[] }) {
   return (
     <>
+      <td className="px-4 py-3 text-xs text-stone-500">Automatic on save</td>
       <td className="px-4 py-3">
-        <input form={formId} name="customer_no" required inputMode="numeric" pattern="[0-9]+" aria-label="Customer number" className={cellInput} />
+        <input form={formId} name="customer_no" inputMode="numeric" pattern="[0-9]+" aria-label="Customer number" placeholder="Optional office number" className={cellInput} />
       </td>
       <td className="px-4 py-3">
         <input form={formId} name="name" required aria-label="Customer name" className={cellInput} />

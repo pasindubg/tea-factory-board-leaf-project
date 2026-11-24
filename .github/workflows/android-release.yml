@@ -1,0 +1,74 @@
+name: Release Android APK
+
+on:
+  push:
+    branches: [blm-cloud-release]
+    paths: ['apps/mobile/shell/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/blm-cloud-release'
+    runs-on: ubuntu-latest
+    environment: mobile-release
+    permissions:
+      contents: write
+    env:
+      MOBILE_WEB_URL: ${{ vars.MOBILE_WEB_URL }}
+      TAG: field-android-${{ github.run_number }}
+    defaults:
+      run:
+        working-directory: apps/mobile/shell
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build and check the release APK
+        run: |
+          set -euo pipefail
+          [[ "$MOBILE_WEB_URL" == https://* ]] || { echo 'Set MOBILE_WEB_URL to the production mobile site HTTPS origin.'; exit 1; }
+          sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+          gradle --no-daemon "-PMOBILE_WEB_URL=$MOBILE_WEB_URL" \
+            "-PAPK_VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))" "-PAPK_VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" \
+            testReleaseUnitTest lintRelease assembleRelease
+      - name: Sign and verify the APK
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key="$RUNNER_TEMP/field-release.jks"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "${KEYSTORE:?Missing Android keystore}" | base64 --decode > "$key"
+          tools="$ANDROID_HOME/build-tools/34.0.0"
+          "$tools/zipalign" -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$key" --ks-key-alias "${KEY_ALIAS:?}" \
+            --ks-pass env:STORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --out "$RUNNER_TEMP/Tea-Factory-Field.apk" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --verbose "$RUNNER_TEMP/Tea-Factory-Field.apk"
+      - name: Publish verified APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+              --title "Tea Factory Field 1.0.$GITHUB_RUN_NUMBER" --notes "Android shell built from $GITHUB_SHA."
+          fi
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]]; then
+            gh release upload "$TAG" "$RUNNER_TEMP/Tea-Factory-Field.apk" --clobber
+            gh release edit "$TAG" --draft=false --latest=false
+          fi

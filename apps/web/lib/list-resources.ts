@@ -1,3 +1,7 @@
+export type MobileRegistrationResource =
+  | { key: "field.lines"; params?: undefined }
+  | { key: "field.line-suppliers"; params: { lineId: string } };
+
 /**
  * Client-safe identities and serializable row contracts for framework lists.
  *
@@ -342,7 +346,8 @@ export type BackgroundJobListRow = {
 
 export type SupplierListRow = {
   id: string;
-  customerNo: string;
+  registrationNo: number;
+  customerNo: string | null;
   name: string;
   area: string | null;
   address: string | null;
@@ -396,6 +401,8 @@ export type VehicleListRow = {
 
 export type DriverListRow = {
   id: string;
+  userId: string | null;
+  userLabel: string | null;
   name: string;
   phone: string | null;
   nicNumber: string | null;

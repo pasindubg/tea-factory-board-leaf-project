@@ -5,17 +5,33 @@ if (!url) throw new Error("DATABASE_URL is not set");
 const sql = postgres(url, { max: 1, prepare: false });
 
 const INTENTIONAL_OMISSIONS: Record<string, { cmds: string[]; why: string }> = {
+  supplier_registration_counters: {
+    cmds: ["DELETE"],
+    why: "Internal numbering state is retained so registration numbers are never reused.",
+  },
   weighings: {
     cmds: ["UPDATE", "DELETE"],
     why: "Intake is an immutable audit trail; corrections are new rows, never edits.",
   },
   user_devices: {
     cmds: ["INSERT", "DELETE"],
-    why: "Devices are claimed through register_device() and retired with revoked_at.",
+    why: "Mobile sessions are registered through an authenticated RPC and released with revoked_at.",
   },
   user_profiles: {
     cmds: ["DELETE"],
     why: "Removed by cascade from users, never directly.",
+  },
+  auction_dispatch_lot_checks: {
+    cmds: ["DELETE"],
+    why: "A started physical manifest is retained with its bag and audit history.",
+  },
+  auction_dispatch_bags: {
+    cmds: ["DELETE"],
+    why: "Numbered bag rows remain as the permanent physical dispatch record.",
+  },
+  auction_dispatch_bag_events: {
+    cmds: ["UPDATE", "DELETE"],
+    why: "Bag events are append-only audit history.",
   },
 };
 

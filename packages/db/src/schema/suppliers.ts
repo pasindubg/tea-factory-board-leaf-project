@@ -6,6 +6,7 @@ import {
   boolean,
   timestamp,
   numeric,
+  integer,
   index,
   uniqueIndex,
   foreignKey,
@@ -27,8 +28,10 @@ export const suppliers = pgTable(
     collectorId: uuid("collector_id").references(() => collectors.id),
     // The number this customer already carries in the factory's existing
     // system. Digits only — factories number their customer book plainly — but
-    // text, so leading zeros survive verbatim.
-    customerNo: text("customer_no").notNull(),
+    // text, so leading zeros survive verbatim. Unassigned until office review.
+    customerNo: text("customer_no"),
+    // Assigned atomically by the database; separate from the office's number.
+    registrationNo: integer("registration_no").notNull().$defaultFn(() => sql`NULL`),
     lineId: uuid("line_id"),
     name: text("name").notNull(),
     phone: text("phone").notNull(),
@@ -63,6 +66,8 @@ export const suppliers = pgTable(
     index("idx_suppliers_line").on(t.lineId),
     index("idx_suppliers_geo").on(t.latitude, t.longitude),
     uniqueIndex("uq_suppliers_factory_customer_no").on(t.factoryId, t.customerNo),
+    uniqueIndex("uq_suppliers_factory_registration_no").on(t.factoryId, t.registrationNo),
+    check("suppliers_registration_no_check", sql`${t.registrationNo} > 0`),
     check("suppliers_customer_no_check", sql`${t.customerNo} ~ '^[0-9]+$'`),
     check("suppliers_phone_check", sql`length(btrim(${t.phone})) > 0`),
     check("suppliers_latitude_check", sql`${t.latitude} BETWEEN -90 AND 90`),

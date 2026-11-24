@@ -3,6 +3,7 @@
 import { EntityList, type EntityListColumn } from "@/components/entity-list";
 import type { ListDefinition } from "@/components/list-controls";
 import type { DriverListRow } from "@/lib/list-resources";
+import { LovCombobox } from "@/components/lov-combobox";
 import { createDriver, setSelectedDriversActive, updateDriver } from "./actions";
 
 export type DriverRow = DriverListRow;
@@ -12,6 +13,11 @@ const cellInput = "w-full min-w-24 rounded border border-stone-300 bg-white px-2
 
 const COLUMNS: EntityListColumn<DriverRow>[] = [
   {
+    key: "userId", label: "User ID", accessor: (row) => row.userLabel ?? "Unlinked",
+    sortable: true, filter: "text", lovSource: "users.driver-accounts", lovEdit: true,
+    lovName: "user_id", lovValue: (row) => row.userId ?? "",
+  },
+  {
     key: "name",
     label: "Name",
     accessor: (row) => row.name,
@@ -19,7 +25,6 @@ const COLUMNS: EntityListColumn<DriverRow>[] = [
     filter: "text",
     lov: false,
     cellClassName: "font-medium",
-    edit: (row, { formId }) => <input form={formId} name="name" aria-label="Driver name" required defaultValue={row.name} className={input} />,
   },
   {
     key: "phone",
@@ -79,7 +84,7 @@ export function DriversTable({ rows }: { rows: DriverRow[] }) {
       getId={(row) => row.id}
       rowLabel={(row) => row.name}
       title="Drivers"
-      description="Drivers who run the collection lines."
+      description="Link an existing Driver user, then assign that driver to collection lines."
       emptyMessage="No drivers yet. Use New driver to add the first one."
       create={{
         action: createDriver,
@@ -87,7 +92,8 @@ export function DriversTable({ rows }: { rows: DriverRow[] }) {
         disabledReason: "Finish the current driver change first.",
         renderRow: ({ formId }) => (
           <>
-            <td className="px-4 py-3"><input form={formId} name="name" required aria-label="Driver name" className={cellInput} /></td>
+            <td className="px-4 py-3"><LovCombobox formId={formId} name="user_id" source="users.driver-accounts" ariaLabel="User ID" required /></td>
+            <td className="px-4 py-3"><span className="text-stone-500">From selected user</span></td>
             <td className="px-4 py-3"><input form={formId} name="phone" aria-label="Phone" className={cellInput} /></td>
             <td className="px-4 py-3"><input form={formId} name="nic_number" aria-label="NIC number" className={cellInput} /></td>
             <td className="px-4 py-3"><input form={formId} name="licence_no" aria-label="Licence number" className={cellInput} /></td>

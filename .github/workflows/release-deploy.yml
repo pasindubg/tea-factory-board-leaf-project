@@ -19,6 +19,16 @@ name: Release — deploy blm-cloud-release
 # the logs. Rotate it in Vercel if it is ever exposed.
 
 on:
+  push:
+    branches: [blm-cloud-release]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.npmrc'
+      - 'turbo.json'
   workflow_dispatch:
 
 concurrency:
@@ -27,6 +37,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/blm-cloud-release'
     name: Trigger Vercel production build
     runs-on: ubuntu-latest
 

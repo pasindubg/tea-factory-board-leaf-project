@@ -33,6 +33,7 @@ export const auctionBundledDispatches = pgTable(
     // draft -> invoiced -> dispatched (manual) -> received -> catalogued. Only
     // "dispatched" is a human action; see app/dashboard/auction/dispatch-status.ts.
     status: text("status", { enum: ["draft", "invoiced", "dispatched", "received", "catalogued"] }).default("draft").notNull(),
+    bagCheckMode: text("bag_check_mode", { enum: ["legacy", "controlled"] }).default("legacy").notNull(),
     // When the dispatcher marked it as gone. Held separately from `status` so
     // the derived stages can fall back to "dispatched" rather than "draft" if
     // a new broker invoice joins an already-received dispatch.
@@ -49,6 +50,7 @@ export const auctionBundledDispatches = pgTable(
       .generatedAlwaysAs(sql`("created_at" at time zone 'UTC' at time zone 'Asia/Colombo')::date`),
   },
   (t) => [
+    uniqueIndex("uq_auction_bundled_dispatches_factory_id").on(t.factoryId, t.id),
     index("idx_auction_bundled_dispatches_factory").on(t.factoryId),
     index("idx_auction_bundled_dispatches_factory_date").on(t.factoryId, t.dispatchDate),
     index("idx_auction_bundled_dispatches_factory_date_range").on(t.factoryId, t.dispatchDateFrom, t.dispatchDateTo),

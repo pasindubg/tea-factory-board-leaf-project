@@ -6,7 +6,7 @@ vi.mock("@aws-sdk/client-s3", async (original) => ({
   S3Client: class { send = send; },
 }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: sign }));
-import { neonBucket, presignUpload } from "./storage";
+import { createSupplierPhoto, neonBucket, presignUpload } from "./storage";
 
 beforeEach(() => {
   vi.stubEnv("AWS_ENDPOINT_URL_S3", "https://storage.example.test");
@@ -37,5 +37,20 @@ describe("tenant storage boundaries", () => {
     await presignUpload("supplier-documents", "factory-a/file", "image/png", 4, 300, true);
     expect(sign.mock.calls[0][1].input.IfNoneMatch).toBe("*");
     expect(sign.mock.calls[0][2].signableHeaders.has("if-none-match")).toBe(true);
+  });
+  it("accepts only an identical replay of an already uploaded registration photo", async () => {
+    const path = "factory-a/supplier-id/photo.jpg";
+    const bytes = Buffer.from("test JPG");
+    await expect(createSupplierPhoto("factory-b", path, bytes)).rejects.toThrow("outside this factory");
+    expect(send).not.toHaveBeenCalled();
+
+    await expect(createSupplierPhoto("factory-a", path, bytes)).resolves.toBe(true);
+    const request = send.mock.calls[0][0].input;
+    expect(request.IfNoneMatch).toBe("*");
+    const exists = { $metadata: { httpStatusCode: 412 } };
+    send.mockRejectedValueOnce(exists).mockResolvedValueOnce({ Metadata: request.Metadata });
+    await expect(createSupplierPhoto("factory-a", path, bytes)).resolves.toBe(true);
+    send.mockRejectedValueOnce(exists).mockResolvedValueOnce({ Metadata: request.Metadata });
+    await expect(createSupplierPhoto("factory-a", path, Buffer.from("other JPG"))).resolves.toBe(false);
   });
 });

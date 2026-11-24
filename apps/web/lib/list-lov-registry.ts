@@ -37,6 +37,11 @@ type LovSourceDefinition = {
 };
 
 const sources: Record<LovSourceKey, LovSourceDefinition> = {
+  "users.driver-accounts": {
+    moduleKey: "drivers", table: "users", valueColumn: "id", labelColumn: "username",
+    descriptionColumn: "name", searchColumns: ["name", "username"],
+    orderBy: [{ column: "name" }], scope: { role: "driver", active: true },
+  },
   "auction.brokers": {
     moduleKey: "auction",
     table: "brokers",

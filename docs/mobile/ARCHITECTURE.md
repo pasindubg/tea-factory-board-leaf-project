@@ -3,6 +3,11 @@
 Technical design for the Phase 2 suppliers/driver field app. Product context:
 [PRODUCT.md](./PRODUCT.md). Build plan: [MILESTONES.md](./MILESTONES.md).
 
+**Current implementation (2026-11-21):** The field app is a hosted React SPA
+inside an Android WebView shell. See [HYBRID_APP.md](./HYBRID_APP.md) for the
+implementation and deployment steps. The earlier Expo design below describes
+the historical milestone plan. The app requires a network connection.
+
 The guiding constraint: **this is not a new product, it is a new surface on the
 existing system.** It shares the ERP's database, RLS, types, and payment engine. So
 the architecture is mostly "extend what's there," and the genuinely new design work
