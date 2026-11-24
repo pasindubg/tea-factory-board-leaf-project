@@ -11,12 +11,14 @@ function getDataApiUrl() {
 type ClientOptions = {
   accessToken?: string;
   deviceId?: string;
+  mobileSessionProof?: string;
 };
 
-export function createNeonClient({ accessToken, deviceId }: ClientOptions = {}): SupabaseClient {
+export function createNeonClient({ accessToken, deviceId, mobileSessionProof }: ClientOptions = {}): SupabaseClient {
   const headers: Record<string, string> = {};
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (deviceId) headers["x-device-id"] = deviceId;
+  if (mobileSessionProof) headers["x-mobile-session-proof"] = mobileSessionProof;
 
   return createClient(getDataApiUrl(), UNUSED_ANON_KEY, {
     auth: {

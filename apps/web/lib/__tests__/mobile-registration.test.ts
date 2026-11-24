@@ -78,9 +78,9 @@ describe("mobile registration permissions and identity", () => {
     expect(inserted).toHaveLength(0);
     expect(roleMayRegisterSuppliers(denied)).toBe(false);
   });
-  it.each(["driver", "field_officer"])("requires the registered phone for %s", async (allowed) => {
+  it.each(["driver", "field_officer"])("requires the active mobile session for %s", async (allowed) => {
     role = allowed; bound = false;
-    expect((await register(request(input()))).status).toBe(403);
+    expect((await register(request(input()))).status).toBe(401);
     expect(inserted).toHaveLength(0);
   });
   it("refuses unsigned and inactive accounts", async () => {
@@ -180,7 +180,7 @@ describe("supplier photo uploads", () => {
   });
   it("rejects unbound, foreign-path and overwrite uploads", async () => {
     bound = false;
-    expect((await upload(request(image()))).status).toBe(403);
+    expect((await upload(request(image()))).status).toBe(401);
     bound = true;
     expect((await upload(request({ ...image(), path: `${foreign}/${supplier}/photo.jpg` }))).status).toBe(403);
     mocks.objectExists.mockResolvedValue(true);

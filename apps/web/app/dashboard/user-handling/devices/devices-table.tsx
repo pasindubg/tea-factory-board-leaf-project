@@ -74,7 +74,7 @@ export function DevicesTable({ rows }: { rows: DeviceRow[] }) {
       getId={(row) => row.id}
       rowLabel={(row) => row.userName}
       title="Bound devices"
-      description="A mobile login works on one phone. Release a device to let that user sign in on a replacement."
+      description="Drivers and field officers can sign in on one phone at a time. Release a device if the user cannot sign out from that phone."
       emptyMessage="No devices bound yet."
       commands={[
         {
@@ -83,7 +83,7 @@ export function DevicesTable({ rows }: { rows: DeviceRow[] }) {
           disabled: ({ selectedRows }) => selectedRows.length === 0,
           confirm: {
             title: "Release device",
-            description: "The selected users will be signed out of that phone and may pair a new one.",
+            description: "This ends access from the selected phones so the users can sign in again.",
             confirmLabel: "Release",
           },
           run: ({ selectedRows }) => {

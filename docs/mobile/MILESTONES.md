@@ -46,18 +46,18 @@ fix that FA5 route optimisation will later order stops by.
   (composite FK, so a customer can never be put on another tenant's line),
   `address`, `cultivated_area_acres`, photo/bank-book paths, bank account
   fields, GPS accuracy/timestamp, and registration provenance.
-- Per-device auth: `user_devices` + `register_device()`; the phone's
-  secure-storage id rides on every request as `x-device-id`, and a RESTRICTIVE
-  RLS policy refuses a field officer's or driver's supplier access from any other handset. Owners
-  and managers release a lost phone from *Bound devices*.
+- Drivers and field officers can have one active mobile session. The API
+  verifies both the phone and the Neon Auth session, and the supplier RLS
+  policy enforces that same check. Signing out or session expiry frees the slot.
+  Owners and managers can release an unavailable phone from *Bound devices*.
 - Private `supplier-documents` bucket, pathed `factory_id/supplier_id/`.
 - App flow: **line list → customers on that line → register customer**, so the
   line is chosen once and never re-asked per customer.
 
-**Verify:** `db:verify-rls`, `db:verify-auth` and `db:verify-device-binding`
-pass; a field officer registers a customer from the bound phone and the same
-insert is refused from a second device; the customer, its line, and its map
-location appear on the web suppliers list.
+**Verify:** The Neon mobile-registration checks cover tenant isolation and the
+active session. A field officer registers a customer from the signed-in phone,
+a second phone is refused until the session ends, and the customer, line, and
+map location appear on the web suppliers list.
 
 **2026-10-20 update:** Drivers retain money/item handover and also reach supplier
 registration through **Register suppliers → line → + New**. Field officers keep

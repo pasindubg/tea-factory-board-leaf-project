@@ -12,10 +12,10 @@ import { roleMayRegisterSuppliers } from "@/lib/types";
 
 export default function LineCustomers() {
   const { id, lineNo, register } = useLocalSearchParams<{ id: string; lineNo?: string; register?: string }>();
-  const { profile, binding } = useSession();
+  const { profile } = useSession();
   const [creating, setCreating] = useState(register === "1");
   const [registeredNo, setRegisteredNo] = useState<number | null>(null);
-  const canCreate = roleMayRegisterSuppliers(profile?.role) && (binding === "bound" || binding === "claimed");
+  const canCreate = roleMayRegisterSuppliers(profile?.role);
   return (
     <SafeAreaView style={s.screen} edges={["bottom"]}>
       <NativeEntityList<CustomerRow>
@@ -24,7 +24,7 @@ export default function LineCustomers() {
         description={(list) => `${list.rows.length} suppliers registered`}
         onCreate={() => { setRegisteredNo(null); setCreating(true); }}
         canCreate={canCreate && !creating}
-        createDisabledReason={creating ? "Complete or cancel the current registration." : "Sign in on your registered phone."}
+        createDisabledReason={creating ? "Complete or cancel the current registration." : "Sign in as a driver or field officer."}
         header={(list) => (
           <>
             {registeredNo != null && <Text accessibilityRole="alert" style={s.muted}>Supplier registered. Registration no: {registeredNo}. Customer number awaiting office assignment.</Text>}

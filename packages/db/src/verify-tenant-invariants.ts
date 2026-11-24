@@ -15,7 +15,7 @@ const INTENTIONAL_OMISSIONS: Record<string, { cmds: string[]; why: string }> = {
   },
   user_devices: {
     cmds: ["INSERT", "DELETE"],
-    why: "Devices are claimed through register_device() and retired with revoked_at.",
+    why: "Mobile sessions are registered through an authenticated RPC and released with revoked_at.",
   },
   user_profiles: {
     cmds: ["DELETE"],

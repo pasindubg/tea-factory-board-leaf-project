@@ -1,5 +1,4 @@
-import { accessToken } from "./auth";
-import { getDeviceId } from "./device";
+import { mobileAuthHeaders } from "./auth";
 
 export async function uploadSupplierImage(
   factoryId: string,
@@ -8,16 +7,16 @@ export async function uploadSupplierImage(
   bytes: Blob,
 ): Promise<{ path: string } | { error: string }> {
   try {
-    const token = await accessToken();
-    if (!token) return { error: "Not signed in." };
+    const auth = await mobileAuthHeaders();
     const path = `${factoryId}/${supplierId}/${kind}.jpg`;
     const response = await fetch(`/api/mobile/supplier-documents?path=${encodeURIComponent(path)}`, {
       method: "PUT",
-      headers: { "Content-Type": "image/jpeg", Authorization: `Bearer ${token}`, "x-device-id": await getDeviceId() },
+      headers: { "Content-Type": "image/jpeg", ...auth.headers },
       body: bytes,
       cache: "no-store",
       signal: AbortSignal.timeout(30000),
     });
+    await auth.handleResponse(response);
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       return { error: body?.error ?? `Upload failed (${response.status}).` };

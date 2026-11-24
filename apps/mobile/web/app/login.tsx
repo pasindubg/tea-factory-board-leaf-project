@@ -10,16 +10,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "@/runtime/safe-area";
 import { signIn } from "@/lib/auth";
-import { useSession } from "@/lib/session";
 import { colors, s } from "@/lib/theme";
 
-const DEVICE_MESSAGES: Record<string, string> = {
-  blocked: "This login is already in use on another phone. Ask the factory to release it first.",
-  invalid: "This phone could not be registered. Try again.",
-};
-
 export default function Login() {
-  const { binding } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,9 +23,6 @@ export default function Login() {
     setError(null);
     const result = await signIn(username.trim().toLowerCase(), password);
     setBusy(false);
-    // On success SessionProvider checks this phone against the login's binding
-    // and the AuthGate routes to the role's home; a rejection comes back as
-    // `binding` below, which survives this screen being remounted.
     if (result.error) setError(result.error);
   }
 
@@ -46,9 +36,9 @@ export default function Login() {
           <Text style={s.h1}>Tea Factory — Field App</Text>
           <Text style={[s.muted, { marginTop: 4 }]}>For field officers, customers and drivers</Text>
 
-          {(error ?? (binding ? DEVICE_MESSAGES[binding] : null)) && (
-            <View style={[s.errorBox, { marginTop: 16 }]}>
-              <Text style={s.errorText}>{error ?? DEVICE_MESSAGES[binding!]}</Text>
+          {error && (
+            <View style={[s.errorBox, { marginTop: 16 }]} accessibilityRole="alert">
+              <Text style={s.errorText}>{error}</Text>
             </View>
           )}
 
@@ -85,9 +75,6 @@ export default function Login() {
             >
               {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.buttonText}>Sign in</Text>}
             </Pressable>
-            <Text style={s.faint}>
-              Your login works on this phone only. Ask the factory to release it if you change phones.
-            </Text>
           </View>
         </View>
       </KeyboardAvoidingView>

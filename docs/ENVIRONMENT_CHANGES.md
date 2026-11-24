@@ -2,6 +2,26 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-11-24 - Standalone mobile API deployment
+
+- Added the `apps/mobile-api` Next.js workspace for a separate Vercel project.
+  It reuses the ERP mobile handlers, checks for required migrations on the
+  shared production Neon branch and deploys through its own GitHub Actions hook.
+- Set `MOBILE_API_ORIGIN` on the mobile site and
+  `VERCEL_MOBILE_API_DEPLOY_HOOK_URL` in GitHub Actions. See the
+  [mobile deployment guide](mobile/HYBRID_APP.md) for the project setup.
+
+## 2026-11-22 - Active mobile sessions
+
+- Migration `0085_mobile_device_sessions.sql` and the Neon post-migration SQL
+  `004_mobile_device_sessions.sql` tie driver and field officer device access
+  to an active Neon Auth session. Apply the migration and refresh the target
+  branch's Data API schema cache before releasing the corresponding ERP API and
+  mobile site. Old permanent device registrations no longer block a fresh login.
+- Signing out or session expiry frees the phone slot. ERP **User Handling →
+  Bound devices → Release device** also ends that phone's mobile access. The
+  existing Android APK can load the updated site.
+
 ## 2026-11-21 - Hybrid mobile app
 
 - Moved the Field App screens into `apps/mobile/web`, a Vite workspace using

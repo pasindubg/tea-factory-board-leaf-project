@@ -1,7 +1,7 @@
 /** Development-only, rollback-only RLS check. It creates synthetic fixtures and
  * never reads passwords, resets logins, or changes an existing user's role. */
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 
 const url = process.env.NEON_DATABASE_URL?.replace(/^"|"$/g, "");
@@ -30,16 +30,27 @@ try {
       for (const statement of numbering.split("--> statement-breakpoint")) await tx.unsafe(statement);
     }
     await tx.unsafe(readFileSync(new URL("../neon/003_request_identity.sql", import.meta.url), "utf8"));
+    await tx.unsafe(readFileSync(new URL("../drizzle/0085_mobile_device_sessions.sql", import.meta.url), "utf8").replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS"));
+    await tx.unsafe(readFileSync(new URL("../neon/004_mobile_device_sessions.sql", import.meta.url), "utf8"));
     const factoryA = randomUUID(), factoryB = randomUUID(), lineA = randomUUID(), lineB = randomUUID(), unassignedLine = randomUUID();
     await tx`insert into factories (id, name) values (${factoryA}, 'mobile-registration-verify-a'), (${factoryB}, 'mobile-registration-verify-b')`;
-    const ownerId = randomUUID();
-    await tx`insert into users(id,factory_id,name,email,role,active) values(${ownerId},${factoryA},'Synthetic owner',${ownerId+'@example.invalid'},'owner',true)`;
+    const ownerId = randomUUID(), foreignOwner = randomUUID();
+    await tx`insert into users(id,factory_id,name,email,role,active) values
+      (${ownerId},${factoryA},'Synthetic owner',${ownerId+'@example.invalid'},'owner',true),
+      (${foreignOwner},${factoryB},'Other owner',${foreignOwner+'@example.invalid'},'owner',true)`;
     await tx`insert into lines (id, factory_id, line_no) values (${lineA}, ${factoryA}, 'verify-a'), (${lineB}, ${factoryB}, 'verify-b'), (${unassignedLine}, ${factoryA}, 'verify-unassigned')`;
 
     for (const role of ["field_officer", "driver"] as const) {
       const user = randomUUID();
       await tx`insert into users (id, factory_id, name, email, role, active) values (${user}, ${factoryA}, 'Synthetic field test', ${user + '@example.invalid'}, ${role}, true)`;
-      await tx`insert into user_devices (factory_id, user_id, device_id) values (${factoryA}, ${user}, 'verify-bound-phone')`;
+      await tx`insert into neon_auth."user" (id, email, name, "emailVerified") values (${user}, ${user+'@example.invalid'}, 'Synthetic field test', true)`;
+      const authSession = async () => {
+        const id = randomUUID(), token = randomUUID();
+        await tx`insert into neon_auth.session (id, "userId", "expiresAt", "updatedAt", token) values (${id}, ${user}, now() + interval '1 day', now(), ${token})`;
+        return { id, proof: createHash("sha256").update(token).digest("hex") };
+      };
+      const primary = await authSession(), secondary = await authSession();
+      await tx`insert into user_devices (factory_id, user_id, device_id) values (${factoryA}, ${user}, 'legacy-phone')`;
       const driverId = randomUUID();
       if (role === "driver") {
         await tx.savepoint(async (query) => {
@@ -55,9 +66,9 @@ try {
         catch (error) { foreignLink=(error as {code?:string}).code; }
         check(foreignLink === "23514", "driver User ID cannot link to another factory's account");
       }
-      const asUser = <T>(device: string | null, action: (query: postgres.TransactionSql) => Promise<T>) => tx.savepoint(async (query) => {
-        await query`select set_config('request.jwt.claims', ${JSON.stringify({ sub: user, role: "authenticated" })}, true)`;
-        await query`select set_config('request.headers', ${JSON.stringify(device ? { "x-device-id": device } : {})}, true)`;
+      const asUser = <T>(device: string | null, action: (query: postgres.TransactionSql) => Promise<T>, proof = primary.proof, actor: string = user) => tx.savepoint(async (query) => {
+        await query`select set_config('request.jwt.claims', ${JSON.stringify({ sub: actor, role: "authenticated" })}, true)`;
+        await query`select set_config('request.headers', ${JSON.stringify(device ? { "x-device-id": device, "x-mobile-session-proof": proof } : {})}, true)`;
         await query.unsafe("set local role authenticated");
         const value = await action(query);
         await query.unsafe("reset role");
@@ -71,10 +82,12 @@ try {
         try { await action(); } catch (error) { actual = (error as { code?: string }).code; }
         check(actual === code, `${role}: ${label} (${actual ?? "unexpectedly allowed"})`);
       };
-      const bound = await asUser("verify-bound-phone", (query) => query`select public.register_device('verify-bound-phone','android','test','0.1.0') outcome`);
-      check(bound[0].outcome === "bound", `${role}: mobile sign-in can confirm its phone binding`);
-      const secondPhone = await asUser("wrong-phone", (query) => query`select public.register_device('wrong-phone','android','test','0.1.0') outcome`);
-      check(secondPhone[0].outcome === "blocked", `${role}: sign-in refuses a second phone`);
+      const claim = (device: string, proof: string) => asUser(device, (query) => query`select public.register_mobile_session('android','test','0.1.0') outcome`, proof);
+      check((await claim("verify-bound-phone", primary.proof))[0].outcome === "claimed", `${role}: a legacy device does not block a new session`);
+      check((await claim("verify-bound-phone", primary.proof))[0].outcome === "bound", `${role}: sign-in retry is idempotent`);
+      check((await claim("wrong-phone", secondary.proof))[0].outcome === "blocked", `${role}: another phone is blocked while the first session lives`);
+      await refused(() => asUser("verify-bound-phone", (query) => insert(query, factoryA, lineA), secondary.proof), "42501", "wrong session on the right phone is denied");
+      await refused(() => asUser("verify-bound-phone", (query) => query`select public.register_device('verify-bound-phone','android','test','0.1.0')`), "42501", "the legacy claim cannot bypass session checks");
       const inserted = await asUser("verify-bound-phone", (query) => insert(query, factoryA, lineA));
       check(inserted.length === 1, `${role}: bound phone registers a supplier`);
       check(inserted[0].customer_no === null && inserted[0].registration_no > 0, `${role}: automatic registration number with office number unassigned`);
@@ -146,8 +159,21 @@ try {
         catch (error) { duplicateCode=(error as {code?:string}).code; }
         check(duplicateCode === "23505", "a user cannot have duplicate driver records");
       }
-      await tx`update user_devices set revoked_at = now() where user_id = ${user}`;
+      const release = (actor: string, device: string) => asUser(null, (query) => query`
+        update user_devices set revoked_at = now(), revoked_by = ${actor}
+        where user_id = ${user} and device_id = ${device} and revoked_at is null returning id`, "", actor);
+      check((await release(foreignOwner, "verify-bound-phone")).length === 0, `${role}: another factory cannot release the session`);
+      check((await release(ownerId, "verify-bound-phone")).length === 1, `${role}: factory owner can release the session`);
       await refused(() => asUser("verify-bound-phone", (query) => insert(query, factoryA, lineA)), "42501", "released phone is denied");
+      check((await claim("verify-bound-phone", primary.proof))[0].outcome === "invalid", `${role}: released session cannot reclaim its phone`);
+      check((await claim("wrong-phone", secondary.proof))[0].outcome === "claimed", `${role}: another phone can sign in after ERP release`);
+      await tx`delete from neon_auth.session where id = ${secondary.id}`;
+      const fresh = await authSession();
+      check((await claim("verify-bound-phone", fresh.proof))[0].outcome === "claimed", `${role}: another phone can sign in after sign-out`);
+      await tx`update neon_auth.session set "expiresAt" = now() - interval '1 second' where id = ${fresh.id}`;
+      await refused(() => asUser("verify-bound-phone", (query) => insert(query, factoryA, lineA), fresh.proof), "42501", "expired session loses access");
+      const afterExpiry = await authSession();
+      check((await claim("wrong-phone", afterExpiry.proof))[0].outcome === "claimed", `${role}: another phone can sign in after expiry`);
       if (role === "driver") {
         await tx`delete from users where id=${user}`;
         const [kept] = await tx`select user_id from drivers where id=${driverId}`;

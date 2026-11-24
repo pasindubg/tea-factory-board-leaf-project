@@ -41,7 +41,7 @@ public final class MainActivity extends Activity {
     private static final int LOCATION = 1;
     private static final int IMAGE = 2;
     private static final int CAMERA = 3;
-    private final OriginPolicy origin = new OriginPolicy(BuildConfig.MOBILE_WEB_URL);
+    private final OriginPolicy origin = new OriginPolicy(BuildConfig.MOBILE_WEB_URL, BuildConfig.DEBUG);
     private WebView web;
     private LinearLayout overlay;
     private TextView title;

@@ -2,9 +2,18 @@ plugins { id 'com.android.application' }
 
 def mobileWebUrl = providers.gradleProperty('MOBILE_WEB_URL').orElse('').get()
 def parsedUrl
-try { parsedUrl = new URI(mobileWebUrl) } catch (Exception ignored) { throw new GradleException('MOBILE_WEB_URL must be a valid HTTPS origin.') }
-if (parsedUrl.scheme != 'https' || !parsedUrl.host || parsedUrl.userInfo || parsedUrl.query || parsedUrl.fragment || !(parsedUrl.path in ['', '/'])) {
-    throw new GradleException('Set -PMOBILE_WEB_URL=https://your-mobile-site.vercel.app (origin only).')
+try { parsedUrl = new URI(mobileWebUrl) } catch (Exception ignored) { throw new GradleException('MOBILE_WEB_URL must be a valid origin.') }
+def localDebug = parsedUrl.scheme == 'http' && parsedUrl.host == 'localhost' && parsedUrl.port > 0
+if ((!localDebug && parsedUrl.scheme != 'https') || !parsedUrl.host || parsedUrl.rawUserInfo != null
+        || parsedUrl.rawQuery != null || parsedUrl.rawFragment != null || !(parsedUrl.rawPath in ['', '/'])
+        || parsedUrl.port == 0 || parsedUrl.port > 65535) {
+    throw new GradleException('Set -PMOBILE_WEB_URL=https://your-mobile-site.vercel.app, or use http://localhost:8081 for a debug APK.')
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        if (localDebug) variant.enable = false
+    }
 }
 
 android {
@@ -14,8 +23,8 @@ android {
         applicationId 'lk.boardleaf.field'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode providers.gradleProperty('APK_VERSION_CODE').orElse('1').get().toInteger()
+        versionName providers.gradleProperty('APK_VERSION_NAME').orElse('0.1.0').get()
         buildConfigField 'String', 'MOBILE_WEB_URL', '"' + mobileWebUrl.replaceAll('/$', '') + '"'
     }
     buildFeatures { buildConfig true }

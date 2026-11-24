@@ -1,0 +1,16 @@
+{
+  "name": "mobile-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "node scripts/check-deployment.mjs && next build"
+  },
+  "dependencies": {
+    "next": "^15.3.0",
+    "postgres": "^3.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "web": "workspace:*"
+  }
+}

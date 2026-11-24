@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import { SessionProvider, useSession } from "@/lib/session";
 import Login from "@/app/login";
+import { SignOutButton } from "@/components/SignOutButton";
 import Driver from "@/app/(driver)/home";
 import Lines from "@/app/(field)/lines";
 import Customers from "@/app/(field)/line/[id]/index";
@@ -32,19 +33,19 @@ const routes: Record<string, { screen: ComponentType; label?: string }> = {
 function FieldApp() {
   const route = useRoute();
   const router = useRouter();
-  const { loading, profile, collector, error, signOut, reloadProfile } = useSession();
+  const { loading, profile, collector, error, reloadProfile } = useSession();
   if (loading) return <div className="notice" role="status">Signing in…</div>;
   if (error) return (
     <div className="notice" role="alert">
       <p>{error}</p>
       <button onClick={() => void reloadProfile()}>Try again</button>
-      <button onClick={() => void signOut()}>Sign out</button>
+      <SignOutButton />
     </div>
   );
   if (!profile) return route === "/login" ? <Login /> : <Redirect href="/login" />;
   const area = { driver: "driver", field_officer: "field", supplier: "supplier", collector: "app" }[profile.role as string];
   if (!area || (area === "app" && !collector)) {
-    return <div className="notice"><p>This account is not set up for the field app.</p><button onClick={() => void signOut()}>Sign out</button></div>;
+    return <div className="notice"><p>This account is not set up for the field app.</p><SignOutButton /></div>;
   }
   const home = `/(${area})/${area === "field" ? "lines" : "home"}`;
   const path = route.split("?")[0];

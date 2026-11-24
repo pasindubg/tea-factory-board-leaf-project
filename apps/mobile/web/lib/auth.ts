@@ -1,4 +1,4 @@
-import { loadSession, saveSession } from "./bridge";
+import { getDevice, loadSession, saveSession } from "./bridge";
 import { apiBaseUrl } from "./env";
 export type AuthSession = { user: { id: string } };
 type Listener = (session: AuthSession | null) => void;
@@ -6,8 +6,9 @@ type Listener = (session: AuthSession | null) => void;
 let loaded = false;
 let session: string | null = null;
 let userId: string | null = null;
-let token: { value: string; exp: number } | null = null;
-let refreshing: Promise<string | null> | null = null;
+type AccessToken = { value: string; proof: string; exp: number };
+let token: AccessToken | null = null;
+let refreshing: Promise<AccessToken | null> | null = null;
 const listeners = new Set<Listener>();
 
 function current(): AuthSession | null {
@@ -24,7 +25,7 @@ function expiryOf(jwt: string): number {
   return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, "="))).exp;
 }
 
-function post(path: string, options: { bearer?: string; body?: unknown } = {}) {
+function post(path: string, options: { bearer?: string; body?: unknown; deviceId?: string } = {}) {
   return fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
     cache: "no-store",
@@ -32,6 +33,7 @@ function post(path: string, options: { bearer?: string; body?: unknown } = {}) {
     headers: {
       "Content-Type": "application/json",
       ...(options.bearer ? { Authorization: `Bearer ${options.bearer}` } : {}),
+      ...(options.deviceId ? { "x-device-id": options.deviceId } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
@@ -65,20 +67,22 @@ export function onAuthStateChange(listener: Listener) {
 export async function signIn(username: string, password: string): Promise<{ error: string | null }> {
   let res: Response;
   try {
-    res = await post("/api/mobile/sign-in", { body: { username, password } });
+    const device = await getDevice();
+    res = await post("/api/mobile/sign-in", { body: { username, password, device }, deviceId: device?.deviceId });
   } catch {
     return { error: "Could not reach the server. Check your connection." };
   }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok || typeof body.session !== "string" || typeof body.userId !== "string" || typeof body.token !== "string") {
+  if (!res.ok || typeof body.session !== "string" || typeof body.userId !== "string" || typeof body.token !== "string" || typeof body.proof !== "string") {
     return { error: typeof body.error === "string" ? body.error : "Sign-in failed." };
   }
 
   try {
-    token = { value: body.token, exp: expiryOf(body.token) };
+    token = { value: body.token, proof: body.proof, exp: expiryOf(body.token) };
     await saveSession({ session: body.session, userId: body.userId });
   } catch (error) {
     token = null;
+    await post("/api/mobile/sign-out", { bearer: body.session }).catch(() => {});
     return { error: error instanceof Error ? error.message : "Unable to save your session." };
   }
   session = body.session;
@@ -90,13 +94,14 @@ export async function signIn(username: string, password: string): Promise<{ erro
 
 export async function signOut() {
   const previous = session;
-  try { await clear(); }
-  finally {
-    if (previous) post("/api/mobile/sign-out", { bearer: previous }).catch(() => {});
+  if (previous) {
+    const response = await post("/api/mobile/sign-out", { bearer: previous });
+    if (!response.ok && response.status !== 401) throw new Error("Could not sign out. Try again.");
   }
+  if (session === previous) await clear();
 }
 
-async function refresh(): Promise<string | null> {
+async function refresh(): Promise<AccessToken | null> {
   await getSession();
   if (!session) return null;
   const previous = session;
@@ -112,16 +117,35 @@ async function refresh(): Promise<string | null> {
     return null;
   }
   if (!res.ok) throw new Error("Could not verify your session. Please try again.");
-  const { token: value } = await res.json();
+  const { token: value, proof } = await res.json();
   if (previous !== session) return null;
-  token = { value, exp: expiryOf(value) };
-  return value;
+  token = { value, proof, exp: expiryOf(value) };
+  return token;
 }
 
-export async function accessToken(): Promise<string | null> {
-  if (token && token.exp - 60 > Date.now() / 1000) return token.value;
+async function accessToken(): Promise<AccessToken | null> {
+  if (token && token.exp - 60 > Date.now() / 1000) return token;
   refreshing ??= refresh().finally(() => {
     refreshing = null;
   });
   return refreshing;
+}
+
+export async function mobileAuthHeaders() {
+  const access = await accessToken();
+  const currentSession = session;
+  if (!access || !currentSession) throw new Error("Please sign in again.");
+  const device = await getDevice();
+  const headers: Record<string, string> = { Authorization: `Bearer ${access.value}` };
+  if (device) {
+    headers["x-device-id"] = device.deviceId;
+    headers["x-mobile-session-proof"] = access.proof;
+  }
+  if (session !== currentSession) throw new Error("Please sign in again.");
+  return {
+    headers,
+    async handleResponse(response: Response) {
+      if (response.status === 401 && session === currentSession) await clear();
+    },
+  };
 }

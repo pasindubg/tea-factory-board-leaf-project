@@ -1,7 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { requireMobileProfile } from "@/lib/neon/mobile-session";
-import { MOBILE_APP_ROLES, MOBILE_SUPPLIER_REGISTRATION_ROLES } from "@/lib/roles";
+import { MOBILE_APP_ROLES } from "@/lib/roles";
 import { friendlyError } from "@/lib/errors";
 
 export type MobileContext = Exclude<Awaited<ReturnType<typeof requireMobileProfile>>, Response>;
@@ -43,26 +43,6 @@ export async function mobileBootstrap(request: Request) {
     profile: { id: profile.id, name: profile.name, role: profile.role, factory_id: profile.factory_id, supplier_id: profile.supplier_id ?? null },
     supplier, collector,
   });
-}
-
-export async function mobileBindDevice(request: Request, input: unknown) {
-  const caller = await requireMobileProfile(request, MOBILE_SUPPLIER_REGISTRATION_ROLES);
-  if (caller instanceof Response) return caller;
-  if (!mobileObject(input) || !onlyMobileKeys(input, ["platform", "model", "appVersion"])) return mobileError("Invalid device details.");
-  const deviceId = request.headers.get("x-device-id") ?? "";
-  if (!/^[a-zA-Z0-9._:-]{8,200}$/.test(deviceId)) return mobileError("A valid device identifier is required.");
-  const platform = input.platform;
-  if (platform !== "android" && platform !== "ios" && platform !== "web") return mobileError("Unsupported device platform.");
-  if (typeof input.model !== "string" || input.model.length > 160 || typeof input.appVersion !== "string" || input.appVersion.length > 80) return mobileError("Invalid device details.");
-  // The audited RPC derives factory/user identity from the session. The device
-  // parameter is the same identifier that accompanies all Data API requests.
-  const result = await caller.supabase.rpc("register_device", {
-    p_device_id: deviceId, p_platform: platform, p_model: input.model, p_app_version: input.appVersion,
-  });
-  if (result.error) return mobileError(friendlyError(result.error));
-  const binding = result.data;
-  if (!["bound", "claimed", "blocked", "invalid"].includes(binding)) return mobileError("Could not verify this device.", 503);
-  return mobileJson({ binding });
 }
 
 /** Route boundary for failures before a response exists; never leak DB details. */

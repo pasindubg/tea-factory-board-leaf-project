@@ -1,18 +1,17 @@
-import { accessToken } from "./auth";
-import { getDeviceId } from "./device";
+import { mobileAuthHeaders } from "./auth";
 import { apiBaseUrl } from "./env";
 import type { MobileRegistrationResource } from "./types";
 
 export async function mobileRequest<T>(path: string, body: unknown): Promise<T> {
-  const token = await accessToken();
-  if (!token) throw new Error("Please sign in again.");
+  const auth = await mobileAuthHeaders();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
     cache: "no-store",
     signal: AbortSignal.timeout(20000),
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "x-device-id": await getDeviceId() },
+    headers: { "Content-Type": "application/json", ...auth.headers },
     body: JSON.stringify(body),
   });
+  await auth.handleResponse(response);
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) throw new Error(result?.error ?? "Could not reach the ERP. Please try again.");
   return result as T;

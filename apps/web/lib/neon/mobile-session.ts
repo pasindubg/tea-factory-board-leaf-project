@@ -1,8 +1,9 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createNeonClient } from "./data-client";
 import { withTenantDataScope } from "@/lib/tenant-data";
-import type { Role } from "@/lib/roles";
+import { roleMayRegisterSuppliers, type Role } from "@/lib/roles";
 
 const SESSION_COOKIE = "__Secure-neon-auth.session_token";
 
@@ -19,20 +20,22 @@ export function cookieForSession(session: string) {
   return `${SESSION_COOKIE}=${session}`;
 }
 
+export function mobileSessionProof(session: string) {
+  return createHash("sha256").update(decodeURIComponent(session).split(".")[0]).digest("hex");
+}
+
 export function bearer(request: Request): string | null {
   const header = request.headers.get("authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : null;
 }
 
-export const unauthorized = () => NextResponse.json({ error: "Not signed in." }, { status: 401 });
+export const unauthorized = () => NextResponse.json({ error: "Not signed in." }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
-/** Bearer-session counterpart of requireProfile: resolve identity through RLS,
- * then return only the factory-scoped session client for domain operations. */
-export async function requireMobileProfile(request: Request, allowedRoles: readonly Role[]) {
-  const accessToken = bearer(request);
-  if (!accessToken) return unauthorized();
-  const db = createNeonClient({ accessToken, deviceId: request.headers.get("x-device-id") ?? undefined });
+export async function mobileProfileForToken(
+  accessToken: string, allowedRoles: readonly Role[], deviceId?: string, proof?: string,
+) {
+  const db = createNeonClient({ accessToken, deviceId, mobileSessionProof: proof });
   const [identity, factory, bound] = await Promise.all([
     db.rpc("request_uid"), db.rpc("current_factory_id"), db.rpc("device_is_bound"),
   ]);
@@ -45,7 +48,22 @@ export async function requireMobileProfile(request: Request, allowedRoles: reado
   if (profile.active === false || !allowedRoles.includes(profile.role)) {
     return NextResponse.json({ error: "This account cannot perform this mobile operation." }, { status: 403 });
   }
+  if (bound.error && roleMayRegisterSuppliers(profile.role)) {
+    return NextResponse.json({ error: "Could not verify your mobile session. Try again." }, { status: 503 });
+  }
   return { profile, supabase, deviceBound: !bound.error && bound.data === true };
+}
+
+/** Domain requests from drivers and field officers require an active session on this phone. */
+export async function requireMobileProfile(request: Request, allowedRoles: readonly Role[]) {
+  const token = bearer(request);
+  if (!token) return unauthorized();
+  const caller = await mobileProfileForToken(token, allowedRoles,
+    request.headers.get("x-device-id") ?? undefined,
+    request.headers.get("x-mobile-session-proof") ?? undefined);
+  if (caller instanceof Response) return caller;
+  if (roleMayRegisterSuppliers(caller.profile.role) && !caller.deviceBound) return unauthorized();
+  return caller;
 }
 
 export type MobileCaller = { factoryId: string; role: string; deviceBound: boolean };

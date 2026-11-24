@@ -26,6 +26,24 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  apps/mobile-api:
+    dependencies:
+      next:
+        specifier: ^15.3.0
+        version: 15.5.19(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      postgres:
+        specifier: ^3.4.5
+        version: 3.4.9
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      web:
+        specifier: workspace:*
+        version: link:../web
+
   apps/mobile/web:
     dependencies:
       '@tea/ui':

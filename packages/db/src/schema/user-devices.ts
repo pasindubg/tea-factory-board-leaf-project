@@ -3,8 +3,8 @@ import { pgTable, uuid, text, timestamp, index, uniqueIndex } from "drizzle-orm/
 import { factories } from "./factories";
 import { users } from "./users";
 
-// One active device per login: the field app generates a device id into secure
-// storage and sends it on every request, and writes are refused from any other.
+// One active mobile session per field login. The phone and the Neon Auth
+// session must both match before a field request can access protected records.
 export const userDevices = pgTable(
   "user_devices",
   {
@@ -19,6 +19,7 @@ export const userDevices = pgTable(
     platform: text("platform"),
     model: text("model"),
     appVersion: text("app_version"),
+    mobileSessionId: uuid("mobile_session_id"),
     lastSeenAt: timestamp("last_seen_at"),
     revokedAt: timestamp("revoked_at"),
     revokedBy: uuid("revoked_by").references(() => users.id, { onDelete: "set null" }),

@@ -87,7 +87,6 @@ export type CustomerRow = {
   longitude: string;
 };
 
-export type DeviceRegistration = "bound" | "claimed" | "blocked" | "invalid";
 
 // --- Legacy collector shapes (parked M4 collector screens) ---
 export type CollectorRow = { id: string; name: string; area: string | null };

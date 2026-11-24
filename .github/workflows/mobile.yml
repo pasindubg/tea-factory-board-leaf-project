@@ -32,6 +32,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir apps/mobile/web typecheck
       - run: pnpm --dir apps/mobile/web build
+      - run: pnpm --dir apps/mobile-api build
 
   android:
     runs-on: ubuntu-latest

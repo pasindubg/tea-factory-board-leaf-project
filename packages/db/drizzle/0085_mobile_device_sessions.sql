@@ -1,0 +1,1 @@
+ALTER TABLE "user_devices" ADD COLUMN "mobile_session_id" uuid;
