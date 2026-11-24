@@ -1,10 +1,11 @@
-name: Release mobile API
+name: Release mobile site and API
 
 on:
   push:
     branches: [blm-cloud-release]
     paths:
       - 'apps/mobile-api/**'
+      - 'apps/mobile/web/**'
       - 'apps/web/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
@@ -26,14 +27,14 @@ jobs:
     if: github.ref == 'refs/heads/blm-cloud-release'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger the mobile API Vercel build
+      - name: Trigger the combined mobile Vercel build
         env:
           DEPLOY_HOOK: ${{ secrets.VERCEL_MOBILE_API_DEPLOY_HOOK_URL }}
         run: |
           set -euo pipefail
           if [[ -z "$DEPLOY_HOOK" ]]; then
-            echo "Set VERCEL_MOBILE_API_DEPLOY_HOOK_URL to the mobile API project's release-branch hook."
+            echo "Set VERCEL_MOBILE_API_DEPLOY_HOOK_URL to the mobile project's release-branch hook."
             exit 1
           fi
           curl --fail --silent --show-error --max-time 30 --output /dev/null -X POST "$DEPLOY_HOOK"
-          echo "Mobile API deployment queued. Check its status in Vercel."
+          echo "Mobile site and API deployment queued. Check its status in Vercel."

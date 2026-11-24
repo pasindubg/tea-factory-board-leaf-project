@@ -2,6 +2,14 @@
 
 Use this file to track changes that matter when hosting or rebuilding the project in a new environment.
 
+## 2026-11-24 - Combined mobile interface and API
+
+The existing mobile Vercel project at `apps/mobile-api` builds the screens from
+`apps/mobile/web` and serves the shared API on the same origin. Preview builds
+use `main`. Production keeps the existing release hook and now watches screen
+changes too. Set the APK's `MOBILE_WEB_URL` to the combined project's stable
+production URL. The combined deployment needs no `MOBILE_API_ORIGIN`.
+
 ## 2026-11-24 - Standalone mobile API deployment
 
 - Added the `apps/mobile-api` Next.js workspace for a separate Vercel project.
