@@ -31,8 +31,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir apps/mobile/web typecheck
-      - run: pnpm --dir apps/mobile/web build
       - run: pnpm --dir apps/mobile-api build
+      - name: Check the mobile site and API on one origin
+        working-directory: apps/mobile-api
+        run: |
+          pnpm exec next start -p 3101 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          curl --retry 15 --retry-connrefused --retry-delay 1 -fsS http://localhost:3101/ -o "$RUNNER_TEMP/field.html"
+          asset=$(grep -oE '/field/assets/[^"]+\.js' "$RUNNER_TEMP/field.html" | head -1)
+          curl -fsS "http://localhost:3101$asset" -o /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3101/api/mobile/bootstrap)" = 401
 
   android:
     runs-on: ubuntu-latest

@@ -43,6 +43,10 @@ importers:
       web:
         specifier: workspace:*
         version: link:../web
+    devDependencies:
+      mobile-web:
+        specifier: workspace:*
+        version: link:../mobile/web
 
   apps/mobile/web:
     dependencies:

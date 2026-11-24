@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "node scripts/check-deployment.mjs && next build"
+    "build": "node scripts/check-deployment.mjs && pnpm run build:interface && next build",
+    "build:interface": "pnpm --dir ../mobile/web exec vite build --base /field/ --outDir ../../mobile-api/public/field --emptyOutDir"
   },
   "dependencies": {
     "next": "^15.3.0",
@@ -12,5 +13,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "web": "workspace:*"
+  },
+  "devDependencies": {
+    "mobile-web": "workspace:*"
   }
 }

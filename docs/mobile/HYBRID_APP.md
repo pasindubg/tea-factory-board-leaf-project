@@ -5,11 +5,10 @@ Vite compiles them into a single-page app for Vercel. The Android shell in
 `apps/mobile/shell` opens that site in a WebView and handles device identity,
 encrypted session storage, camera, GPS permissions and Android Back.
 
-`apps/mobile-api` is the Next.js project that hosts the authenticated mobile
-API. It imports the mobile handlers from `apps/web` so the ERP and standalone
-API use the same implementation. The mobile site forwards same-origin
-`/api/mobile/*` requests to the standalone project. The API and ERP use the
-same Neon backend for each environment. Tenant identity and
+The existing Vercel project rooted at `apps/mobile-api` builds both the
+interface and the API. Its Next.js server serves the Vite interface at
+`/` and the shared ERP mobile handlers at `/api/mobile/*`. Both applications
+use the same Neon backend for each environment. Tenant identity and
 permissions come from the server session. The APK carries the mobile site
 origin and stores no server credentials.
 
@@ -66,15 +65,12 @@ Release APKs require an HTTPS site origin.
 
 ## Host the site and build the APK
 
-1. Release the mobile API and required existing registration migrations through
-   the ERP's normal release process. Verify production storage and mobile API
-   configuration before distributing the app.
-2. Connect a Vercel project to this repository. Set **Root Directory** to
-   `apps/mobile/web`, **Framework** to Vite and **Production Branch** to
-   `blm-cloud-release`. Keep access to files outside the root directory enabled
-   for the shared workspace package. The build is `pnpm build` and output is
-   `dist`. Set its production `MOBILE_API_ORIGIN` to the standalone API
-   project's stable HTTPS origin.
+1. Keep the existing mobile Vercel project rooted at `apps/mobile-api`.
+   Use the Next.js preset, build command `pnpm build`, default output directory
+   and enable source files outside the root. Set the production branch to
+   `blm-cloud-release`. The build compiles the screens in `apps/mobile/web`
+   into this project. A single domain serves the interface and its API.
+2. Configure Preview and Production using the environment settings below.
 3. Run GitHub Actions **Mobile checks** manually with the exact mobile site
    HTTPS origin to get a debug APK for testing, or build it locally with Gradle
    8.9, JDK 17 and Android SDK 35:
@@ -100,16 +96,12 @@ Mobile UI changes use the Vercel Git release. An already open screen continues
 running the loaded version until a fresh launch or reload. Native features and
 shell updates require an updated APK. Keep the configured HTTPS origin stable.
 
-The Render/Metro deployment draft has been removed. The hybrid setup is local
-until the production API and mobile Vercel site are released.
-
 ### Automatic production builds
 
 Merge the reviewed changes into `main`, then run **Release — sync blm-cloud-release from main**. Keep the existing `RELEASE_SYNC_TOKEN` configured. This workflow pushes the release branch with a repository admin's token so the push can start downstream GitHub workflows.
 
 - **ERP** — the ERP release workflow uses `VERCEL_DEPLOY_HOOK_URL`, which targets the ERP Vercel project. That project's build applies the shared database migrations.
-- **Mobile API** — **Release mobile API** calls the standalone Vercel project's hook on release-branch changes to the API, its shared ERP code or workspace dependencies. Setup for that project is below.
-- **Mobile screens** — the APK opens the mobile site's HTTPS origin. The mobile site's Vercel rewrite forwards API calls to `MOBILE_API_ORIGIN`.
+- **Mobile site and API** — **Release mobile site and API** queues the existing mobile project's release hook when screens, mobile endpoints, shared ERP code or workspace dependencies change. Each deployment contains matching screens and endpoints.
 - **Android shell** — a push changing `apps/mobile/shell/**` on the release branch runs **Release Android APK**. It tests, lints, builds, signs and verifies the APK, then publishes `Tea-Factory-Field.apk` under **GitHub → Releases**. The workflow also supports a manual first release from that branch.
 
 In **GitHub → Settings → Environments**, create `mobile-release` and restrict deployment branches to `blm-cloud-release`. Add the environment variable `MOBILE_WEB_URL` with the HTTPS origin of the production **mobile site**. Add these environment secrets:
@@ -132,32 +124,25 @@ base64 -i "$HOME/tea-field-release.jks" | pbcopy
 The release version is `1.0.<workflow run number>` with Android version code `run number + 1`. If a production APK already exists, ensure the first automated version code exceeds its installed version. For a private repository, APK downloads require repository access.
 
 
-### Standalone mobile API on Vercel
+### Preview and production settings
 
-1. Create a Vercel project linked to this repository. Set **Root Directory**
-   to `apps/mobile-api`, **Framework** to Next.js and **Production Branch** to
-   `blm-cloud-release`. Enable **Include source files outside of the Root
-   Directory** so Next.js can bundle the shared handlers.
-2. Add the same production Neon values used by the ERP for
-   `NEXT_PUBLIC_DATA_BACKEND`, `NEON_DATABASE_URL`, `NEON_AUTH_BASE_URL`,
-   `NEXT_PUBLIC_NEON_AUTH_BASE_URL`, and `NEXT_PUBLIC_NEON_DATA_API_URL`. Also
-   configure the same storage bucket access through `AWS_ENDPOINT_URL_S3`,
-   `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. Set
-   `NEXT_PUBLIC_SITE_URL` to the ERP's existing trusted Neon Auth origin.
-   Keep these credentials in the API project.
-3. In the mobile API project's **Settings → Git → Deploy Hooks**, create a
-   hook for `blm-cloud-release`. Save the hook URL as the repository's GitHub
-   Actions secret `VERCEL_MOBILE_API_DEPLOY_HOOK_URL`.
-4. Run **Release mobile API** from `blm-cloud-release` for the first release.
-   The API build gives the ERP up to five minutes to finish migrations. If the
-   ERP takes longer, retry the mobile API build after it succeeds. Refresh
-   the production Neon Data API schema cache when the release adds RPCs.
-   Verify the standalone URL returns HTTP 401 to an anonymous
-   `POST /api/mobile/bootstrap` and HTTP 404 to `GET /dashboard`.
-5. Set the mobile *site* project's `MOBILE_API_ORIGIN` to that API origin,
-   deploy the site, and verify the same bootstrap response through the site.
-   Existing APKs use it on the next launch.
-
-For separate local processes, configure the development Neon variables for
-`apps/mobile-api`, run `pnpm --dir apps/mobile-api dev` on port 3001, and
-point the mobile Vite server there using `MOBILE_DEV_API_ORIGIN`.
+1. Configure the mobile project's Preview environment for the Neon preview
+   branch and Production for the production branch. For each environment set
+   `NEXT_PUBLIC_DATA_BACKEND=neon`, `NEON_DATABASE_URL`, `NEON_AUTH_BASE_URL`,
+   `NEXT_PUBLIC_NEON_AUTH_BASE_URL`, and `NEXT_PUBLIC_NEON_DATA_API_URL`.
+   Use the matching ERP environment's trusted Neon Auth origin for
+   `NEXT_PUBLIC_SITE_URL` and its storage settings for `AWS_ENDPOINT_URL_S3`,
+   `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
+2. Merge to `main` for a Vercel Git preview. The build verifies the branch
+   and Neon endpoint match. Open the preview URL, check the login screen,
+   then run **Mobile checks** manually with that URL for a debug APK.
+   The emulator or phone needs access to the preview URL.
+3. Keep the production hook for `blm-cloud-release` in the existing
+   `VERCEL_MOBILE_API_DEPLOY_HOOK_URL` repository secret. The ERP deployment
+   applies migrations. The mobile production build waits up to five minutes
+   for them. Retry after the ERP build succeeds if it takes longer. Refresh
+   the target Neon Data API schema cache when adding RPCs.
+4. Set `mobile-release` → `MOBILE_WEB_URL` to this mobile project's stable
+   production HTTPS origin. An APK built with another origin needs one shell
+   release to switch. Screen and API updates at the same origin take effect
+   on reload. The old external proxy variable `MOBILE_API_ORIGIN` is obsolete.
