@@ -30,6 +30,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;34.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -37,7 +41,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$MOBILE_WEB_URL" == https://* ]] || { echo 'Set MOBILE_WEB_URL to the production mobile site HTTPS origin.'; exit 1; }
-          sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
           gradle --no-daemon "-PMOBILE_WEB_URL=$MOBILE_WEB_URL" \
             "-PAPK_VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))" "-PAPK_VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" \
             testReleaseUnitTest lintRelease assembleRelease
