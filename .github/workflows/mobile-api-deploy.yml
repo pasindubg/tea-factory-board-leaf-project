@@ -1,8 +1,8 @@
-name: Release mobile site and API
+name: Deploy mobile site and API
 
 on:
   push:
-    branches: [blm-cloud-release]
+    branches: [main, blm-cloud-release]
     paths:
       - 'apps/mobile-api/**'
       - 'apps/mobile/web/**'
@@ -19,15 +19,25 @@ permissions:
   contents: read
 
 concurrency:
-  group: mobile-api-production-deploy
+  group: mobile-api-deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/blm-cloud-release'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/blm-cloud-release'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger the combined mobile Vercel build
+      - name: Trigger the mobile preview build
+        if: github.ref == 'refs/heads/main'
+        env:
+          DEPLOY_HOOK: ${{ secrets.VERCEL_MOBILE_PREVIEW_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOOK:?Set VERCEL_MOBILE_PREVIEW_DEPLOY_HOOK_URL to the mobile project's main-branch hook.}"
+          curl --fail --silent --show-error --max-time 30 --output /dev/null -X POST "$DEPLOY_HOOK"
+          echo "Mobile preview deployment queued. Check its status in Vercel."
+      - name: Trigger the mobile production build
+        if: github.ref == 'refs/heads/blm-cloud-release'
         env:
           DEPLOY_HOOK: ${{ secrets.VERCEL_MOBILE_API_DEPLOY_HOOK_URL }}
         run: |

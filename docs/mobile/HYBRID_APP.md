@@ -101,7 +101,7 @@ shell updates require an updated APK. Keep the configured HTTPS origin stable.
 Merge the reviewed changes into `main`, then run **Release — sync blm-cloud-release from main**. Keep the existing `RELEASE_SYNC_TOKEN` configured. This workflow pushes the release branch with a repository admin's token so the push can start downstream GitHub workflows.
 
 - **ERP** — the ERP release workflow uses `VERCEL_DEPLOY_HOOK_URL`, which targets the ERP Vercel project. That project's build applies the shared database migrations.
-- **Mobile site and API** — **Release mobile site and API** queues the existing mobile project's release hook when screens, mobile endpoints, shared ERP code or workspace dependencies change. Each deployment contains matching screens and endpoints.
+- **Mobile site and API** — **Deploy mobile site and API** queues the existing mobile project's release hook when screens, mobile endpoints, shared ERP code or workspace dependencies change. Each deployment contains matching screens and endpoints.
 - **Android shell** — a push changing `apps/mobile/shell/**` on the release branch runs **Release Android APK**. It tests, lints, builds, signs and verifies the APK, then publishes `Tea-Factory-Field.apk` under **GitHub → Releases**. The workflow also supports a manual first release from that branch.
 
 In **GitHub → Settings → Environments**, create `mobile-release` and restrict deployment branches to `blm-cloud-release`. Add the environment variable `MOBILE_WEB_URL` with the HTTPS origin of the production **mobile site**. Add these environment secrets:
@@ -133,7 +133,11 @@ The release version is `1.0.<workflow run number>` with Android version code `ru
    Use the matching ERP environment's trusted Neon Auth origin for
    `NEXT_PUBLIC_SITE_URL` and its storage settings for `AWS_ENDPOINT_URL_S3`,
    `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
-2. Merge to `main` for a Vercel Git preview. The build verifies the branch
+2. In the mobile Vercel project's **Settings → Git → Deploy Hooks**, create
+   a hook targeting `main`. Save its URL as the GitHub repository Actions secret
+   `VERCEL_MOBILE_PREVIEW_DEPLOY_HOOK_URL`. Merging mobile or shared-code changes
+   to `main` triggers **Deploy mobile site and API**. To build the current preview
+   again, run that workflow manually from `main`. The build verifies the branch
    and Neon endpoint match. Open the preview URL, check the login screen,
    then run **Mobile checks** manually with that URL for a debug APK.
    The emulator or phone needs access to the preview URL.
